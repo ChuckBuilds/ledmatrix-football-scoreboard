@@ -9,7 +9,9 @@ A plugin for LEDMatrix that displays live, recent, and upcoming football games a
 - **Recent Games**: Recently completed games with final scores
 - **Upcoming Games**: Scheduled games with start times
 - **Favorite Teams**: Prioritize games involving your favorite teams
-- **Football-Specific Details**: Down & distance, possession indicators
+- **Professional Scorebug Display**: Team logos, scores, and game details with professional layout
+- **Football-Specific Details**: Down & distance, possession indicators, timeout tracking
+- **Visual Enhancements**: Redzone highlighting, scoring event notifications, color-coded game states
 - **Background Data Fetching**: Efficient API calls without blocking display
 
 ## Configuration
@@ -67,6 +69,31 @@ The plugin supports three display modes:
 2. **football_recent**: Shows recently completed games
 3. **football_upcoming**: Shows scheduled upcoming games
 
+## Display Features
+
+The plugin provides a professional scorebug display matching the quality of the original LEDMatrix football managers:
+
+### Visual Elements
+- **Team Logos**: Professional team logos positioned on left and right sides
+- **Scores**: Centered score display with outlined text for visibility
+- **Game Status**: Quarter/time display at top center
+- **Down & Distance**: Live game situation information
+- **Possession Indicator**: Football icon showing which team has possession
+- **Timeout Tracking**: Visual timeout bars in bottom corners
+- **Scoring Events**: Special highlighting for touchdowns, field goals, etc.
+- **Redzone Highlighting**: Color changes when teams are in the redzone
+
+### Color Coding
+- **Live Games**: Green text for active status
+- **Redzone**: Red highlighting when teams are in scoring position
+- **Final Games**: Gray text for completed games
+- **Upcoming Games**: Yellow text for scheduled games
+- **Scoring Events**: Gold for touchdowns, green for field goals, orange for PATs
+
+### Fallback Support
+- **Text Fallback**: If team logos are unavailable, displays text-based layout
+- **Error Handling**: Graceful degradation when data is missing
+
 ## Team Abbreviations
 
 ### NFL Teams
@@ -89,7 +116,7 @@ Game data is fetched from ESPN's public API endpoints for both NFL and NCAA Foot
 
 ## Dependencies
 
-This plugin requires the main LEDMatrix installation and inherits functionality from the Football base classes.
+This is a standalone plugin that implements all football-specific functionality internally. It only requires the main LEDMatrix installation for the plugin system and display management.
 
 ## Installation
 
