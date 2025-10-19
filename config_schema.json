@@ -118,11 +118,11 @@
           "items": {
             "type": "string",
             "pattern": "^[A-Z]{2,3}$",
-            "description": "NFL team abbreviation (e.g., 'TB', 'DAL')"
+            "description": "NFL team abbreviation (e.g., TB, DAL)"
           },
           "uniqueItems": true,
           "maxItems": 32,
-          "description": "List of favorite NFL teams to prioritize"
+          "description": "List of favorite NFL team abbreviations (e.g., TB, DAL, GB)"
         },
         "display_modes": {
           "type": "object",
@@ -300,11 +300,11 @@
           "items": {
             "type": "string",
             "pattern": "^[A-Z]{2,3}$",
-            "description": "NCAA FB team abbreviation (e.g., 'UGA', 'AUB')"
+            "description": "NCAA FB team abbreviation (e.g., UGA, AUB)"
           },
           "uniqueItems": true,
           "maxItems": 130,
-          "description": "List of favorite NCAA FB teams to prioritize"
+          "description": "List of favorite NCAA FB team abbreviations (e.g., UGA, AUB, BAMA)"
         },
         "display_modes": {
           "type": "object",
@@ -326,20 +326,6 @@
             }
           },
           "additionalProperties": false
-        },
-        "recent_games_to_show": {
-          "type": "integer",
-          "default": 5,
-          "minimum": 1,
-          "maximum": 20,
-          "description": "Maximum number of recent NCAA FB games to display"
-        },
-        "upcoming_games_to_show": {
-          "type": "integer",
-          "default": 1,
-          "minimum": 1,
-          "maximum": 20,
-          "description": "Maximum number of upcoming NCAA FB games to display"
         },
         "background_service": {
           "type": "object",
