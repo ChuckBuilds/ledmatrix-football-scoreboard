@@ -4,11 +4,6 @@
   "description": "Configuration schema for the Football Scoreboard plugin",
   "type": "object",
   "properties": {
-    "enabled": {
-      "type": "boolean",
-      "default": true,
-      "description": "Enable or disable the football scoreboard plugin"
-    },
     "display_duration": {
       "type": "number",
       "default": 15,
@@ -159,5 +154,5 @@
     }
   },
   "additionalProperties": false,
-  "required": ["enabled"]
+  "required": []
 }

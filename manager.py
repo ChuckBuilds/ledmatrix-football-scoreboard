@@ -75,7 +75,6 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
             self.cache_manager = cache_manager
             self.plugin_manager = plugin_manager
             self.logger = logging.getLogger(f"plugin.{plugin_id}")
-            self.enabled = config.get('enabled', True)
 
         # Plugin is self-contained and doesn't depend on base classes
 

@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.0.7] - 2025-10-19
+
+### Removed
+- Removed redundant `enabled` field from config schema
+  - Plugin enabled state is now managed solely by the plugin system
+  - This eliminates confusion from having two "enabled" toggles in the UI
+  - League-specific enabled fields (`nfl_enabled`, `ncaa_fb_enabled`) remain unchanged
+
+### Fixed
+- Configuration UI no longer shows duplicate enabled toggle
+
 ## [1.0.6] - 2025-10-19
 
 ### Changed
