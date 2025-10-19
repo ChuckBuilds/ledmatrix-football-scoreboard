@@ -1,5 +1,21 @@
 # Changelog
 
+## [1.0.6] - 2025-10-19
+
+### Changed
+- **Per-League Configuration**: All display settings are now configurable separately for NFL and NCAA Football
+  - Added `nfl_show_records`, `ncaa_fb_show_records` - Show team records per league
+  - Added `nfl_show_ranking`, `ncaa_fb_show_ranking` - Show team rankings per league (NCAA defaults to true)
+  - Added `nfl_show_odds`, `ncaa_fb_show_odds` - Show betting odds per league
+  - Added `nfl_show_favorite_teams_only`, `ncaa_fb_show_favorite_teams_only` - Filter by favorites per league
+  - Added `nfl_show_all_live`, `ncaa_fb_show_all_live` - Override favorites for live games per league
+- Removed global settings in favor of per-league control
+
+### Benefits
+- Configure rankings to show for NCAA but not NFL (or vice versa)
+- Different odds display preferences for professional vs college football
+- Independent favorite team filtering for each league
+
 ## [1.0.5] - 2025-10-19
 
 ### Added

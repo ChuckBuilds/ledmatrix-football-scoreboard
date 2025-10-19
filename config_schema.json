@@ -16,31 +16,6 @@
       "maximum": 60,
       "description": "Duration in seconds to display each game"
     },
-    "show_records": {
-      "type": "boolean",
-      "default": false,
-      "description": "Show team records (wins-losses)"
-    },
-    "show_ranking": {
-      "type": "boolean",
-      "default": false,
-      "description": "Show team rankings (when available)"
-    },
-    "show_odds": {
-      "type": "boolean",
-      "default": true,
-      "description": "Show betting odds for games"
-    },
-    "show_favorite_teams_only": {
-      "type": "boolean",
-      "default": true,
-      "description": "Only show games from favorite teams"
-    },
-    "show_all_live": {
-      "type": "boolean",
-      "default": false,
-      "description": "Show all live games, not just favorites"
-    },
     "update_interval_seconds": {
       "type": "integer",
       "default": 3600,
@@ -90,6 +65,31 @@
       "maximum": 20,
       "description": "Maximum number of upcoming NFL games to display"
     },
+    "nfl_show_records": {
+      "type": "boolean",
+      "default": false,
+      "description": "Show team records (wins-losses) for NFL games"
+    },
+    "nfl_show_ranking": {
+      "type": "boolean",
+      "default": false,
+      "description": "Show team rankings for NFL games (when available)"
+    },
+    "nfl_show_odds": {
+      "type": "boolean",
+      "default": true,
+      "description": "Show betting odds for NFL games"
+    },
+    "nfl_show_favorite_teams_only": {
+      "type": "boolean",
+      "default": true,
+      "description": "Only show NFL games from favorite teams"
+    },
+    "nfl_show_all_live": {
+      "type": "boolean",
+      "default": false,
+      "description": "Show all live NFL games, not just favorites"
+    },
     "ncaa_fb_enabled": {
       "type": "boolean",
       "default": false,
@@ -131,6 +131,31 @@
       "minimum": 1,
       "maximum": 20,
       "description": "Maximum number of upcoming NCAA FB games to display"
+    },
+    "ncaa_fb_show_records": {
+      "type": "boolean",
+      "default": false,
+      "description": "Show team records (wins-losses) for NCAA FB games"
+    },
+    "ncaa_fb_show_ranking": {
+      "type": "boolean",
+      "default": true,
+      "description": "Show team rankings for NCAA FB games (rankings are very important in college football)"
+    },
+    "ncaa_fb_show_odds": {
+      "type": "boolean",
+      "default": true,
+      "description": "Show betting odds for NCAA FB games"
+    },
+    "ncaa_fb_show_favorite_teams_only": {
+      "type": "boolean",
+      "default": true,
+      "description": "Only show NCAA FB games from favorite teams"
+    },
+    "ncaa_fb_show_all_live": {
+      "type": "boolean",
+      "default": false,
+      "description": "Show all live NCAA FB games, not just favorites"
     }
   },
   "additionalProperties": false,

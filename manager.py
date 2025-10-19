@@ -92,8 +92,11 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
                 'recent_games_to_show': config.get('nfl_recent_games_to_show', 5),
                 'upcoming_games_to_show': config.get('nfl_upcoming_games_to_show', 1),
                 'update_interval_seconds': config.get('update_interval_seconds', 3600),
-                'show_favorite_teams_only': config.get('show_favorite_teams_only', True),
-                'show_all_live': config.get('show_all_live', False),
+                'show_records': config.get('nfl_show_records', False),
+                'show_ranking': config.get('nfl_show_ranking', False),
+                'show_odds': config.get('nfl_show_odds', True),
+                'show_favorite_teams_only': config.get('nfl_show_favorite_teams_only', True),
+                'show_all_live': config.get('nfl_show_all_live', False),
                 'logo_dir': 'assets/sports/nfl_logos'
             },
             'ncaa_fb': {
@@ -107,8 +110,11 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
                 'recent_games_to_show': config.get('ncaa_fb_recent_games_to_show', 1),
                 'upcoming_games_to_show': config.get('ncaa_fb_upcoming_games_to_show', 1),
                 'update_interval_seconds': config.get('update_interval_seconds', 3600),
-                'show_favorite_teams_only': config.get('show_favorite_teams_only', True),
-                'show_all_live': config.get('show_all_live', False),
+                'show_records': config.get('ncaa_fb_show_records', False),
+                'show_ranking': config.get('ncaa_fb_show_ranking', True),
+                'show_odds': config.get('ncaa_fb_show_odds', True),
+                'show_favorite_teams_only': config.get('ncaa_fb_show_favorite_teams_only', True),
+                'show_all_live': config.get('ncaa_fb_show_all_live', False),
                 'logo_dir': 'assets/sports/ncaa_logos'
             }
         }
@@ -116,11 +122,6 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
         # Global settings
         self.global_config = config
         self.display_duration = config.get('display_duration', 15)
-        self.show_records = config.get('show_records', False)
-        self.show_ranking = config.get('show_ranking', False)
-        self.show_odds = config.get('show_odds', True)
-        self.show_favorite_teams_only = config.get('show_favorite_teams_only', True)
-        self.show_all_live = config.get('show_all_live', False)
 
         # Background service configuration (internal only)
         self.background_config = {
