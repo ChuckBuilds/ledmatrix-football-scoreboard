@@ -26,6 +26,21 @@
       "default": false,
       "description": "Show team rankings (when available)"
     },
+    "show_odds": {
+      "type": "boolean",
+      "default": true,
+      "description": "Show betting odds for games"
+    },
+    "show_favorite_teams_only": {
+      "type": "boolean",
+      "default": true,
+      "description": "Only show games from favorite teams"
+    },
+    "show_all_live": {
+      "type": "boolean",
+      "default": false,
+      "description": "Show all live games, not just favorites"
+    },
     "update_interval_seconds": {
       "type": "integer",
       "default": 3600,

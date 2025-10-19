@@ -92,6 +92,8 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
                 'recent_games_to_show': config.get('nfl_recent_games_to_show', 5),
                 'upcoming_games_to_show': config.get('nfl_upcoming_games_to_show', 1),
                 'update_interval_seconds': config.get('update_interval_seconds', 3600),
+                'show_favorite_teams_only': config.get('show_favorite_teams_only', True),
+                'show_all_live': config.get('show_all_live', False),
                 'logo_dir': 'assets/sports/nfl_logos'
             },
             'ncaa_fb': {
@@ -105,6 +107,8 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
                 'recent_games_to_show': config.get('ncaa_fb_recent_games_to_show', 1),
                 'upcoming_games_to_show': config.get('ncaa_fb_upcoming_games_to_show', 1),
                 'update_interval_seconds': config.get('update_interval_seconds', 3600),
+                'show_favorite_teams_only': config.get('show_favorite_teams_only', True),
+                'show_all_live': config.get('show_all_live', False),
                 'logo_dir': 'assets/sports/ncaa_logos'
             }
         }
@@ -114,6 +118,9 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
         self.display_duration = config.get('display_duration', 15)
         self.show_records = config.get('show_records', False)
         self.show_ranking = config.get('show_ranking', False)
+        self.show_odds = config.get('show_odds', True)
+        self.show_favorite_teams_only = config.get('show_favorite_teams_only', True)
+        self.show_all_live = config.get('show_all_live', False)
 
         # Background service configuration (internal only)
         self.background_config = {

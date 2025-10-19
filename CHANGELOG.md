@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.0.5] - 2025-10-19
+
+### Added
+- `show_odds` - Toggle to show/hide betting odds for games
+- `show_favorite_teams_only` - Control whether to show only favorite teams or all games
+- `show_all_live` - Override favorites to show all live games
+
+### Fixed
+- Restored missing configuration options that were removed in 1.0.4
+
 ## [1.0.4] - 2025-10-19
 
 ### Changed
