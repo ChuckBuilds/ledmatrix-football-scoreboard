@@ -1,8 +1,8 @@
 {
   "id": "football-scoreboard",
   "name": "Football Scoreboard",
-  "description": "Standalone plugin for live, recent, and upcoming football games across NFL and NCAA Football with real-time scores, down/distance, possession, and game status",
   "author": "ChuckBuilds",
+  "description": "Standalone plugin for live, recent, and upcoming football games across NFL and NCAA Football with real-time scores, down/distance, possession, and game status",
   "category": "sports",
   "tags": [
     "football",
@@ -13,28 +13,22 @@
     "scoreboard",
     "live-scores"
   ],
-  "repo": "https://github.com/ChuckBuilds/ledmatrix-football-scoreboard",
-  "branch": "master",
-  "plugin_path": "",
-  "download_url_template": "https://github.com/ChuckBuilds/ledmatrix-football-scoreboard/archive/refs/tags/v{version}.zip",
-  "versions": [
-    {
-      "version": "1.0.2",
-      "ledmatrix_min": "2.0.0",
-      "released": "2025-10-19"
-    }
-  ],
-  "stars": 0,
-  "downloads": 0,
-  "last_updated": "2025-10-19",
-  "verified": true,
-  "screenshot": "",
   "display_modes": [
     "football_live",
     "football_recent",
     "football_upcoming"
   ],
-  "dependencies": {
-    "base_classes": []
-  }
+  "download_url_template": "https://github.com/ChuckBuilds/ledmatrix-football-scoreboard/archive/refs/tags/v{version}.zip",
+  "versions": [
+    {
+      "released": "2025-10-19",
+      "version": "1.0.2",
+      "ledmatrix_min": "2.0.0"
+    }
+  ],
+  "last_updated": "2025-10-19",
+  "stars": 0,
+  "downloads": 0,
+  "verified": true,
+  "screenshot": ""
 }
