@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.0.9] - 2025-10-19
+
+### Fixed
+- **CRITICAL**: Fixed cache manager API compatibility
+  - Removed invalid `ttl` parameter from `cache_manager.set()` call
+  - Fixes "CacheManager.set() got an unexpected keyword argument 'ttl'" error
+  - Plugin can now successfully cache game data
+
 ## [1.0.8] - 2025-10-19
 
 ### Fixed

@@ -270,8 +270,8 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
             data = response.json()
             games = self._process_api_response(data, league_key, league_config)
 
-            # Cache for league-specific interval
-            self.cache_manager.set(cache_key, games, ttl=update_interval * 2)
+            # Cache the games data (TTL is managed by is_cache_valid check)
+            self.cache_manager.set(cache_key, games)
 
             return games
 
