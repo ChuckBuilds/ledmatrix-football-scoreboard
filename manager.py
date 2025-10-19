@@ -79,10 +79,34 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
 
         # Plugin is self-contained and doesn't depend on base classes
 
-        # Configuration - per-league structure like original managers
+        # Build league configurations from flattened config structure
         self.leagues = {
-            'nfl': config.get('nfl', {}),
-            'ncaa_fb': config.get('ncaa_fb', {})
+            'nfl': {
+                'enabled': config.get('nfl_enabled', True),
+                'favorite_teams': config.get('nfl_favorite_teams', []),
+                'display_modes': {
+                    'live': config.get('nfl_show_live', True),
+                    'recent': config.get('nfl_show_recent', True),
+                    'upcoming': config.get('nfl_show_upcoming', True)
+                },
+                'recent_games_to_show': config.get('nfl_recent_games_to_show', 5),
+                'upcoming_games_to_show': config.get('nfl_upcoming_games_to_show', 1),
+                'update_interval_seconds': config.get('update_interval_seconds', 3600),
+                'logo_dir': 'assets/sports/nfl_logos'
+            },
+            'ncaa_fb': {
+                'enabled': config.get('ncaa_fb_enabled', False),
+                'favorite_teams': config.get('ncaa_fb_favorite_teams', []),
+                'display_modes': {
+                    'live': config.get('ncaa_fb_show_live', True),
+                    'recent': config.get('ncaa_fb_show_recent', True),
+                    'upcoming': config.get('ncaa_fb_show_upcoming', True)
+                },
+                'recent_games_to_show': config.get('ncaa_fb_recent_games_to_show', 1),
+                'upcoming_games_to_show': config.get('ncaa_fb_upcoming_games_to_show', 1),
+                'update_interval_seconds': config.get('update_interval_seconds', 3600),
+                'logo_dir': 'assets/sports/ncaa_logos'
+            }
         }
 
         # Global settings
@@ -538,13 +562,9 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
     def _load_team_logo(self, team: Dict, league: str) -> Optional[Image.Image]:
         """Load and resize team logo."""
         try:
-            # Determine logo directory based on league
-            if league == 'nfl':
-                logo_dir = "assets/sports/nfl_logos"
-            elif league == 'ncaa_fb':
-                logo_dir = "assets/sports/ncaa_logos"
-            else:
-                return None
+            # Get logo directory from league configuration
+            league_config = self.leagues.get(league, {})
+            logo_dir = league_config.get('logo_dir', 'assets/sports/nfl_logos')
             
             team_abbrev = team.get('abbrev', '').lower()
             if not team_abbrev:
