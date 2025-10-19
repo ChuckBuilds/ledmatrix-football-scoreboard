@@ -635,6 +635,23 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
             league_config = self.leagues.get(league, {})
             logo_dir = league_config.get('logo_dir', 'assets/sports/nfl_logos')
             
+            # Convert relative path to absolute path by finding LEDMatrix project root
+            if not os.path.isabs(logo_dir):
+                # Try to find LEDMatrix project root
+                current_dir = os.path.dirname(os.path.abspath(__file__))
+                # Go up from plugin directory to find LEDMatrix root
+                ledmatrix_root = None
+                for parent in [current_dir, os.path.dirname(current_dir), os.path.dirname(os.path.dirname(current_dir))]:
+                    if os.path.exists(os.path.join(parent, 'assets', 'sports')):
+                        ledmatrix_root = parent
+                        break
+                
+                if ledmatrix_root:
+                    logo_dir = os.path.join(ledmatrix_root, logo_dir)
+                else:
+                    # Fallback: try relative to current working directory
+                    logo_dir = os.path.abspath(logo_dir)
+            
             team_abbrev = team.get('abbrev', '').lower()
             if not team_abbrev:
                 return None
@@ -644,7 +661,7 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
             logo_path = None
             
             for ext in logo_extensions:
-                potential_path = f"{logo_dir}/{team_abbrev}{ext}"
+                potential_path = os.path.join(logo_dir, f"{team_abbrev}{ext}")
                 if os.path.exists(potential_path):
                     logo_path = potential_path
                     break
@@ -653,12 +670,13 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
                 # Try with team name instead of abbreviation
                 team_name = team.get('name', '').lower().replace(' ', '_')
                 for ext in logo_extensions:
-                    potential_path = f"{logo_dir}/{team_name}{ext}"
+                    potential_path = os.path.join(logo_dir, f"{team_name}{ext}")
                     if os.path.exists(potential_path):
                         logo_path = potential_path
                         break
             
             if not logo_path:
+                self.logger.debug(f"Logo not found for {team_abbrev} in {logo_dir}")
                 return None
             
             # Load and resize logo

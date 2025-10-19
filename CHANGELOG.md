@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.1.2] - 2025-10-19
+
+### Fixed
+- **Logo Loading**: Fixed team logo loading by using absolute paths to LEDMatrix assets directory
+- **Path Resolution**: Added logic to find LEDMatrix project root and resolve logo paths correctly
+- **Debug Logging**: Added better debug logging for logo loading failures
+- **Cross-Platform**: Improved path handling for different operating systems
+
 ## [1.1.1] - 2025-10-19
 
 ### Fixed
