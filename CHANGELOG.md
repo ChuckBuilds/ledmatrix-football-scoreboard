@@ -1,5 +1,32 @@
 # Changelog
 
+## [1.1.0] - 2025-10-19
+
+### Changed
+- **MAJOR VISUAL UPDATE**: Complete rewrite of rendering to match original NFL/NCAA FB managers exactly
+  - Added proper font loading with PressStart2P and 4x6 fonts
+  - Use `textlength()` for accurate text measurement instead of approximations
+  - Updated `_draw_text_with_outline()` to accept font parameter (matching base class API)
+  
+### Added
+- Team records display (e.g., "8-1", "10-0")
+- Team rankings display for NCAA (e.g., "#1", "#5")
+- Halftime detection and display
+- Proper possession indicator mapping (home/away based on team IDs)
+- Records/rankings positioning in bottom corners above timeouts
+
+### Fixed
+- Possession indicator now correctly identifies home vs away team
+- Timeout defaults to 3 if not specified (matching football rules)
+- All text rendering now uses proper fonts for consistent appearance
+- Text positioning uses accurate measurements instead of character-count approximations
+
+### Technical Details
+- Fonts loaded: PressStart2P (8px, 10px), 4x6 (6px)
+- Rankings cache infrastructure added (for NCAA rankings)
+- Visual layout now pixel-perfect match to original managers
+- Halftime status extracted from ESPN API
+
 ## [1.0.10] - 2025-10-19
 
 ### Fixed

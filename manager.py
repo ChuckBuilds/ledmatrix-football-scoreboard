@@ -26,7 +26,7 @@ from pathlib import Path
 
 import pytz
 import requests
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageFont
 
 try:
     # Try importing from LEDMatrix src directory
@@ -138,7 +138,13 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
         self.last_update = 0
         self.initialized = True
 
-        # Register fonts
+        # Load fonts for rendering
+        self.fonts = self._load_fonts()
+        
+        # Team rankings cache (for NCAA primarily)
+        self._team_rankings_cache = {}
+
+        # Register fonts with font manager (if available)
         self._register_fonts()
 
         # Log enabled leagues and their settings
@@ -197,6 +203,27 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
             self.logger.info("Football scoreboard fonts registered")
         except Exception as e:
             self.logger.warning(f"Error registering fonts: {e}")
+
+    def _load_fonts(self):
+        """Load fonts used by the scoreboard - matching original managers."""
+        fonts = {}
+        try:
+            fonts['score'] = ImageFont.truetype("assets/fonts/PressStart2P-Regular.ttf", 10)
+            fonts['time'] = ImageFont.truetype("assets/fonts/PressStart2P-Regular.ttf", 8)
+            fonts['team'] = ImageFont.truetype("assets/fonts/PressStart2P-Regular.ttf", 8)
+            fonts['status'] = ImageFont.truetype("assets/fonts/4x6-font.ttf", 6)
+            fonts['detail'] = ImageFont.truetype("assets/fonts/4x6-font.ttf", 6)
+            fonts['rank'] = ImageFont.truetype("assets/fonts/PressStart2P-Regular.ttf", 10)
+            self.logger.info("Successfully loaded fonts")
+        except IOError as e:
+            self.logger.warning(f"Fonts not found, using default PIL font: {e}")
+            fonts['score'] = ImageFont.load_default()
+            fonts['time'] = ImageFont.load_default()
+            fonts['team'] = ImageFont.load_default()
+            fonts['status'] = ImageFont.load_default()
+            fonts['detail'] = ImageFont.load_default()
+            fonts['rank'] = ImageFont.load_default()
+        return fonts
 
     def update(self) -> None:
         """Update football game data for all enabled leagues."""
@@ -322,10 +349,15 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
                 return None
 
             # Extract basic game details
+            home_team_id = home_team.get('team', {}).get('id')
+            away_team_id = away_team.get('team', {}).get('id')
+            
             game = {
                 'league': league_key,
                 'league_config': league_config,
                 'game_id': event.get('id'),
+                'home_id': home_team_id,
+                'away_id': away_team_id,
                 'home_team': {
                     'name': home_team.get('team', {}).get('displayName', 'Unknown'),
                     'abbrev': home_team.get('team', {}).get('abbreviation', 'UNK'),
@@ -338,6 +370,8 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
                     'score': int(away_team.get('score', 0)),
                     'logo': away_team.get('team', {}).get('logo')
                 },
+                'home_record': home_team.get('records', [{}])[0].get('summary', '') if home_team.get('records') else '',
+                'away_record': away_team.get('records', [{}])[0].get('summary', '') if away_team.get('records') else '',
                 'status': {
                     'state': status.get('type', {}).get('state', 'unknown'),
                     'detail': status.get('type', {}).get('detail', ''),
@@ -346,15 +380,26 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
                     'display_clock': status.get('displayClock', '')
                 },
                 'start_time': event.get('date', ''),
-                'venue': competition.get('venue', {}).get('fullName', 'Unknown Venue')
+                'venue': competition.get('venue', {}).get('fullName', 'Unknown Venue'),
+                'is_halftime': status.get('type', {}).get('name') == 'STATUS_HALFTIME'
             }
 
             # Add football-specific details
             situation = competition.get('situation', {})
+            possession_indicator = None
+            
             if situation:
                 game['down_distance'] = situation.get('shortDownDistanceText', '')
                 game['possession'] = situation.get('possession')
                 game['is_redzone'] = situation.get('isRedZone', False)
+                
+                # Map possession to home/away indicator (matching original)
+                possession_team_id = situation.get('possession')
+                if possession_team_id:
+                    if possession_team_id == home_team_id:
+                        possession_indicator = "home"
+                    elif possession_team_id == away_team_id:
+                        possession_indicator = "away"
                 
                 # Add more detailed football info
                 game['down'] = situation.get('down')
@@ -362,9 +407,18 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
                 game['yard_line'] = situation.get('yardLine')
                 game['possession_text'] = situation.get('possessionText', '')
                 
-                # Timeouts
-                game['home_timeouts'] = situation.get('homeTimeouts', 0)
-                game['away_timeouts'] = situation.get('awayTimeouts', 0)
+                # Timeouts (default to 3 if not specified, matching original)
+                game['home_timeouts'] = situation.get('homeTimeouts', 3)
+                game['away_timeouts'] = situation.get('awayTimeouts', 3)
+            else:
+                game['down_distance'] = ''
+                game['possession'] = None
+                game['is_redzone'] = False
+                game['home_timeouts'] = 0
+                game['away_timeouts'] = 0
+            
+            # Add possession indicator
+            game['possession_indicator'] = possession_indicator
             
             # Add scoring events detection
             game['scoring_event'] = self._detect_scoring_event(status)
@@ -616,11 +670,11 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
                             home_logo: Image.Image, away_logo: Image.Image,
                             home_team: Dict, away_team: Dict, status: Dict, game: Dict,
                             matrix_width: int, matrix_height: int):
-        """Draw professional scorebug layout matching old managers."""
+        """Draw professional scorebug layout matching old managers exactly."""
         try:
             center_y = matrix_height // 2
             
-            # Draw team logos
+            # Draw team logos (matching original positioning)
             home_x = matrix_width - home_logo.width + 10
             home_y = center_y - (home_logo.height // 2)
             main_img.paste(home_logo, (home_x, home_y), home_logo)
@@ -629,28 +683,29 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
             away_y = center_y - (away_logo.height // 2)
             main_img.paste(away_logo, (away_x, away_y), away_logo)
             
-            # Draw scores (centered)
+            # Draw scores (centered) - use proper font
             home_score = str(home_team.get('score', 0))
             away_score = str(away_team.get('score', 0))
             score_text = f"{away_score}-{home_score}"
             
-            # Use default font for scores
-            score_width = len(score_text) * 6  # Approximate width
+            score_width = draw_overlay.textlength(score_text, font=self.fonts['score'])
             score_x = (matrix_width - score_width) // 2
             score_y = (matrix_height // 2) - 3
-            self._draw_text_with_outline(draw_overlay, score_text, (score_x, score_y), fill=(255, 200, 0))
+            self._draw_text_with_outline(draw_overlay, score_text, (score_x, score_y), self.fonts['score'], fill=(255, 200, 0))
             
-            # Period/Quarter and Clock (Top center)
+            # Period/Quarter and Clock (Top center) - use proper font
             period_clock_text = f"{game.get('game_phase', '')} {status.get('display_clock', '')}".strip()
-            if status.get('state') == 'post':
+            if game.get('is_halftime'):
+                period_clock_text = "Halftime"
+            elif status.get('state') == 'post':
                 period_clock_text = "FINAL"
             elif status.get('state') == 'pre':
                 period_clock_text = "UPCOMING"
             
-            status_width = len(period_clock_text) * 4  # Approximate width
+            status_width = draw_overlay.textlength(period_clock_text, font=self.fonts['time'])
             status_x = (matrix_width - status_width) // 2
             status_y = 1
-            self._draw_text_with_outline(draw_overlay, period_clock_text, (status_x, status_y), fill=(0, 255, 0))
+            self._draw_text_with_outline(draw_overlay, period_clock_text, (status_x, status_y), self.fonts['time'], fill=(0, 255, 0))
             
             # Down & Distance or Scoring Event (Below scores)
             scoring_event = self._detect_scoring_event(status)
@@ -659,11 +714,11 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
             # Show scoring event if detected, otherwise show down & distance
             if scoring_event and status.get('state') == 'in':
                 # Display scoring event with special formatting
-                event_width = len(scoring_event) * 4
+                event_width = draw_overlay.textlength(scoring_event, font=self.fonts['detail'])
                 event_x = (matrix_width - event_width) // 2
                 event_y = matrix_height - 7
                 
-                # Color coding for different scoring events
+                # Color coding for different scoring events (matching original)
                 if 'touchdown' in scoring_event.lower():
                     event_color = (255, 215, 0)  # Gold
                 elif 'field goal' in scoring_event.lower():
@@ -673,30 +728,35 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
                 else:
                     event_color = (255, 255, 255)  # White
                 
-                self._draw_text_with_outline(draw_overlay, scoring_event.upper(), (event_x, event_y), fill=event_color)
+                self._draw_text_with_outline(draw_overlay, scoring_event.upper(), (event_x, event_y), self.fonts['detail'], fill=event_color)
                 
             elif down_distance and status.get('state') == 'in':
                 # Show down & distance
-                dd_width = len(down_distance) * 4
+                dd_width = draw_overlay.textlength(down_distance, font=self.fonts['detail'])
                 dd_x = (matrix_width - dd_width) // 2
                 dd_y = matrix_height - 7
                 down_color = (200, 200, 0) if not game.get('is_redzone', False) else (255, 0, 0)
-                self._draw_text_with_outline(draw_overlay, down_distance, (dd_x, dd_y), fill=down_color)
+                self._draw_text_with_outline(draw_overlay, down_distance, (dd_x, dd_y), self.fonts['detail'], fill=down_color)
                 
                 # Possession Indicator (small football icon)
-                possession = game.get('possession', '')
+                possession = game.get('possession_indicator', '')
                 if possession:
                     self._draw_possession_indicator(draw_overlay, possession, dd_x, dd_width, dd_y)
             
             # Timeouts (Bottom corners)
             self._draw_timeouts(draw_overlay, game, matrix_width, matrix_height)
             
+            # Draw records or rankings if enabled (matching original)
+            league_config = game.get('league_config', {})
+            if league_config.get('show_records') or league_config.get('show_ranking'):
+                self._draw_records_and_rankings(draw_overlay, game, matrix_width, matrix_height, league_config)
+            
         except Exception as e:
             self.logger.error(f"Error drawing scorebug layout: {e}")
 
     def _draw_text_fallback(self, draw_overlay: ImageDraw.Draw, home_team: Dict, away_team: Dict, 
                           status: Dict, game: Dict, matrix_width: int, matrix_height: int):
-        """Draw text-only fallback when logos are not available."""
+        """Draw text-only fallback when logos are not available - with proper fonts."""
         try:
             home_abbrev = home_team.get('abbrev', 'HOME')
             away_abbrev = away_team.get('abbrev', 'AWAY')
@@ -705,40 +765,38 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
             
             # Team matchup
             matchup_text = f"{away_abbrev} @ {home_abbrev}"
-            draw_overlay.text((2, 2), matchup_text, fill=(255, 255, 255))
+            self._draw_text_with_outline(draw_overlay, matchup_text, (2, 2), self.fonts['team'], fill=(255, 255, 255))
             
             # Scores
             score_text = f"{away_score} - {home_score}"
-            draw_overlay.text((2, 12), score_text, fill=(255, 200, 0))
+            self._draw_text_with_outline(draw_overlay, score_text, (2, 12), self.fonts['score'], fill=(255, 200, 0))
             
             # Game status
             if status.get('state') == 'in':
                 period_clock_text = f"{game.get('game_phase', '')} {status.get('display_clock', '')}"
-                draw_overlay.text((2, 22), period_clock_text, fill=(0, 255, 0))
+                self._draw_text_with_outline(draw_overlay, period_clock_text, (2, 22), self.fonts['time'], fill=(0, 255, 0))
                 
                 # Down & distance
                 down_distance = game.get('down_distance', '')
                 if down_distance:
-                    draw_overlay.text((2, 32), down_distance, fill=(200, 200, 0))
+                    self._draw_text_with_outline(draw_overlay, down_distance, (2, 32), self.fonts['detail'], fill=(200, 200, 0))
             elif status.get('state') == 'post':
-                draw_overlay.text((2, 22), "FINAL", fill=(200, 200, 200))
+                self._draw_text_with_outline(draw_overlay, "FINAL", (2, 22), self.fonts['time'], fill=(200, 200, 200))
             else:
-                draw_overlay.text((2, 22), "UPCOMING", fill=(255, 255, 0))
+                self._draw_text_with_outline(draw_overlay, "UPCOMING", (2, 22), self.fonts['time'], fill=(255, 255, 0))
                 
         except Exception as e:
             self.logger.error(f"Error drawing text fallback: {e}")
 
-    def _draw_text_with_outline(self, draw: ImageDraw.Draw, text: str, position: tuple, fill: tuple):
-        """Draw text with outline for better visibility."""
+    def _draw_text_with_outline(self, draw: ImageDraw.Draw, text: str, position: tuple, font, fill=(255, 255, 255), outline_color=(0, 0, 0)):
+        """Draw text with a black outline for better readability - matching original managers."""
         try:
             x, y = position
             # Draw outline
-            for dx in [-1, 0, 1]:
-                for dy in [-1, 0, 1]:
-                    if dx != 0 or dy != 0:
-                        draw.text((x + dx, y + dy), text, fill=(0, 0, 0))
+            for dx, dy in [(-1, -1), (-1, 0), (-1, 1), (0, -1), (0, 1), (1, -1), (1, 0), (1, 1)]:
+                draw.text((x + dx, y + dy), text, font=font, fill=outline_color)
             # Draw main text
-            draw.text((x, y), text, fill=fill)
+            draw.text((x, y), text, font=font, fill=fill)
         except Exception as e:
             self.logger.error(f"Error drawing text with outline: {e}")
 
@@ -776,7 +834,7 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
             self.logger.error(f"Error drawing possession indicator: {e}")
 
     def _draw_timeouts(self, draw: ImageDraw.Draw, game: Dict, matrix_width: int, matrix_height: int):
-        """Draw timeout indicators in bottom corners."""
+        """Draw timeout indicators in bottom corners - matching original."""
         try:
             timeout_bar_width = 4
             timeout_bar_height = 2
@@ -794,12 +852,84 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
             # Home timeouts (bottom right)
             home_timeouts = game.get('home_timeouts', 0)
             for i in range(3):
-                to_x = matrix_width - 2 - (3 - i) * (timeout_bar_width + timeout_spacing)
+                to_x = matrix_width - 2 - timeout_bar_width - (2 - i) * (timeout_bar_width + timeout_spacing)
                 color = (255, 255, 255) if i < home_timeouts else (80, 80, 80)
                 draw.rectangle([to_x, timeout_y, to_x + timeout_bar_width, timeout_y + timeout_bar_height], 
                              fill=color, outline=(0, 0, 0))
         except Exception as e:
             self.logger.error(f"Error drawing timeouts: {e}")
+
+    def _draw_records_and_rankings(self, draw: ImageDraw.Draw, game: Dict, matrix_width: int, matrix_height: int, league_config: Dict):
+        """Draw team records or rankings - matching original managers."""
+        try:
+            # Use detail font for records/rankings
+            record_font = self.fonts['detail']
+            
+            # Get team info
+            home_abbr = game.get('home_team', {}).get('abbrev', '')
+            away_abbr = game.get('away_team', {}).get('abbrev', '')
+            
+            # Calculate positioning (bottom of screen, above timeouts)
+            record_bbox = draw.textbbox((0, 0), "0-0", font=record_font)
+            record_height = record_bbox[3] - record_bbox[1]
+            record_y = matrix_height - record_height - 4
+            
+            # Display away team info (left side)
+            if away_abbr:
+                if league_config.get('show_ranking') and league_config.get('show_records'):
+                    # Rankings take priority
+                    away_rank = self._team_rankings_cache.get(away_abbr, 0)
+                    if away_rank > 0:
+                        away_text = f"#{away_rank}"
+                    else:
+                        away_text = ''
+                elif league_config.get('show_ranking'):
+                    # Show ranking only
+                    away_rank = self._team_rankings_cache.get(away_abbr, 0)
+                    if away_rank > 0:
+                        away_text = f"#{away_rank}"
+                    else:
+                        away_text = ''
+                elif league_config.get('show_records'):
+                    # Show record only
+                    away_text = game.get('away_record', '')
+                else:
+                    away_text = ''
+                
+                if away_text:
+                    away_record_x = 3
+                    self._draw_text_with_outline(draw, away_text, (away_record_x, record_y), record_font)
+            
+            # Display home team info (right side)
+            if home_abbr:
+                if league_config.get('show_ranking') and league_config.get('show_records'):
+                    # Rankings take priority
+                    home_rank = self._team_rankings_cache.get(home_abbr, 0)
+                    if home_rank > 0:
+                        home_text = f"#{home_rank}"
+                    else:
+                        home_text = ''
+                elif league_config.get('show_ranking'):
+                    # Show ranking only
+                    home_rank = self._team_rankings_cache.get(home_abbr, 0)
+                    if home_rank > 0:
+                        home_text = f"#{home_rank}"
+                    else:
+                        home_text = ''
+                elif league_config.get('show_records'):
+                    # Show record only
+                    home_text = game.get('home_record', '')
+                else:
+                    home_text = ''
+                
+                if home_text:
+                    home_record_bbox = draw.textbbox((0, 0), home_text, font=record_font)
+                    home_record_width = home_record_bbox[2] - home_record_bbox[0]
+                    home_record_x = matrix_width - home_record_width - 3
+                    self._draw_text_with_outline(draw, home_text, (home_record_x, record_y), record_font)
+        
+        except Exception as e:
+            self.logger.error(f"Error drawing records/rankings: {e}")
 
     def _display_no_games(self, mode: str):
         """Display message when no games are available."""
