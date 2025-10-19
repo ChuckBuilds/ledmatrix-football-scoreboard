@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.1.1] - 2025-10-19
+
+### Fixed
+- **Upcoming Game Display**: Fixed upcoming games to use proper layout matching original NCAA FB manager
+- **Layout Separation**: Added separate `_draw_upcoming_layout()` method for upcoming games vs live/recent games
+- **Date/Time Parsing**: Proper parsing and display of game date and time for upcoming games
+- **Odds Display**: Added `_draw_dynamic_odds()` method for proper odds display on upcoming games
+- **Visual Parity**: Upcoming games now show "Next Game", date, time, team logos, and rankings exactly like original managers
+
 ## [1.1.0] - 2025-10-19
 
 ### Changed

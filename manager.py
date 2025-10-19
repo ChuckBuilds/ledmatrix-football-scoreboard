@@ -606,10 +606,17 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
                 self.logger.warning("Failed to load team logos, using text fallback")
                 self._draw_text_fallback(draw_overlay, home_team, away_team, status, game, matrix_width, matrix_height)
             else:
-                # Professional scorebug layout with logos
-                self._draw_scorebug_layout(draw_overlay, main_img, home_logo, away_logo, 
-                                         home_team, away_team, status, game, 
-                                         matrix_width, matrix_height)
+                # Use different layouts based on game state
+                if status.get('state') == 'pre':
+                    # Upcoming games: Use special upcoming layout
+                    self._draw_upcoming_layout(draw_overlay, main_img, home_logo, away_logo, 
+                                            home_team, away_team, status, game, 
+                                            matrix_width, matrix_height)
+                else:
+                    # Live/Recent games: Use professional scorebug layout
+                    self._draw_scorebug_layout(draw_overlay, main_img, home_logo, away_logo, 
+                                             home_team, away_team, status, game, 
+                                             matrix_width, matrix_height)
 
             # Composite the overlay onto main image
             final_img = Image.alpha_composite(main_img, overlay)
@@ -753,6 +760,136 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
             
         except Exception as e:
             self.logger.error(f"Error drawing scorebug layout: {e}")
+
+    def _draw_upcoming_layout(self, draw_overlay: ImageDraw.Draw, main_img: Image.Image,
+                            home_logo: Image.Image, away_logo: Image.Image,
+                            home_team: Dict, away_team: Dict, status: Dict, game: Dict,
+                            matrix_width: int, matrix_height: int):
+        """Draw upcoming game layout matching original NCAA FB manager exactly."""
+        try:
+            center_y = matrix_height // 2
+            
+            # Draw team logos (matching original positioning)
+            home_x = matrix_width - home_logo.width + 10
+            home_y = center_y - (home_logo.height // 2)
+            main_img.paste(home_logo, (home_x, home_y), home_logo)
+            
+            away_x = -10
+            away_y = center_y - (away_logo.height // 2)
+            main_img.paste(away_logo, (away_x, away_y), away_logo)
+            
+            # "Next Game" at the top (use smaller status font)
+            status_font = self.fonts['status']
+            if matrix_width > 128:
+                status_font = self.fonts['time']
+            status_text = "Next Game"
+            status_width = draw_overlay.textlength(status_text, font=status_font)
+            status_x = (matrix_width - status_width) // 2
+            status_y = 1
+            self._draw_text_with_outline(draw_overlay, status_text, (status_x, status_y), status_font)
+            
+            # Parse game date and time from start_time
+            start_time = game.get('start_time', '')
+            game_date = ''
+            game_time = ''
+            
+            if start_time:
+                try:
+                    from datetime import datetime
+                    import pytz
+                    # Parse the start_time (ISO format)
+                    dt = datetime.fromisoformat(start_time.replace('Z', '+00:00'))
+                    # Convert to local time
+                    local_dt = dt.astimezone()
+                    # Format date and time
+                    game_date = local_dt.strftime('%m/%d')
+                    game_time = local_dt.strftime('%I:%M%p').lstrip('0')
+                except Exception as e:
+                    self.logger.debug(f"Error parsing start_time {start_time}: {e}")
+                    game_date = "TBD"
+                    game_time = "TBD"
+            else:
+                game_date = "TBD"
+                game_time = "TBD"
+            
+            # Date text (centered, below "Next Game")
+            date_width = draw_overlay.textlength(game_date, font=self.fonts['time'])
+            date_x = (matrix_width - date_width) // 2
+            date_y = center_y - 7  # Raise date slightly
+            self._draw_text_with_outline(draw_overlay, game_date, (date_x, date_y), self.fonts['time'])
+            
+            # Time text (centered, below Date)
+            time_width = draw_overlay.textlength(game_time, font=self.fonts['time'])
+            time_x = (matrix_width - time_width) // 2
+            time_y = date_y + 9  # Place time below date
+            self._draw_text_with_outline(draw_overlay, game_time, (time_x, time_y), self.fonts['time'])
+            
+            # Draw odds if available and enabled
+            league_config = game.get('league_config', {})
+            if league_config.get('show_odds') and 'odds' in game and game['odds']:
+                self._draw_dynamic_odds(draw_overlay, game['odds'], matrix_width, matrix_height)
+            
+            # Draw records or rankings if enabled (matching original)
+            if league_config.get('show_records') or league_config.get('show_ranking'):
+                self._draw_records_and_rankings(draw_overlay, game, matrix_width, matrix_height, league_config)
+            
+        except Exception as e:
+            self.logger.error(f"Error drawing upcoming layout: {e}")
+
+    def _draw_dynamic_odds(self, draw: ImageDraw.Draw, odds: Dict[str, Any], width: int, height: int) -> None:
+        """Draw odds with dynamic positioning - only show negative spread and position O/U based on favored team."""
+        try:
+            home_team_odds = odds.get('home_team_odds', {})
+            away_team_odds = odds.get('away_team_odds', {})
+            home_spread = home_team_odds.get('spread_odds')
+            away_spread = away_team_odds.get('spread_odds')
+
+            # Get top-level spread as fallback
+            top_level_spread = odds.get('spread')
+            
+            # If we have a top-level spread and the individual spreads are None or 0, use the top-level
+            if top_level_spread is not None:
+                if home_spread is None or home_spread == 0.0:
+                    home_spread = top_level_spread
+                if away_spread is None:
+                    away_spread = -top_level_spread
+
+            # Determine which team is favored (has negative spread)
+            home_favored = home_spread is not None and home_spread < 0
+            away_favored = away_spread is not None and away_spread < 0
+            
+            # Only show spread if one team is favored
+            if home_favored or away_favored:
+                spread_value = home_spread if home_favored else away_spread
+                spread_text = f"{spread_value:.1f}"
+                
+                # Position spread text in top corners
+                spread_font = self.fonts['detail']
+                spread_width = draw.textlength(spread_text, font=spread_font)
+                
+                if home_favored:
+                    # Home team favored - show spread on right
+                    spread_x = width - spread_width - 2
+                    spread_y = 1
+                else:
+                    # Away team favored - show spread on left
+                    spread_x = 2
+                    spread_y = 1
+                
+                self._draw_text_with_outline(draw, spread_text, (spread_x, spread_y), spread_font, fill=(0, 255, 0))
+            
+            # Draw over/under if available
+            over_under = odds.get('over_under')
+            if over_under is not None:
+                ou_text = f"O/U: {over_under:.0f}"
+                ou_font = self.fonts['detail']
+                ou_width = draw.textlength(ou_text, font=ou_font)
+                ou_x = (width - ou_width) // 2
+                ou_y = 1
+                self._draw_text_with_outline(draw, ou_text, (ou_x, ou_y), ou_font, fill=(0, 255, 0))
+                
+        except Exception as e:
+            self.logger.error(f"Error drawing dynamic odds: {e}")
 
     def _draw_text_fallback(self, draw_overlay: ImageDraw.Draw, home_team: Dict, away_team: Dict, 
                           status: Dict, game: Dict, matrix_width: int, matrix_height: int):
