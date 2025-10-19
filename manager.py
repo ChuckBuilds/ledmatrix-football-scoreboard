@@ -79,6 +79,7 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
         # Plugin is self-contained and doesn't depend on base classes
 
         # Build league configurations from flattened config structure
+        # Ensure proper type conversion for all numeric values
         self.leagues = {
             'nfl': {
                 'enabled': config.get('nfl_enabled', True),
@@ -88,9 +89,9 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
                     'recent': config.get('nfl_show_recent', True),
                     'upcoming': config.get('nfl_show_upcoming', True)
                 },
-                'recent_games_to_show': config.get('nfl_recent_games_to_show', 5),
-                'upcoming_games_to_show': config.get('nfl_upcoming_games_to_show', 1),
-                'update_interval_seconds': config.get('update_interval_seconds', 3600),
+                'recent_games_to_show': int(config.get('nfl_recent_games_to_show', 5)),
+                'upcoming_games_to_show': int(config.get('nfl_upcoming_games_to_show', 1)),
+                'update_interval_seconds': int(config.get('update_interval_seconds', 3600)),
                 'show_records': config.get('nfl_show_records', False),
                 'show_ranking': config.get('nfl_show_ranking', False),
                 'show_odds': config.get('nfl_show_odds', True),
@@ -106,9 +107,9 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
                     'recent': config.get('ncaa_fb_show_recent', True),
                     'upcoming': config.get('ncaa_fb_show_upcoming', True)
                 },
-                'recent_games_to_show': config.get('ncaa_fb_recent_games_to_show', 1),
-                'upcoming_games_to_show': config.get('ncaa_fb_upcoming_games_to_show', 1),
-                'update_interval_seconds': config.get('update_interval_seconds', 3600),
+                'recent_games_to_show': int(config.get('ncaa_fb_recent_games_to_show', 1)),
+                'upcoming_games_to_show': int(config.get('ncaa_fb_upcoming_games_to_show', 1)),
+                'update_interval_seconds': int(config.get('update_interval_seconds', 3600)),
                 'show_records': config.get('ncaa_fb_show_records', False),
                 'show_ranking': config.get('ncaa_fb_show_ranking', True),
                 'show_odds': config.get('ncaa_fb_show_odds', True),
@@ -118,9 +119,9 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
             }
         }
 
-        # Global settings
+        # Global settings - ensure proper type conversion
         self.global_config = config
-        self.display_duration = config.get('display_duration', 15)
+        self.display_duration = float(config.get('display_duration', 15))
 
         # Background service configuration (internal only)
         self.background_config = {
@@ -248,7 +249,7 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
     def _fetch_league_data(self, league_key: str, league_config: Dict) -> List[Dict]:
         """Fetch game data for a specific league."""
         cache_key = f"football_{league_key}_{datetime.now().strftime('%Y%m%d')}"
-        update_interval = league_config.get('update_interval_seconds', 60)
+        update_interval = int(league_config.get('update_interval_seconds', 60))
 
         # Check cache first (use league-specific interval)
         cached_data = self.cache_manager.get(cache_key)

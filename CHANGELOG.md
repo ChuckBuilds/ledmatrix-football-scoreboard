@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.0.10] - 2025-10-19
+
+### Fixed
+- **CRITICAL**: Fixed type comparison error in cache validation
+  - Added explicit type conversion for all numeric configuration values
+  - Ensures `update_interval_seconds`, `recent_games_to_show`, `upcoming_games_to_show`, and `display_duration` are proper numbers
+  - Fixes "'<' not supported between instances of 'float' and 'str'" error
+
 ## [1.0.9] - 2025-10-19
 
 ### Fixed
