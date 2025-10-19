@@ -1,6 +1,7 @@
 {
   "id": "football-scoreboard",
   "name": "Football Scoreboard",
+  "version": "1.0.3",
   "author": "ChuckBuilds",
   "description": "Standalone plugin for live, recent, and upcoming football games across NFL and NCAA Football with real-time scores, down/distance, possession, and game status",
   "category": "sports",
