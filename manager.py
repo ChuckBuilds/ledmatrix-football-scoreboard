@@ -702,11 +702,12 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
                 # Logo not found - fail silently and use text fallback
                 return None
             
-            # Load and resize logo
+            # Load and resize logo (matching original managers)
             logo = Image.open(logo_path).convert('RGBA')
-            # Resize to appropriate size for matrix (typically 16x16 or 20x20)
-            max_size = min(self.display_manager.matrix.height // 2, 20)
-            logo.thumbnail((max_size, max_size), Image.Resampling.LANCZOS)
+            # Use same sizing as original managers: display dimensions * 1.5
+            max_width = int(self.display_manager.matrix.width * 1.5)
+            max_height = int(self.display_manager.matrix.height * 1.5)
+            logo.thumbnail((max_width, max_height), Image.Resampling.LANCZOS)
             
             return logo
             

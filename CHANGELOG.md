@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.1.5] - 2025-10-20
+
+### Fixed
+- **Logo Sizing**: Fixed logo size to match original managers - now uses `display_width/height * 1.5`
+- **Visual Parity**: Logos now display at the correct size matching NFL/NCAA FB managers exactly
+- **Before**: Logos were too small (20x20 max)
+- **After**: Logos properly scaled to display dimensions (96x96 for 64x64 matrix)
+
 ## [1.1.4] - 2025-10-20
 
 ### Changed
