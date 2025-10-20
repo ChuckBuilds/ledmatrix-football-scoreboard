@@ -1,7 +1,7 @@
 {
   "id": "football-scoreboard",
   "name": "Football Scoreboard",
-  "version": "1.1.5",
+  "version": "1.1.6",
   "author": "ChuckBuilds",
   "class_name": "FootballScoreboardPlugin",
   "description": "Standalone plugin for live, recent, and upcoming football games across NFL and NCAA Football with real-time scores, down/distance, possession, and game status",
@@ -22,6 +22,11 @@
   ],
   "download_url_template": "https://github.com/ChuckBuilds/ledmatrix-football-scoreboard/archive/refs/tags/v{version}.zip",
   "versions": [
+    {
+      "released": "2025-10-20",
+      "version": "1.1.6",
+      "ledmatrix_min": "2.0.0"
+    },
     {
       "released": "2025-10-20",
       "version": "1.1.5",

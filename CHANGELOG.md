@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.1.6] - 2025-10-20
+
+### Fixed
+- **Live Priority System**: Implemented `has_live_content()` method to properly integrate with display controller
+- **Display Logic**: Plugin now only shows "football_live" mode when there are actual live games
+- **No More "No Live Games"**: Plugin won't be called when there are no live games to display
+- **Mode Filtering**: Added `get_live_modes()` to only show live mode during live priority takeover
+
 ## [1.1.5] - 2025-10-20
 
 ### Fixed
