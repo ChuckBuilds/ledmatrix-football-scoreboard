@@ -872,15 +872,14 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
         # Favorites are already normalized to uppercase in config
         return home_abbrev in favorites or away_abbrev in favorites
 
-    def display(self, display_mode: str = None, force_clear: bool = False) -> None:
+    def display(self, force_clear: bool = False) -> None:
         """
         Display football games.
 
         Args:
-            display_mode: Which mode to display (football_live, football_recent, football_upcoming)
             force_clear: If True, clear display before rendering
         """
-        self.logger.info(f"=== DISPLAY METHOD CALLED === mode={display_mode}, initialized={self.initialized}")
+        self.logger.info(f"=== DISPLAY METHOD CALLED === force_clear={force_clear}, initialized={self.initialized}")
         
         try:
             if not self.initialized:
@@ -888,22 +887,15 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
                 self._display_error("Football plugin not initialized")
                 return
 
-            # Track if mode was explicitly requested or auto-selected
-            explicit_mode = display_mode is not None
-            self.logger.info(f"Step 1: explicit_mode={explicit_mode}, current_games count={len(self.current_games)}")
-        
-            # Determine which display mode to use - prioritize live games if enabled
-            if not display_mode:
-                # Auto-select mode based on available games and priorities
-                if self._has_live_games():
-                    display_mode = 'football_live'
-                else:
-                    # Fall back to recent or upcoming
-                    display_mode = 'football_recent' if self._has_recent_games() else 'football_upcoming'
-                self.logger.info(f"Step 2: Auto-selected display_mode={display_mode}")
+            # Auto-select display mode based on available games and priorities
+            # This matches the BasePlugin interface where plugins determine their own mode
+            if self._has_live_games():
+                display_mode = 'football_live'
             else:
-                self.logger.info(f"Step 2: Using provided display_mode={display_mode}")
-
+                # Fall back to recent or upcoming
+                display_mode = 'football_recent' if self._has_recent_games() else 'football_upcoming'
+            
+            self.logger.info(f"Auto-selected display_mode={display_mode}, current_games count={len(self.current_games)}")
             self.current_display_mode = display_mode
 
             # Filter games by display mode
@@ -913,10 +905,8 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
 
             if not filtered_games:
                 self.logger.info(f"Step 5: No games available for {display_mode} after filtering {len(self.current_games)} total games")
-                # If mode was explicitly requested (e.g., by display controller rotation), just skip silently
-                # so the display controller moves to the next mode. Only show "no games" for auto-selected modes.
-                if not explicit_mode:
-                    self._display_no_games(display_mode)
+                # Show "no games" message since this is auto-selected mode
+                self._display_no_games(display_mode)
                 return
 
             self.logger.info(f"Step 6: Displaying {len(filtered_games)} {display_mode} game(s)")
