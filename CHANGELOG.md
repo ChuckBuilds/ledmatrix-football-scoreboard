@@ -1,5 +1,20 @@
 # Changelog
 
+## [1.5.1] - 2025-10-20
+
+### Added
+- **Diagnostic Logging**: Added comprehensive logging to debug display controller integration
+  - Logs when `update()` method is called
+  - Logs when `display()` method is called with mode parameter
+  - Shows if plugin is initialized
+  - Shows how many games are being fetched and added
+  - Helps diagnose why display isn't updating
+
+### Purpose
+- Identify if display controller is calling plugin methods
+- Confirm data is being fetched successfully
+- Debug "manager_to_display is None" issue
+
 ## [1.5.0] - 2025-10-20
 
 ### Added

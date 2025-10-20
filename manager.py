@@ -305,25 +305,35 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
 
     def update(self) -> None:
         """Update football game data for all enabled leagues with smart polling."""
+        self.logger.info(f"=== UPDATE METHOD CALLED === initialized={self.initialized}")
+        
         if not self.initialized:
+            self.logger.warning("Update called but plugin not initialized")
             return
 
         # Check if we need to update based on smart polling
         if not self._should_update():
+            self.logger.debug("Skipping update due to smart polling interval")
             return
 
+        self.logger.info("Proceeding with data update...")
+        
         try:
             self.current_games = []
 
             # Fetch data for each enabled league
             for league_key, league_config in self.leagues.items():
                 if league_config.get('enabled', False):
+                    self.logger.info(f"Fetching data for {league_key}...")
                     games = self._fetch_league_data(league_key, league_config)
                     if games:
                         # Add league info to each game
                         for game in games:
                             game['league_config'] = league_config
                         self.current_games.extend(games)
+                        self.logger.info(f"Added {len(games)} {league_key} games to current_games")
+                    else:
+                        self.logger.warning(f"No games returned for {league_key}")
 
             # Sort games - prioritize live games and favorites
             self._sort_games()
@@ -836,7 +846,10 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
             display_mode: Which mode to display (football_live, football_recent, football_upcoming)
             force_clear: If True, clear display before rendering
         """
+        self.logger.info(f"=== DISPLAY METHOD CALLED === mode={display_mode}, initialized={self.initialized}")
+        
         if not self.initialized:
+            self.logger.error("Football plugin not initialized, cannot display")
             self._display_error("Football plugin not initialized")
             return
 
