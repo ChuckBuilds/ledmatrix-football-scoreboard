@@ -20,7 +20,7 @@ API Version: 1.0.0
 import logging
 import os
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import Dict, Any, Optional, List
 from pathlib import Path
 
@@ -31,12 +31,19 @@ from PIL import Image, ImageDraw, ImageFont
 try:
     # Try importing from LEDMatrix src directory
     from src.plugin_system.base_plugin import BasePlugin
+    from src.background_data_service import get_background_service
+    from src.logo_downloader import LogoDownloader, download_missing_logo
 except ImportError:
     try:
         # Try importing from plugin_system directly
         from plugin_system.base_plugin import BasePlugin
+        from background_data_service import get_background_service
+        from logo_downloader import LogoDownloader, download_missing_logo
     except ImportError:
         BasePlugin = None
+        get_background_service = None
+        LogoDownloader = None
+        download_missing_logo = None
 
 logger = logging.getLogger(__name__)
 
@@ -143,7 +150,8 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
 
         # Global settings - ensure proper type conversion
         self.global_config = config
-        self.display_duration = float(config.get('display_duration', 15))
+        self.display_duration = float(config.get('display_duration', 30))  # Mode display duration
+        self.game_display_duration = float(config.get('game_display_duration', 15))  # Individual game duration
 
         # Background service configuration (internal only)
         self.background_config = {
@@ -159,6 +167,11 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
         self.current_display_mode = None
         self.last_update = 0
         self.initialized = True
+        
+        # Game rotation state (matching old managers)
+        self.current_game_index = 0
+        self.last_game_switch = 0
+        self._last_displayed_games_hash = None  # Track which games are currently being displayed
 
         # Load fonts for rendering
         self.fonts = self._load_fonts()
@@ -174,6 +187,21 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
         
         # Smart polling - dynamically adjust based on game schedule
         self._next_poll_interval = 60  # Start with 1 minute, will adjust after first update
+        
+        # Background service for async API fetching
+        self.background_service = None
+        self.background_fetch_requests = {}  # Track background fetch requests
+        if get_background_service:
+            try:
+                self.background_service = get_background_service(cache_manager, max_workers=1)
+                self.logger.info("Background service initialized for async API fetching")
+            except Exception as e:
+                self.logger.warning(f"Could not initialize background service: {e}")
+        else:
+            self.logger.warning("Background service not available, using synchronous fetching")
+        
+        # Season cache tracking for NFL/NCAA FB
+        self._season_cache_keys = {}  # Track which season data we've cached
 
         # Register fonts with font manager (if available)
         self._register_fonts()
@@ -204,6 +232,7 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
 
         self.logger.info("Football scoreboard plugin initialized")
         self.logger.info(f"Enabled leagues: {enabled_leagues}")
+        self.logger.info(f"Display durations - Mode: {self.display_duration}s, Game rotation: {self.game_display_duration}s")
 
     def _register_fonts(self):
         """Register fonts with the font manager."""
@@ -384,70 +413,219 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
         self._next_poll_interval = 86400
 
     def _sort_games(self):
-        """Sort games by priority and favorites."""
+        """Sort games by priority, favorites, and appropriate time order."""
         def sort_key(game):
-            league_key = game.get('league')
-            league_config = game.get('league_config', {})
             status = game.get('status', {})
+            state = status.get('state')
 
-            # Priority 1: Live games
-            is_live = status.get('state') == 'in'
+            # Priority 1: Live games first
+            is_live = state == 'in'
             live_score = 0 if is_live else 1
 
             # Priority 2: Favorite teams
             favorite_score = 0 if self._is_favorite_game(game) else 1
 
-            # Priority 3: Start time (earlier games first for upcoming, later for recent)
-            start_time = game.get('start_time', '')
+            # Priority 3: Game state (recent, then upcoming)
+            if state == 'post':
+                state_score = 0  # Recent games
+            elif state == 'pre':
+                state_score = 1  # Upcoming games
+            else:
+                state_score = 2  # Other states
 
-            return (live_score, favorite_score, start_time)
+            # Priority 4: Start time
+            # Parse start_time to datetime for proper sorting
+            start_time = game.get('start_time', '')
+            try:
+                # ESPN returns ISO format timestamps
+                if start_time:
+                    from datetime import datetime
+                    dt = datetime.fromisoformat(start_time.replace('Z', '+00:00'))
+                    # For recent games (post), negate the timestamp to sort most recent first
+                    # For upcoming games (pre), use normal order to sort soonest first
+                    if state == 'post':
+                        time_score = -dt.timestamp()  # Negative = reverse order (most recent first)
+                    else:
+                        time_score = dt.timestamp()  # Normal order (soonest first)
+                else:
+                    time_score = 0
+            except:
+                time_score = 0
+
+            return (live_score, favorite_score, state_score, time_score)
 
         self.current_games.sort(key=sort_key)
 
+    def _get_season_dates(self, league_key: str) -> tuple:
+        """Get season start/end dates for a league."""
+        now = datetime.now(pytz.utc)
+        
+        if league_key == 'nfl':
+            # NFL season: August to February
+            season_year = now.year if now.month >= 8 else now.year - 1
+            start_date = f"{season_year}0801"
+            end_date = f"{season_year + 1}0301"
+        elif league_key == 'ncaa_fb':
+            # NCAA FB season: August to January
+            season_year = now.year if now.month >= 8 else now.year - 1
+            start_date = f"{season_year}0801"
+            end_date = f"{season_year + 1}0201"
+        else:
+            # Default: current year
+            start_date = f"{now.year}0101"
+            end_date = f"{now.year}1231"
+        
+        return start_date, end_date, season_year
+    
+    def _should_fetch_live_only(self, league_key: str) -> bool:
+        """Determine if we should fetch only today's games (for live) or full season data.
+        
+        Decision is made PER LEAGUE to handle different game schedules:
+        - NFL: Games typically Sunday/Monday/Thursday
+        - NCAA FB: Games typically Saturday
+        
+        This ensures we don't fetch "today only" for a league that doesn't have games today.
+        """
+        # Check if THIS specific league has any live games currently
+        has_live = any(
+            game.get('status', {}).get('state') == 'in' and game.get('league') == league_key
+            for game in self.current_games
+        )
+        
+        # Check if live mode is enabled for THIS league
+        league_config = self.leagues.get(league_key, {})
+        live_enabled = (
+            league_config.get('enabled', False) and 
+            league_config.get('display_modes', {}).get('live', False)
+        )
+        
+        # If THIS league has live games or live mode is enabled, fetch today's games
+        return has_live or live_enabled
+    
     def _fetch_league_data(self, league_key: str, league_config: Dict) -> List[Dict]:
-        """Fetch game data for a specific league with date range for recent games."""
-        cache_key = f"football_{league_key}_{datetime.now().strftime('%Y%m%d')}"
-        update_interval = int(league_config.get('update_interval_seconds', 60))
-
-        # Check cache first (use league-specific interval)
-        cached_data = self.cache_manager.get(cache_key)
-        if cached_data and (time.time() - self.last_update) < update_interval:
-            # Only log occasionally to reduce noise
-            current_time = time.time()
-            if current_time - self._last_cache_log_time > self._log_throttle_seconds:
-                self.logger.debug(f"Using cached data for enabled leagues")
-                self._last_cache_log_time = current_time
-            return cached_data
-
-        # Fetch from API
-        try:
-            base_url = self.ESPN_API_URLS.get(league_key)
-            if not base_url:
-                self.logger.error(f"Unknown league key: {league_key}")
-                return []
-
-            # Add date range to fetch recent games (last 21 days) and upcoming games
-            # This matches the old base class implementation
-            from datetime import timedelta
-            now = datetime.now()
-            start_date = (now - timedelta(days=21)).strftime('%Y%m%d')
-            end_date = (now + timedelta(days=14)).strftime('%Y%m%d')
+        """Fetch game data for a specific league with optimized fetching strategy."""
+        now = datetime.now()
+        base_url = self.ESPN_API_URLS.get(league_key)
+        
+        if not base_url:
+            self.logger.error(f"Unknown league key: {league_key}")
+            return []
+        
+        # Determine fetch strategy: live-only (today) vs season-wide (PER LEAGUE)
+        fetch_live_only = self._should_fetch_live_only(league_key)
+        
+        if fetch_live_only:
+            # Strategy 1: Fetch today's games only (for live games - much faster!)
+            cache_key = f"football_{league_key}_today_{now.strftime('%Y%m%d')}"
+            today = now.strftime('%Y%m%d')
+            url = f"{base_url}?dates={today}&limit=100"
             
-            # ESPN API format: dates=YYYYMMDD-YYYYMMDD
-            url = f"{base_url}?dates={start_date}-{end_date}"
-
-            self.logger.info(f"Fetching {league_key} data from ESPN API (last 21 days + next 14 days)...")
+            # Check cache first (shorter TTL for live games)
+            cached_data = self.cache_manager.get(cache_key)
+            if cached_data and (time.time() - self.last_update) < 60:  # 1 minute cache for live
+                return cached_data
+            
+            self.logger.info(f"Fetching {league_key} live games for today...")
+            
+        else:
+            # Strategy 2: Fetch season-wide data (for recent/upcoming - cached longer)
+            start_date, end_date, season_year = self._get_season_dates(league_key)
+            cache_key = f"football_{league_key}_season_{season_year}"
+            url = f"{base_url}?dates={start_date}-{end_date}&limit=1000"
+            
+            # Check cache first (longer TTL for season data)
+            cached_data = self.cache_manager.get(cache_key)
+            if cached_data:
+                # Only log occasionally to reduce noise
+                current_time = time.time()
+                if current_time - self._last_cache_log_time > self._log_throttle_seconds:
+                    self.logger.info(f"Using cached {league_key} season data ({len(cached_data)} games)")
+                    self._last_cache_log_time = current_time
+                return cached_data
+            
+            self.logger.info(f"Fetching {league_key} season data ({start_date}-{end_date})...")
+        
+        # Try background service first, fallback to synchronous
+        if self.background_service:
+            return self._fetch_with_background_service(league_key, league_config, url, cache_key)
+        else:
+            return self._fetch_synchronous(league_key, league_config, url, cache_key)
+    
+    def _fetch_with_background_service(self, league_key: str, league_config: Dict, 
+                                       url: str, cache_key: str) -> List[Dict]:
+        """Fetch data using background service (async, non-blocking)."""
+        try:
+            # Check if we already have a pending request for this cache key
+            if cache_key in self.background_fetch_requests:
+                self.logger.debug(f"Background fetch already in progress for {cache_key}")
+                # Return cached data if available, even if stale
+                cached = self.cache_manager.get(cache_key)
+                return cached if cached else []
+            
+            # Callback when fetch completes
+            def fetch_callback(result):
+                """Called when background fetch completes."""
+                if result.success:
+                    self.logger.info(f"Background fetch completed for {league_key}: {len(result.data.get('events', []))} events")
+                    # Process and cache the data
+                    games = self._process_api_response(result.data, league_key, league_config)
+                    self.cache_manager.set(cache_key, games)
+                else:
+                    self.logger.error(f"Background fetch failed for {league_key}: {result.error}")
+                
+                # Clean up request tracking
+                if cache_key in self.background_fetch_requests:
+                    del self.background_fetch_requests[cache_key]
+            
+            # Submit background request
+            request_id = self.background_service.submit_fetch_request(
+                sport="football",
+                year=cache_key,  # Use cache_key as unique identifier
+                url=url,
+                cache_key=cache_key,
+                params={},
+                headers={
+                    'User-Agent': 'LEDMatrix/1.0',
+                    'Accept': 'application/json'
+                },
+                timeout=self.background_config.get('request_timeout', 30),
+                max_retries=self.background_config.get('max_retries', 3),
+                priority=self.background_config.get('priority', 2),
+                callback=fetch_callback
+            )
+            
+            self.background_fetch_requests[cache_key] = request_id
+            
+            # Return cached data immediately if available
+            cached = self.cache_manager.get(cache_key)
+            if cached:
+                self.logger.debug(f"Returning cached data while background fetch proceeds")
+                return cached
+            
+            # No cached data, fetch will complete in background
+            self.logger.info(f"Background fetch initiated for {league_key}, data will be available on next update")
+            return []
+            
+        except Exception as e:
+            self.logger.error(f"Error with background service: {e}, falling back to synchronous")
+            return self._fetch_synchronous(league_key, league_config, url, cache_key)
+    
+    def _fetch_synchronous(self, league_key: str, league_config: Dict, 
+                          url: str, cache_key: str) -> List[Dict]:
+        """Fetch data synchronously (blocking)."""
+        try:
             response = requests.get(url, timeout=self.background_config.get('request_timeout', 30))
             response.raise_for_status()
-
+            
             data = response.json()
             games = self._process_api_response(data, league_key, league_config)
-
-            # Cache the games data (TTL is managed by is_cache_valid check)
+            
+            # Cache the games data
             self.cache_manager.set(cache_key, games)
-
+            
+            self.logger.info(f"Fetched {len(games)} games for {league_key}")
             return games
-
+            
         except requests.RequestException as e:
             self.logger.error(f"Error fetching {league_key} data: {e}")
             return []
@@ -662,6 +840,9 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
             self._display_error("Football plugin not initialized")
             return
 
+        # Track if mode was explicitly requested or auto-selected
+        explicit_mode = display_mode is not None
+        
         # Determine which display mode to use - prioritize live games if enabled
         if not display_mode:
             # Auto-select mode based on available games and priorities
@@ -678,18 +859,49 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
 
         if not filtered_games:
             self.logger.debug(f"No games available for {display_mode} after filtering {len(self.current_games)} total games")
-            self._display_no_games(display_mode)
+            # If mode was explicitly requested (e.g., by display controller rotation), just skip silently
+            # so the display controller moves to the next mode. Only show "no games" for auto-selected modes.
+            if not explicit_mode:
+                self._display_no_games(display_mode)
             return
 
         self.logger.debug(f"Displaying {len(filtered_games)} {display_mode} game(s)")
 
-        # Display the first game (rotation handled by LEDMatrix)
-        game = filtered_games[0]
+        # Handle game rotation (matching old managers)
+        current_time = time.time()
+        
+        # Create hash of filtered game IDs to detect when game list changes
+        games_hash = tuple(g.get('game_id') for g in filtered_games)
+        
+        # Reset index if games list changed
+        if games_hash != self._last_displayed_games_hash:
+            self.logger.debug(f"Game list changed, resetting rotation")
+            self.current_game_index = 0
+            self.last_game_switch = current_time
+            self._last_displayed_games_hash = games_hash
+        
+        # Check if it's time to switch games (matching old SportsRecent/SportsUpcoming logic)
+        if len(filtered_games) > 1 and current_time - self.last_game_switch >= self.game_display_duration:
+            self.current_game_index = (self.current_game_index + 1) % len(filtered_games)
+            self.last_game_switch = current_time
+            force_clear = True  # Force redraw on switch
+            
+            # Log game switching (matching old managers)
+            game = filtered_games[self.current_game_index]
+            away_abbr = game.get('away_team', {}).get('abbrev', 'UNK')
+            home_abbr = game.get('home_team', {}).get('abbrev', 'UNK')
+            self.logger.info(f"[{display_mode}] Switched to: {away_abbr} @ {home_abbr}")
+        
+        # Display current game
+        game = filtered_games[self.current_game_index]
         self._display_game(game, display_mode)
 
     def _filter_games_by_mode(self, mode: str) -> List[Dict]:
-        """Filter games based on display mode and per-league settings - matching original managers."""
+        """Filter games based on display mode with limits per favorite team."""
         filtered = []
+        
+        # Track game counts per favorite team (league_key:team_abbr)
+        team_game_counts = {}
         
         # Debug: log filtering info once per call
         self.logger.debug(f"Filtering for mode: {mode}, Total games available: {len(self.current_games)}")
@@ -706,7 +918,7 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
             if not mode_enabled:
                 continue
 
-            # Check favorite team filtering (matching original managers)
+            # Check favorite team filtering
             show_favorite_teams_only = league_config.get('show_favorite_teams_only', True)
             show_all_live = league_config.get('show_all_live', False)
             favorite_teams = league_config.get('favorite_teams', [])
@@ -719,45 +931,96 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
             
             is_favorite_game = self._is_favorite_game(game)
             
+            # Get team abbreviations
+            home_abbr = game.get('home_team', {}).get('abbrev', '').upper()
+            away_abbr = game.get('away_team', {}).get('abbrev', '').upper()
+            
             # Debug logging for first few games
             if len(filtered) < 3:
-                home_abbr = game.get('home_team', {}).get('abbrev', '')
-                away_abbr = game.get('away_team', {}).get('abbrev', '')
-                home_abbr_upper = home_abbr.upper() if home_abbr else ''
-                away_abbr_upper = away_abbr.upper() if away_abbr else ''
-                self.logger.debug(f"  Game: {away_abbr}@{home_abbr} ({league_key}, state={state})")
-                self.logger.debug(f"    ESPN API returned: away='{away_abbr}' (upper='{away_abbr_upper}'), home='{home_abbr}' (upper='{home_abbr_upper}')")
+                home_abbr_debug = game.get('home_team', {}).get('abbrev', '')
+                away_abbr_debug = game.get('away_team', {}).get('abbrev', '')
+                self.logger.debug(f"  Game: {away_abbr_debug}@{home_abbr_debug} ({league_key}, state={state})")
+                self.logger.debug(f"    ESPN API returned: away='{away_abbr_debug}' (upper='{away_abbr}'), home='{home_abbr_debug}' (upper='{home_abbr}')")
                 self.logger.debug(f"    Favorites list: {favorite_teams}")
-                self.logger.debug(f"    Checking: '{away_abbr_upper}' in {favorite_teams} = {away_abbr_upper in favorite_teams}")
-                self.logger.debug(f"    Checking: '{home_abbr_upper}' in {favorite_teams} = {home_abbr_upper in favorite_teams}")
+                self.logger.debug(f"    Checking: '{away_abbr}' in {favorite_teams} = {away_abbr in favorite_teams}")
+                self.logger.debug(f"    Checking: '{home_abbr}' in {favorite_teams} = {home_abbr in favorite_teams}")
                 self.logger.debug(f"    Is favorite game: {is_favorite_game}")
                 self.logger.debug(f"    show_favorite_teams_only: {show_favorite_teams_only}, show_all_live: {show_all_live}")
             
             # Filter by game state and per-league settings
             if mode == 'football_live' and state == 'in':
                 # For live games: check show_all_live OR favorite team filter
+                # No limits on live games - show all of them
                 if show_all_live or not show_favorite_teams_only or is_favorite_game:
                     filtered.append(game)
 
             elif mode == 'football_recent' and state == 'post':
-                # For recent games: check favorite team filter
+                # For recent games: apply limits PER FAVORITE TEAM
                 if not show_favorite_teams_only or is_favorite_game:
-                    # Check recent games limit for this league
                     recent_limit = league_config.get('recent_games_to_show', 5)
-                    recent_count = len([g for g in filtered if g.get('league') == league_key and g.get('status', {}).get('state') == 'post'])
-                    if recent_count >= recent_limit:
-                        continue
-                    filtered.append(game)
+                    
+                    # Check if any of the favorite teams in this game are under the limit
+                    can_add = False
+                    teams_in_game = []
+                    
+                    if show_favorite_teams_only and favorite_teams:
+                        # Only count games for favorite teams
+                        if home_abbr in favorite_teams:
+                            teams_in_game.append(home_abbr)
+                        if away_abbr in favorite_teams:
+                            teams_in_game.append(away_abbr)
+                    else:
+                        # If not filtering by favorites, treat each game as its own "team" for counting
+                        teams_in_game = [f"{away_abbr}@{home_abbr}"]
+                    
+                    # Check if we can add this game for any of the teams involved
+                    for team in teams_in_game:
+                        team_key = f"{league_key}:{team}:post"
+                        current_count = team_game_counts.get(team_key, 0)
+                        if current_count < recent_limit:
+                            can_add = True
+                            break
+                    
+                    if can_add:
+                        # Increment count for all teams in this game
+                        for team in teams_in_game:
+                            team_key = f"{league_key}:{team}:post"
+                            team_game_counts[team_key] = team_game_counts.get(team_key, 0) + 1
+                        filtered.append(game)
 
             elif mode == 'football_upcoming' and state == 'pre':
-                # For upcoming games: check favorite team filter
+                # For upcoming games: apply limits PER FAVORITE TEAM
                 if not show_favorite_teams_only or is_favorite_game:
-                    # Check upcoming games limit for this league
                     upcoming_limit = league_config.get('upcoming_games_to_show', 10)
-                    upcoming_count = len([g for g in filtered if g.get('league') == league_key and g.get('status', {}).get('state') == 'pre'])
-                    if upcoming_count >= upcoming_limit:
-                        continue
-                    filtered.append(game)
+                    
+                    # Check if any of the favorite teams in this game are under the limit
+                    can_add = False
+                    teams_in_game = []
+                    
+                    if show_favorite_teams_only and favorite_teams:
+                        # Only count games for favorite teams
+                        if home_abbr in favorite_teams:
+                            teams_in_game.append(home_abbr)
+                        if away_abbr in favorite_teams:
+                            teams_in_game.append(away_abbr)
+                    else:
+                        # If not filtering by favorites, treat each game as its own "team" for counting
+                        teams_in_game = [f"{away_abbr}@{home_abbr}"]
+                    
+                    # Check if we can add this game for any of the teams involved
+                    for team in teams_in_game:
+                        team_key = f"{league_key}:{team}:pre"
+                        current_count = team_game_counts.get(team_key, 0)
+                        if current_count < upcoming_limit:
+                            can_add = True
+                            break
+                    
+                    if can_add:
+                        # Increment count for all teams in this game
+                        for team in teams_in_game:
+                            team_key = f"{league_key}:{team}:pre"
+                            team_game_counts[team_key] = team_game_counts.get(team_key, 0) + 1
+                        filtered.append(game)
 
         self.logger.debug(f"Filtered result: {len(filtered)} games for {mode}")
         return filtered
@@ -828,8 +1091,13 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
                     self._draw_upcoming_layout(draw_overlay, main_img, home_logo, away_logo, 
                                             home_team, away_team, status, game, 
                                             matrix_width, matrix_height)
+                elif status.get('state') == 'post':
+                    # Recent/Final games: Use recent layout (different styling)
+                    self._draw_recent_layout(draw_overlay, main_img, home_logo, away_logo,
+                                           home_team, away_team, status, game,
+                                           matrix_width, matrix_height)
                 else:
-                    # Live/Recent games: Use professional scorebug layout
+                    # Live games: Use professional scorebug layout
                     self._draw_scorebug_layout(draw_overlay, main_img, home_logo, away_logo, 
                                              home_team, away_team, status, game, 
                                              matrix_width, matrix_height)
@@ -897,8 +1165,42 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
                         logo_path = potential_path
                         break
             
+            # If still not found, try to download missing logo (matching old managers)
+            if not logo_path and download_missing_logo:
+                primary_logo_path = os.path.join(logo_dir, f"{team_abbrev.upper()}.png")
+                
+                # Check if LogoDownloader is available for filename variations
+                if LogoDownloader:
+                    try:
+                        filename_variations = LogoDownloader.get_logo_filename_variations(team_abbrev)
+                        for filename in filename_variations:
+                            test_path = os.path.join(logo_dir, filename)
+                            if os.path.exists(test_path):
+                                logo_path = test_path
+                                self.logger.debug(f"Found logo at alternative path: {logo_path}")
+                                break
+                    except Exception as e:
+                        self.logger.debug(f"Error checking filename variations: {e}")
+                
+                # If still not found after variations, download it
+                if not logo_path:
+                    team_id = team.get('id', '')
+                    team_logo_url = team.get('logo', '')  # ESPN API provides logo URL
+                    
+                    self.logger.info(f"Logo not found for {team_abbrev} at {primary_logo_path}. Attempting to download.")
+                    
+                    try:
+                        # Try to download the logo from ESPN API
+                        # This will create a placeholder if download fails
+                        download_missing_logo(league, team_id, team_abbrev, Path(primary_logo_path), team_logo_url)
+                        logo_path = primary_logo_path if os.path.exists(primary_logo_path) else None
+                    except Exception as e:
+                        self.logger.warning(f"Failed to download logo for {team_abbrev}: {e}")
+                        logo_path = None
+            
             if not logo_path:
-                # Logo not found - fail silently and use text fallback
+                # Logo not found even after download attempt - use text fallback
+                self.logger.debug(f"No logo available for {team_abbrev}, will use text fallback")
                 return None
             
             # Load and resize logo (matching original managers)
@@ -1002,6 +1304,57 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
             
         except Exception as e:
             self.logger.error(f"Error drawing scorebug layout: {e}")
+
+    def _draw_recent_layout(self, draw_overlay: ImageDraw.Draw, main_img: Image.Image,
+                           home_logo: Image.Image, away_logo: Image.Image,
+                           home_team: Dict, away_team: Dict, status: Dict, game: Dict,
+                           matrix_width: int, matrix_height: int):
+        """Draw recent/final game layout matching original SportsRecent styling."""
+        try:
+            center_y = matrix_height // 2
+            
+            # Draw team logos (closer to edges for recent games, matching original)
+            home_x = matrix_width - home_logo.width + 2  # Closer to edge
+            home_y = center_y - (home_logo.height // 2)
+            main_img.paste(home_logo, (home_x, home_y), home_logo)
+            
+            away_x = -2  # Closer to edge
+            away_y = center_y - (away_logo.height // 2)
+            main_img.paste(away_logo, (away_x, away_y), away_logo)
+            
+            # Final Scores (AT BOTTOM, matching original SportsRecent)
+            home_score = str(home_team.get('score', 0))
+            away_score = str(away_team.get('score', 0))
+            score_text = f"{away_score}-{home_score}"
+            
+            score_width = draw_overlay.textlength(score_text, font=self.fonts['score'])
+            score_x = (matrix_width - score_width) // 2
+            score_y = matrix_height - 14  # At bottom, not middle!
+            # WHITE color for final scores (not gold)
+            self._draw_text_with_outline(draw_overlay, score_text, (score_x, score_y), self.fonts['score'], fill=(255, 255, 255))
+            
+            # "Final" text at top (matching original)
+            period_text = game.get('period_text', 'Final')  # Use period_text for Final/OT notation
+            if not period_text or period_text == '':
+                period_text = "Final"
+            
+            status_width = draw_overlay.textlength(period_text, font=self.fonts['time'])
+            status_x = (matrix_width - status_width) // 2
+            status_y = 1  # At top
+            # WHITE color for status (not green)
+            self._draw_text_with_outline(draw_overlay, period_text, (status_x, status_y), self.fonts['time'], fill=(255, 255, 255))
+            
+            # Draw odds if available and enabled (matching original)
+            league_config = game.get('league_config', {})
+            if league_config.get('show_odds') and 'odds' in game and game['odds']:
+                self._draw_dynamic_odds(draw_overlay, game['odds'], matrix_width, matrix_height)
+            
+            # Draw records or rankings if enabled (matching original)
+            if league_config.get('show_records') or league_config.get('show_ranking'):
+                self._draw_records_and_rankings(draw_overlay, game, matrix_width, matrix_height, league_config)
+            
+        except Exception as e:
+            self.logger.error(f"Error drawing recent layout: {e}")
 
     def _draw_upcoming_layout(self, draw_overlay: ImageDraw.Draw, main_img: Image.Image,
                             home_logo: Image.Image, away_logo: Image.Image,

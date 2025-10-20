@@ -6,10 +6,17 @@
   "properties": {
     "display_duration": {
       "type": "number",
-      "default": 15,
+      "default": 30,
       "minimum": 5,
+      "maximum": 300,
+      "description": "Duration in seconds for the display controller to show this plugin mode before rotating to next plugin. Controls how long football_live, football_recent, or football_upcoming is shown before moving to next mode."
+    },
+    "game_display_duration": {
+      "type": "number",
+      "default": 15,
+      "minimum": 3,
       "maximum": 60,
-      "description": "Duration in seconds to display each game"
+      "description": "Duration in seconds to show each individual game before rotating to the next game within the same mode. If you have 3 recent games, this controls how long each game is shown."
     },
     "update_interval_seconds": {
       "type": "integer",
