@@ -1,5 +1,29 @@
 # Changelog
 
+## [1.4.0] - 2025-10-20
+
+### Added
+- **Smart Polling**: Dynamically adjust API polling frequency based on game schedules
+  - **Live games**: Poll every 1 minute
+  - **Games < 1 hour away**: Poll every 1 minute  
+  - **Games < 2 hours away**: Poll every 5 minutes
+  - **Games today**: Poll every 10 minutes
+  - **Games tomorrow**: Poll every 30 minutes
+  - **Games 2+ days away**: Poll every 12 hours
+  - **No games scheduled**: Poll every 24 hours
+
+### Benefits
+- Dramatically reduces API calls (from 273 games every hour to smart intervals)
+- Respects ESPN's API and cache more intelligently
+- Football games only on Fri/Sat/Sun, no point polling frequently Mon-Thu
+- Logs "Next poll in: X minutes" for visibility
+
+### Technical Details
+- Implements `_should_update()` to check polling interval
+- Implements `_calculate_next_update_interval()` to adjust based on soonest game
+- Finds nearest upcoming game and calculates time until start
+- Automatically increases polling frequency as game time approaches
+
 ## [1.3.0] - 2025-10-20
 
 ### Fixed

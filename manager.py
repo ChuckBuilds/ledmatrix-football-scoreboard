@@ -162,6 +162,9 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
         self._last_update_log_time = 0
         self._last_game_count = 0
         self._log_throttle_seconds = 300  # Only log these messages every 5 minutes
+        
+        # Smart polling - dynamically adjust based on game schedule
+        self._next_poll_interval = 60  # Start with 1 minute, will adjust after first update
 
         # Register fonts with font manager (if available)
         self._register_fonts()
@@ -258,8 +261,12 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
         return fonts
 
     def update(self) -> None:
-        """Update football game data for all enabled leagues."""
+        """Update football game data for all enabled leagues with smart polling."""
         if not self.initialized:
+            return
+
+        # Check if we need to update based on smart polling
+        if not self._should_update():
             return
 
         try:
@@ -280,6 +287,9 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
 
             self.last_update = time.time()
             
+            # Calculate next update interval based on game states
+            self._calculate_next_update_interval()
+            
             # Only log occasionally or when game count changes to reduce noise
             current_time = time.time()
             game_count = len(self.current_games)
@@ -294,11 +304,70 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
                 self.logger.info(f"Football data updated: {game_count} total games")
                 self.logger.info(f"  NFL: {len(nfl_games)}, NCAA FB: {len(ncaa_games)}")
                 self.logger.info(f"  Live: {len(live_games)}, Recent: {len(recent_games)}, Upcoming: {len(upcoming_games)}")
+                
+                # Log smart polling info
+                if hasattr(self, '_next_poll_interval'):
+                    self.logger.info(f"  Next poll in: {self._next_poll_interval // 60} minutes")
+                
                 self._last_update_log_time = current_time
                 self._last_game_count = game_count
 
         except Exception as e:
             self.logger.error(f"Error updating football data: {e}")
+
+    def _should_update(self) -> bool:
+        """Determine if we should fetch new data based on smart polling."""
+        if not hasattr(self, '_next_poll_interval'):
+            return True  # First run, always update
+        
+        time_since_last_update = time.time() - self.last_update
+        return time_since_last_update >= self._next_poll_interval
+
+    def _calculate_next_update_interval(self):
+        """Calculate next update interval based on game states and schedules."""
+        from datetime import datetime, timezone
+        
+        # Check for live games
+        live_games = [g for g in self.current_games if g.get('status', {}).get('state') == 'in']
+        if live_games:
+            self._next_poll_interval = 60  # Poll every 1 minute during live games
+            return
+        
+        # Check for upcoming games and find the soonest one
+        upcoming_games = [g for g in self.current_games if g.get('status', {}).get('state') == 'pre']
+        if upcoming_games:
+            now = datetime.now(timezone.utc)
+            soonest_game_time = None
+            
+            for game in upcoming_games:
+                try:
+                    start_time_str = game.get('start_time', '')
+                    if start_time_str:
+                        game_time = datetime.fromisoformat(start_time_str.replace('Z', '+00:00'))
+                        if soonest_game_time is None or game_time < soonest_game_time:
+                            soonest_game_time = game_time
+                except:
+                    continue
+            
+            if soonest_game_time:
+                time_until_game = (soonest_game_time - now).total_seconds()
+                
+                # Smart polling based on time until next game
+                if time_until_game < 3600:  # Less than 1 hour away
+                    self._next_poll_interval = 60  # Poll every 1 minute
+                elif time_until_game < 7200:  # Less than 2 hours away
+                    self._next_poll_interval = 300  # Poll every 5 minutes
+                elif time_until_game < 86400:  # Less than 1 day away (games today)
+                    self._next_poll_interval = 600  # Poll every 10 minutes
+                elif time_until_game < 172800:  # Less than 2 days away (games tomorrow)
+                    self._next_poll_interval = 1800  # Poll every 30 minutes
+                else:  # Games 2+ days away
+                    self._next_poll_interval = 43200  # Poll every 12 hours
+                
+                return
+        
+        # No live or upcoming games, poll once per day
+        self._next_poll_interval = 86400
 
     def _sort_games(self):
         """Sort games by priority and favorites."""
