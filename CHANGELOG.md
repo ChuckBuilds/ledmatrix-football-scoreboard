@@ -1,5 +1,21 @@
 # Changelog
 
+## [1.1.7] - 2025-10-20
+
+### Fixed
+- **CRITICAL: Favorite Team Filtering**: Added missing favorite team filter logic matching original managers
+  - Now properly checks `show_favorite_teams_only` setting
+  - Respects `show_all_live` for showing all live games regardless of favorites
+  - Filters live, recent, and upcoming games based on favorite teams
+- **Timeout Display**: Timeouts now only display for live games (not FINAL or UPCOMING)
+- **Debug Logging**: Added detailed game breakdown logging (NFL vs NCAA FB, Live vs Recent vs Upcoming)
+  - Helps diagnose why games aren't appearing
+
+### Technical Details
+- Filtering logic now matches `SportsLive.update()` from base classes (line 1229)
+- Timeout indicators only drawn when `status.state == 'in'` (live games only)
+- Enhanced logging shows per-league and per-state game counts
+
 ## [1.1.6] - 2025-10-20
 
 ### Fixed

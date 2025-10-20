@@ -258,7 +258,16 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
             current_time = time.time()
             game_count = len(self.current_games)
             if game_count != self._last_game_count or current_time - self._last_update_log_time > self._log_throttle_seconds:
-                self.logger.info(f"Football data updated: {game_count} games")
+                # Log detailed breakdown by league and state
+                nfl_games = [g for g in self.current_games if g.get('league') == 'nfl']
+                ncaa_games = [g for g in self.current_games if g.get('league') == 'ncaa_fb']
+                live_games = [g for g in self.current_games if g.get('status', {}).get('state') == 'in']
+                recent_games = [g for g in self.current_games if g.get('status', {}).get('state') == 'post']
+                upcoming_games = [g for g in self.current_games if g.get('status', {}).get('state') == 'pre']
+                
+                self.logger.info(f"Football data updated: {game_count} total games")
+                self.logger.info(f"  NFL: {len(nfl_games)}, NCAA FB: {len(ncaa_games)}")
+                self.logger.info(f"  Live: {len(live_games)}, Recent: {len(recent_games)}, Upcoming: {len(upcoming_games)}")
                 self._last_update_log_time = current_time
                 self._last_game_count = game_count
 
@@ -532,15 +541,18 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
         filtered_games = self._filter_games_by_mode(display_mode)
 
         if not filtered_games:
+            self.logger.debug(f"No games available for {display_mode} after filtering {len(self.current_games)} total games")
             self._display_no_games(display_mode)
             return
+
+        self.logger.debug(f"Displaying {len(filtered_games)} {display_mode} game(s)")
 
         # Display the first game (rotation handled by LEDMatrix)
         game = filtered_games[0]
         self._display_game(game, display_mode)
 
     def _filter_games_by_mode(self, mode: str) -> List[Dict]:
-        """Filter games based on display mode and per-league settings."""
+        """Filter games based on display mode and per-league settings - matching original managers."""
         filtered = []
 
         for game in self.current_games:
@@ -555,25 +567,38 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
             if not mode_enabled:
                 continue
 
-            # Filter by game state and per-league limits
+            # Check favorite team filtering (matching original managers)
+            show_favorite_teams_only = league_config.get('show_favorite_teams_only', True)
+            show_all_live = league_config.get('show_all_live', False)
+            favorite_teams = league_config.get('favorite_teams', [])
+            
+            is_favorite_game = self._is_favorite_game(game)
+            
+            # Filter by game state and per-league settings
             if mode == 'football_live' and state == 'in':
-                filtered.append(game)
+                # For live games: check show_all_live OR favorite team filter
+                if show_all_live or not show_favorite_teams_only or is_favorite_game:
+                    filtered.append(game)
 
             elif mode == 'football_recent' and state == 'post':
-                # Check recent games limit for this league
-                recent_limit = league_config.get('recent_games_to_show', 5)
-                recent_count = len([g for g in filtered if g.get('league') == league_key and g.get('status', {}).get('state') == 'post'])
-                if recent_count >= recent_limit:
-                    continue
-                filtered.append(game)
+                # For recent games: check favorite team filter
+                if not show_favorite_teams_only or is_favorite_game:
+                    # Check recent games limit for this league
+                    recent_limit = league_config.get('recent_games_to_show', 5)
+                    recent_count = len([g for g in filtered if g.get('league') == league_key and g.get('status', {}).get('state') == 'post'])
+                    if recent_count >= recent_limit:
+                        continue
+                    filtered.append(game)
 
             elif mode == 'football_upcoming' and state == 'pre':
-                # Check upcoming games limit for this league
-                upcoming_limit = league_config.get('upcoming_games_to_show', 10)
-                upcoming_count = len([g for g in filtered if g.get('league') == league_key and g.get('status', {}).get('state') == 'pre'])
-                if upcoming_count >= upcoming_limit:
-                    continue
-                filtered.append(game)
+                # For upcoming games: check favorite team filter
+                if not show_favorite_teams_only or is_favorite_game:
+                    # Check upcoming games limit for this league
+                    upcoming_limit = league_config.get('upcoming_games_to_show', 10)
+                    upcoming_count = len([g for g in filtered if g.get('league') == league_key and g.get('status', {}).get('state') == 'pre'])
+                    if upcoming_count >= upcoming_limit:
+                        continue
+                    filtered.append(game)
 
         return filtered
 
@@ -806,8 +831,9 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
                 if possession:
                     self._draw_possession_indicator(draw_overlay, possession, dd_x, dd_width, dd_y)
             
-            # Timeouts (Bottom corners)
-            self._draw_timeouts(draw_overlay, game, matrix_width, matrix_height)
+            # Timeouts (Bottom corners) - only for live games
+            if status.get('state') == 'in':
+                self._draw_timeouts(draw_overlay, game, matrix_width, matrix_height)
             
             # Draw records or rankings if enabled (matching original)
             league_config = game.get('league_config', {})
