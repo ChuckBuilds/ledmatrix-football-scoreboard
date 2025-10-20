@@ -158,6 +158,9 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
         for league_key, league_config in self.leagues.items():
             if league_config.get('enabled', False):
                 enabled_leagues.append(league_key)
+                # Log favorite teams for enabled leagues
+                favorites = league_config.get('favorite_teams', [])
+                self.logger.info(f"{league_key.upper()} enabled with {len(favorites)} favorite team(s): {favorites}")
 
         self.logger.info("Football scoreboard plugin initialized")
         self.logger.info(f"Enabled leagues: {enabled_leagues}")

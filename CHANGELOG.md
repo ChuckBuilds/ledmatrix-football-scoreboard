@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.1.9] - 2025-10-20
+
+### Added
+- **Startup Configuration Logging**: Added INFO-level logging on startup to show:
+  - Which leagues are enabled (NFL, NCAA FB)
+  - How many favorite teams are configured for each league
+  - Actual favorite team lists (e.g., `['TB']`, `['UGA']`)
+- **Troubleshooting**: Immediately visible in logs to diagnose configuration issues
+
 ## [1.1.8] - 2025-10-20
 
 ### Added
