@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.4.1] - 2025-10-20
+
+### Fixed
+- **WORKAROUND: Web UI Not Saving Favorite Teams**: Plugin now treats empty favorite teams list as "show all games"
+  - If `favorite_teams` is empty but `show_favorite_teams_only` is enabled, the filter is automatically disabled
+  - Prevents "No games" message when web UI fails to save arrays properly
+  - **ROOT CAUSE**: Web UI is saving array fields as empty strings instead of arrays
+
+### Investigation Needed
+- Web UI form submit handler not properly converting array fields before POST
+- Config shows: `nfl_favorite_teams: "" (type: str)` instead of `["TB"] (type: list)`
+- Need to fix the JavaScript in plugins.html to properly handle array submissions
+
 ## [1.4.0] - 2025-10-20
 
 ### Added

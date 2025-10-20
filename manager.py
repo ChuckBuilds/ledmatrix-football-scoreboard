@@ -92,42 +92,51 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
                 # Handle comma-separated strings from web UI
                 return [team.strip().upper() for team in value.split(',') if team.strip()]
             return []
+        
+        # Helper function to normalize boolean values
+        def normalize_bool(value, default=False):
+            """Convert various boolean representations to actual bool."""
+            if isinstance(value, bool):
+                return value
+            if isinstance(value, str):
+                return value.lower() in ('true', 'on', 'yes', '1')
+            return bool(value) if value is not None else default
 
         self.leagues = {
             'nfl': {
-                'enabled': config.get('nfl_enabled', True),
+                'enabled': normalize_bool(config.get('nfl_enabled'), True),
                 'favorite_teams': normalize_favorite_teams(config.get('nfl_favorite_teams', [])),
                 'display_modes': {
-                    'live': config.get('nfl_show_live', True),
-                    'recent': config.get('nfl_show_recent', True),
-                    'upcoming': config.get('nfl_show_upcoming', True)
+                    'live': normalize_bool(config.get('nfl_show_live'), True),
+                    'recent': normalize_bool(config.get('nfl_show_recent'), True),
+                    'upcoming': normalize_bool(config.get('nfl_show_upcoming'), True)
                 },
                 'recent_games_to_show': int(config.get('nfl_recent_games_to_show', 5)),
                 'upcoming_games_to_show': int(config.get('nfl_upcoming_games_to_show', 1)),
                 'update_interval_seconds': int(config.get('update_interval_seconds', 3600)),
-                'show_records': config.get('nfl_show_records', False),
-                'show_ranking': config.get('nfl_show_ranking', False),
-                'show_odds': config.get('nfl_show_odds', True),
-                'show_favorite_teams_only': config.get('nfl_show_favorite_teams_only', True),
-                'show_all_live': config.get('nfl_show_all_live', False),
+                'show_records': normalize_bool(config.get('nfl_show_records'), False),
+                'show_ranking': normalize_bool(config.get('nfl_show_ranking'), False),
+                'show_odds': normalize_bool(config.get('nfl_show_odds'), True),
+                'show_favorite_teams_only': normalize_bool(config.get('nfl_show_favorite_teams_only'), True),
+                'show_all_live': normalize_bool(config.get('nfl_show_all_live'), False),
                 'logo_dir': 'assets/sports/nfl_logos'
             },
             'ncaa_fb': {
-                'enabled': config.get('ncaa_fb_enabled', False),
+                'enabled': normalize_bool(config.get('ncaa_fb_enabled'), False),
                 'favorite_teams': normalize_favorite_teams(config.get('ncaa_fb_favorite_teams', [])),
                 'display_modes': {
-                    'live': config.get('ncaa_fb_show_live', True),
-                    'recent': config.get('ncaa_fb_show_recent', True),
-                    'upcoming': config.get('ncaa_fb_show_upcoming', True)
+                    'live': normalize_bool(config.get('ncaa_fb_show_live'), True),
+                    'recent': normalize_bool(config.get('ncaa_fb_show_recent'), True),
+                    'upcoming': normalize_bool(config.get('ncaa_fb_show_upcoming'), True)
                 },
                 'recent_games_to_show': int(config.get('ncaa_fb_recent_games_to_show', 1)),
                 'upcoming_games_to_show': int(config.get('ncaa_fb_upcoming_games_to_show', 1)),
                 'update_interval_seconds': int(config.get('update_interval_seconds', 3600)),
-                'show_records': config.get('ncaa_fb_show_records', False),
-                'show_ranking': config.get('ncaa_fb_show_ranking', True),
-                'show_odds': config.get('ncaa_fb_show_odds', True),
-                'show_favorite_teams_only': config.get('ncaa_fb_show_favorite_teams_only', True),
-                'show_all_live': config.get('ncaa_fb_show_all_live', False),
+                'show_records': normalize_bool(config.get('ncaa_fb_show_records'), False),
+                'show_ranking': normalize_bool(config.get('ncaa_fb_show_ranking'), True),
+                'show_odds': normalize_bool(config.get('ncaa_fb_show_odds'), True),
+                'show_favorite_teams_only': normalize_bool(config.get('ncaa_fb_show_favorite_teams_only'), True),
+                'show_all_live': normalize_bool(config.get('ncaa_fb_show_all_live'), False),
                 'logo_dir': 'assets/sports/ncaa_logos'
             }
         }
@@ -184,7 +193,12 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
                 enabled_leagues.append(league_key)
                 # Log favorite teams for enabled leagues
                 favorites = league_config.get('favorite_teams', [])
+                show_fav_only = league_config.get('show_favorite_teams_only')
+                show_all_live = league_config.get('show_all_live')
                 self.logger.info(f"  {league_key.upper()} enabled with {len(favorites)} favorite team(s): {favorites}")
+                self.logger.info(f"    show_favorite_teams_only: {show_fav_only} (type: {type(show_fav_only).__name__})")
+                self.logger.info(f"    show_all_live: {show_all_live} (type: {type(show_all_live).__name__})")
+                self.logger.info(f"    Display modes: live={league_config.get('display_modes', {}).get('live')}, recent={league_config.get('display_modes', {}).get('recent')}, upcoming={league_config.get('display_modes', {}).get('upcoming')}")
             else:
                 self.logger.info(f"  {league_key.upper()} disabled")
 
@@ -696,6 +710,12 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
             show_favorite_teams_only = league_config.get('show_favorite_teams_only', True)
             show_all_live = league_config.get('show_all_live', False)
             favorite_teams = league_config.get('favorite_teams', [])
+            
+            # If no favorite teams configured, treat as "show all" to avoid filtering out everything
+            if not favorite_teams and show_favorite_teams_only:
+                # No favorites configured but "show favorites only" is on
+                # This is likely a config error - disable favorite filtering
+                show_favorite_teams_only = False
             
             is_favorite_game = self._is_favorite_game(game)
             
