@@ -144,6 +144,12 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
         # Team rankings cache (for NCAA primarily)
         self._team_rankings_cache = {}
 
+        # Log throttling to reduce noise
+        self._last_cache_log_time = 0
+        self._last_update_log_time = 0
+        self._last_game_count = 0
+        self._log_throttle_seconds = 300  # Only log these messages every 5 minutes
+
         # Register fonts with font manager (if available)
         self._register_fonts()
 
@@ -247,7 +253,14 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
             self._sort_games()
 
             self.last_update = time.time()
-            self.logger.debug(f"Updated football data: {len(self.current_games)} games")
+            
+            # Only log occasionally or when game count changes to reduce noise
+            current_time = time.time()
+            game_count = len(self.current_games)
+            if game_count != self._last_game_count or current_time - self._last_update_log_time > self._log_throttle_seconds:
+                self.logger.info(f"Football data updated: {game_count} games")
+                self._last_update_log_time = current_time
+                self._last_game_count = game_count
 
         except Exception as e:
             self.logger.error(f"Error updating football data: {e}")
@@ -281,7 +294,11 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
         # Check cache first (use league-specific interval)
         cached_data = self.cache_manager.get(cache_key)
         if cached_data and (time.time() - self.last_update) < update_interval:
-            self.logger.debug(f"Using cached data for {league_key}")
+            # Only log occasionally to reduce noise
+            current_time = time.time()
+            if current_time - self._last_cache_log_time > self._log_throttle_seconds:
+                self.logger.debug(f"Using cached data for enabled leagues")
+                self._last_cache_log_time = current_time
             return cached_data
 
         # Fetch from API
@@ -682,7 +699,7 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
                         break
             
             if not logo_path:
-                self.logger.debug(f"Logo not found for {team_abbrev} in {logo_dir}")
+                # Logo not found - fail silently and use text fallback
                 return None
             
             # Load and resize logo

@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.1.4] - 2025-10-20
+
+### Changed
+- **Reduced Log Noise**: Throttled repetitive DEBUG logs to only appear every 5 minutes
+- **Smarter Logging**: "Updated football data" now only logs when game count changes or every 5 minutes
+- **Cleaner Logs**: Removed "Logo not found" debug messages, fail silently and use text fallback
+- **Performance**: Less log I/O improves overall system performance
+
 ## [1.1.3] - 2025-10-20
 
 ### Fixed
