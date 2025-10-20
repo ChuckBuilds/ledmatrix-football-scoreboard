@@ -848,66 +848,78 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
         """
         self.logger.info(f"=== DISPLAY METHOD CALLED === mode={display_mode}, initialized={self.initialized}")
         
-        if not self.initialized:
-            self.logger.error("Football plugin not initialized, cannot display")
-            self._display_error("Football plugin not initialized")
-            return
+        try:
+            if not self.initialized:
+                self.logger.error("Football plugin not initialized, cannot display")
+                self._display_error("Football plugin not initialized")
+                return
 
-        # Track if mode was explicitly requested or auto-selected
-        explicit_mode = display_mode is not None
+            # Track if mode was explicitly requested or auto-selected
+            explicit_mode = display_mode is not None
+            self.logger.info(f"Step 1: explicit_mode={explicit_mode}, current_games count={len(self.current_games)}")
         
-        # Determine which display mode to use - prioritize live games if enabled
-        if not display_mode:
-            # Auto-select mode based on available games and priorities
-            if self._has_live_games():
-                display_mode = 'football_live'
+            # Determine which display mode to use - prioritize live games if enabled
+            if not display_mode:
+                # Auto-select mode based on available games and priorities
+                if self._has_live_games():
+                    display_mode = 'football_live'
+                else:
+                    # Fall back to recent or upcoming
+                    display_mode = 'football_recent' if self._has_recent_games() else 'football_upcoming'
+                self.logger.info(f"Step 2: Auto-selected display_mode={display_mode}")
             else:
-                # Fall back to recent or upcoming
-                display_mode = 'football_recent' if self._has_recent_games() else 'football_upcoming'
+                self.logger.info(f"Step 2: Using provided display_mode={display_mode}")
 
-        self.current_display_mode = display_mode
+            self.current_display_mode = display_mode
 
-        # Filter games by display mode
-        filtered_games = self._filter_games_by_mode(display_mode)
+            # Filter games by display mode
+            self.logger.info(f"Step 3: About to filter games for {display_mode}")
+            filtered_games = self._filter_games_by_mode(display_mode)
+            self.logger.info(f"Step 4: Filtered {len(filtered_games)} games")
 
-        if not filtered_games:
-            self.logger.debug(f"No games available for {display_mode} after filtering {len(self.current_games)} total games")
-            # If mode was explicitly requested (e.g., by display controller rotation), just skip silently
-            # so the display controller moves to the next mode. Only show "no games" for auto-selected modes.
-            if not explicit_mode:
-                self._display_no_games(display_mode)
-            return
+            if not filtered_games:
+                self.logger.info(f"Step 5: No games available for {display_mode} after filtering {len(self.current_games)} total games")
+                # If mode was explicitly requested (e.g., by display controller rotation), just skip silently
+                # so the display controller moves to the next mode. Only show "no games" for auto-selected modes.
+                if not explicit_mode:
+                    self._display_no_games(display_mode)
+                return
 
-        self.logger.debug(f"Displaying {len(filtered_games)} {display_mode} game(s)")
+            self.logger.info(f"Step 6: Displaying {len(filtered_games)} {display_mode} game(s)")
 
-        # Handle game rotation (matching old managers)
-        current_time = time.time()
-        
-        # Create hash of filtered game IDs to detect when game list changes
-        games_hash = tuple(g.get('game_id') for g in filtered_games)
-        
-        # Reset index if games list changed
-        if games_hash != self._last_displayed_games_hash:
-            self.logger.debug(f"Game list changed, resetting rotation")
-            self.current_game_index = 0
-            self.last_game_switch = current_time
-            self._last_displayed_games_hash = games_hash
-        
-        # Check if it's time to switch games (matching old SportsRecent/SportsUpcoming logic)
-        if len(filtered_games) > 1 and current_time - self.last_game_switch >= self.game_display_duration:
-            self.current_game_index = (self.current_game_index + 1) % len(filtered_games)
-            self.last_game_switch = current_time
-            force_clear = True  # Force redraw on switch
+            # Handle game rotation (matching old managers)
+            current_time = time.time()
             
-            # Log game switching (matching old managers)
+            # Create hash of filtered game IDs to detect when game list changes
+            games_hash = tuple(g.get('game_id') for g in filtered_games)
+            
+            # Reset index if games list changed
+            if games_hash != self._last_displayed_games_hash:
+                self.logger.debug(f"Game list changed, resetting rotation")
+                self.current_game_index = 0
+                self.last_game_switch = current_time
+                self._last_displayed_games_hash = games_hash
+            
+            # Check if it's time to switch games (matching old SportsRecent/SportsUpcoming logic)
+            if len(filtered_games) > 1 and current_time - self.last_game_switch >= self.game_display_duration:
+                self.current_game_index = (self.current_game_index + 1) % len(filtered_games)
+                self.last_game_switch = current_time
+                force_clear = True  # Force redraw on switch
+                
+                # Log game switching (matching old managers)
+                game = filtered_games[self.current_game_index]
+                away_abbr = game.get('away_team', {}).get('abbrev', 'UNK')
+                home_abbr = game.get('home_team', {}).get('abbrev', 'UNK')
+                self.logger.info(f"[{display_mode}] Switched to: {away_abbr} @ {home_abbr}")
+            
+            # Display current game
+            self.logger.info(f"Step 7: About to call _display_game")
             game = filtered_games[self.current_game_index]
-            away_abbr = game.get('away_team', {}).get('abbrev', 'UNK')
-            home_abbr = game.get('home_team', {}).get('abbrev', 'UNK')
-            self.logger.info(f"[{display_mode}] Switched to: {away_abbr} @ {home_abbr}")
-        
-        # Display current game
-        game = filtered_games[self.current_game_index]
-        self._display_game(game, display_mode)
+            self._display_game(game, display_mode)
+            self.logger.info(f"Step 8: _display_game completed")
+            
+        except Exception as e:
+            self.logger.error(f"EXCEPTION in display() method: {e}", exc_info=True)
 
     def _filter_games_by_mode(self, mode: str) -> List[Dict]:
         """Filter games based on display mode with limits per favorite team."""

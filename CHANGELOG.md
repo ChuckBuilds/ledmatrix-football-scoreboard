@@ -1,5 +1,22 @@
 # Changelog
 
+## [1.5.2] - 2025-10-20
+
+### Added
+- **Step-by-Step Display Logging**: Added detailed step logging throughout display() method
+  - Step 1: Shows explicit_mode and current_games count
+  - Step 2: Shows auto-selected or provided display_mode  
+  - Step 3-4: Shows filtering process and results
+  - Step 5: Shows when no games available
+  - Step 6-8: Shows game display process
+  - Full exception handling with stack traces
+
+### Purpose
+- Diagnose where display() method is exiting or failing
+- Identify if games are being filtered out incorrectly
+- Confirm _display_game() is being called
+- Catch any hidden exceptions
+
 ## [1.5.1] - 2025-10-20
 
 ### Added
