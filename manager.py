@@ -537,6 +537,22 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
 
         home_abbrev = game.get('home_team', {}).get('abbrev', '').upper()
         away_abbrev = game.get('away_team', {}).get('abbrev', '').upper()
+        
+        # Debug: Log the actual game structure for the first few checks
+        if not hasattr(self, '_favorite_check_count'):
+            self._favorite_check_count = 0
+        
+        if self._favorite_check_count < 3:
+            self.logger.info(f"=== Favorite Check Debug #{self._favorite_check_count + 1} ===")
+            self.logger.info(f"  Game dict keys: {list(game.keys())}")
+            self.logger.info(f"  home_team keys: {list(game.get('home_team', {}).keys())}")
+            self.logger.info(f"  away_team keys: {list(game.get('away_team', {}).keys())}")
+            self.logger.info(f"  home_abbrev from game: '{home_abbrev}'")
+            self.logger.info(f"  away_abbrev from game: '{away_abbrev}'")
+            self.logger.info(f"  favorites list: {favorites}")
+            self.logger.info(f"  home_abbrev in favorites: {home_abbrev in favorites}")
+            self.logger.info(f"  away_abbrev in favorites: {away_abbrev in favorites}")
+            self._favorite_check_count += 1
 
         # Favorites are already normalized to uppercase in config
         return home_abbrev in favorites or away_abbrev in favorites

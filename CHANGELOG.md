@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.2.2] - 2025-10-20
+
+### Added
+- **Deep Game Structure Logging**: Added comprehensive logging to show exact game dict structure when checking favorites
+  - Shows all keys in game dict
+  - Shows all keys in home_team and away_team dicts
+  - Shows actual abbreviation values being compared
+  - Shows favorites list and membership check results
+  - Limited to first 3 checks to avoid log spam
+
+### Purpose
+- Compare with old base class implementation to identify structural differences
+- Diagnose why UGA and TB aren't matching when they worked in old managers
+
 ## [1.2.1] - 2025-10-20
 
 ### Added
