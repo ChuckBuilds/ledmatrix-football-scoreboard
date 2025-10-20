@@ -322,7 +322,7 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
         self.current_games.sort(key=sort_key)
 
     def _fetch_league_data(self, league_key: str, league_config: Dict) -> List[Dict]:
-        """Fetch game data for a specific league."""
+        """Fetch game data for a specific league with date range for recent games."""
         cache_key = f"football_{league_key}_{datetime.now().strftime('%Y%m%d')}"
         update_interval = int(league_config.get('update_interval_seconds', 60))
 
@@ -338,12 +338,22 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
 
         # Fetch from API
         try:
-            url = self.ESPN_API_URLS.get(league_key)
-            if not url:
+            base_url = self.ESPN_API_URLS.get(league_key)
+            if not base_url:
                 self.logger.error(f"Unknown league key: {league_key}")
                 return []
 
-            self.logger.info(f"Fetching {league_key} data from ESPN API...")
+            # Add date range to fetch recent games (last 21 days) and upcoming games
+            # This matches the old base class implementation
+            from datetime import timedelta
+            now = datetime.now()
+            start_date = (now - timedelta(days=21)).strftime('%Y%m%d')
+            end_date = (now + timedelta(days=14)).strftime('%Y%m%d')
+            
+            # ESPN API format: dates=YYYYMMDD-YYYYMMDD
+            url = f"{base_url}?dates={start_date}-{end_date}"
+
+            self.logger.info(f"Fetching {league_key} data from ESPN API (last 21 days + next 14 days)...")
             response = requests.get(url, timeout=self.background_config.get('request_timeout', 30))
             response.raise_for_status()
 

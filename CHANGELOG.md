@@ -1,5 +1,22 @@
 # Changelog
 
+## [1.3.0] - 2025-10-20
+
+### Fixed
+- **CRITICAL: Recent Games Not Showing**: Added date range parameters to ESPN API calls
+  - Now fetches last 21 days + next 14 days of games (matching old implementation)
+  - Previously only fetched "today's" games, missing Saturday's UGA game
+  - `recent_games_to_show` means "N games per favorite team", not "N days ago"
+  
+### Changed
+- ESPN API now called with `?dates=YYYYMMDD-YYYYMMDD` parameter
+- Matches old base class behavior (21-day lookback for recent games)
+
+### Technical Details
+- Old implementation: fetched 21 days of data, then filtered to N most recent games per team
+- New implementation: same 21-day fetch, proper filtering by favorite teams
+- This fixes UGA's Saturday game not appearing in recent games
+
 ## [1.2.2] - 2025-10-20
 
 ### Added
