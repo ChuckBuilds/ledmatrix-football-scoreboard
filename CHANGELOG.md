@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.2.1] - 2025-10-20
+
+### Added
+- **Enhanced Team Abbreviation Logging**: Added detailed debug logging to show exact team abbreviations returned by ESPN API
+  - Shows original and uppercase versions of team abbreviations
+  - Shows explicit membership checks against favorites list
+  - Helps diagnose why specific teams aren't matching (e.g., if ESPN uses "GEOR" instead of "UGA")
+
+### Changed
+- Set logger to INFO level by default to reduce DEBUG noise
+
 ## [1.2.0] - 2025-10-20
 
 ### Fixed

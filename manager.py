@@ -75,6 +75,9 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
             self.cache_manager = cache_manager
             self.plugin_manager = plugin_manager
             self.logger = logging.getLogger(f"plugin.{plugin_id}")
+        
+        # Set logger to INFO level to avoid verbose DEBUG messages
+        self.logger.setLevel(logging.INFO)
 
         # Plugin is self-contained and doesn't depend on base classes
 
@@ -605,8 +608,14 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
             if len(filtered) < 3:
                 home_abbr = game.get('home_team', {}).get('abbrev', '')
                 away_abbr = game.get('away_team', {}).get('abbrev', '')
+                home_abbr_upper = home_abbr.upper() if home_abbr else ''
+                away_abbr_upper = away_abbr.upper() if away_abbr else ''
                 self.logger.debug(f"  Game: {away_abbr}@{home_abbr} ({league_key}, state={state})")
-                self.logger.debug(f"    Favorites: {favorite_teams}, Is favorite: {is_favorite_game}")
+                self.logger.debug(f"    ESPN API returned: away='{away_abbr}' (upper='{away_abbr_upper}'), home='{home_abbr}' (upper='{home_abbr_upper}')")
+                self.logger.debug(f"    Favorites list: {favorite_teams}")
+                self.logger.debug(f"    Checking: '{away_abbr_upper}' in {favorite_teams} = {away_abbr_upper in favorite_teams}")
+                self.logger.debug(f"    Checking: '{home_abbr_upper}' in {favorite_teams} = {home_abbr_upper in favorite_teams}")
+                self.logger.debug(f"    Is favorite game: {is_favorite_game}")
                 self.logger.debug(f"    show_favorite_teams_only: {show_favorite_teams_only}, show_all_live: {show_all_live}")
             
             # Filter by game state and per-league settings
