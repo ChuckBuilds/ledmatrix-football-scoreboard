@@ -1,0 +1,165 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Football Scoreboard Plugin Configuration",
+  "description": "Configuration schema for the Football Scoreboard plugin",
+  "type": "object",
+  "properties": {
+    "display_duration": {
+      "type": "number",
+      "default": 30,
+      "minimum": 5,
+      "maximum": 300,
+      "description": "Duration in seconds for the display controller to show this plugin mode before rotating to next plugin. Controls how long football_live, football_recent, or football_upcoming is shown before moving to next mode."
+    },
+    "game_display_duration": {
+      "type": "number",
+      "default": 15,
+      "minimum": 3,
+      "maximum": 60,
+      "description": "Duration in seconds to show each individual game before rotating to the next game within the same mode. If you have 3 recent games, this controls how long each game is shown."
+    },
+    "update_interval_seconds": {
+      "type": "integer",
+      "default": 3600,
+      "minimum": 30,
+      "maximum": 86400,
+      "description": "How often to fetch new data (seconds)"
+    },
+    "nfl_enabled": {
+      "type": "boolean",
+      "default": true,
+      "description": "Enable NFL games"
+    },
+    "nfl_favorite_teams": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "default": [],
+      "description": "List of favorite NFL team abbreviations (e.g., TB, DAL, GB). Use 2-3 letter codes."
+    },
+    "nfl_show_live": {
+      "type": "boolean",
+      "default": true,
+      "description": "Show live NFL games"
+    },
+    "nfl_show_recent": {
+      "type": "boolean",
+      "default": true,
+      "description": "Show recently completed NFL games"
+    },
+    "nfl_show_upcoming": {
+      "type": "boolean",
+      "default": true,
+      "description": "Show upcoming NFL games"
+    },
+    "nfl_recent_games_to_show": {
+      "type": "integer",
+      "default": 5,
+      "minimum": 1,
+      "maximum": 20,
+      "description": "Maximum number of recent NFL games to display"
+    },
+    "nfl_upcoming_games_to_show": {
+      "type": "integer",
+      "default": 1,
+      "minimum": 1,
+      "maximum": 20,
+      "description": "Maximum number of upcoming NFL games to display"
+    },
+    "nfl_show_records": {
+      "type": "boolean",
+      "default": false,
+      "description": "Show team records (wins-losses) for NFL games"
+    },
+    "nfl_show_ranking": {
+      "type": "boolean",
+      "default": false,
+      "description": "Show team rankings for NFL games (when available)"
+    },
+    "nfl_show_odds": {
+      "type": "boolean",
+      "default": true,
+      "description": "Show betting odds for NFL games"
+    },
+    "nfl_show_favorite_teams_only": {
+      "type": "boolean",
+      "default": true,
+      "description": "Only show NFL games from favorite teams"
+    },
+    "nfl_show_all_live": {
+      "type": "boolean",
+      "default": false,
+      "description": "Show all live NFL games, not just favorites"
+    },
+    "ncaa_fb_enabled": {
+      "type": "boolean",
+      "default": false,
+      "description": "Enable NCAA Football games"
+    },
+    "ncaa_fb_favorite_teams": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "default": [],
+      "description": "List of favorite NCAA FB team abbreviations (e.g., UGA, AUB, BAMA). Use 2-4 letter codes."
+    },
+    "ncaa_fb_show_live": {
+      "type": "boolean",
+      "default": true,
+      "description": "Show live NCAA FB games"
+    },
+    "ncaa_fb_show_recent": {
+      "type": "boolean",
+      "default": true,
+      "description": "Show recently completed NCAA FB games"
+    },
+    "ncaa_fb_show_upcoming": {
+      "type": "boolean",
+      "default": true,
+      "description": "Show upcoming NCAA FB games"
+    },
+    "ncaa_fb_recent_games_to_show": {
+      "type": "integer",
+      "default": 1,
+      "minimum": 1,
+      "maximum": 20,
+      "description": "Maximum number of recent NCAA FB games to display"
+    },
+    "ncaa_fb_upcoming_games_to_show": {
+      "type": "integer",
+      "default": 1,
+      "minimum": 1,
+      "maximum": 20,
+      "description": "Maximum number of upcoming NCAA FB games to display"
+    },
+    "ncaa_fb_show_records": {
+      "type": "boolean",
+      "default": false,
+      "description": "Show team records (wins-losses) for NCAA FB games"
+    },
+    "ncaa_fb_show_ranking": {
+      "type": "boolean",
+      "default": true,
+      "description": "Show team rankings for NCAA FB games (rankings are very important in college football)"
+    },
+    "ncaa_fb_show_odds": {
+      "type": "boolean",
+      "default": true,
+      "description": "Show betting odds for NCAA FB games"
+    },
+    "ncaa_fb_show_favorite_teams_only": {
+      "type": "boolean",
+      "default": true,
+      "description": "Only show NCAA FB games from favorite teams"
+    },
+    "ncaa_fb_show_all_live": {
+      "type": "boolean",
+      "default": false,
+      "description": "Show all live NCAA FB games, not just favorites"
+    }
+  },
+  "additionalProperties": false,
+  "required": []
+}

@@ -1,5 +1,29 @@
 # Changelog
 
+## [1.6.0] - 2025-10-20
+
+### Changed
+- **Nested Config Schema**: Migrated from flat to nested config structure for better organization
+  - NFL settings now grouped under `nfl` with sub-sections:
+    - `display_modes`: Control live/recent/upcoming display
+    - `game_limits`: Configure how many games to show
+    - `display_options`: Toggle records, rankings, odds
+    - `filtering`: Control favorite teams and all-live behavior
+  - NCAA Football settings now grouped under `ncaa_fb` with same structure
+  - **Backward Compatible**: Still supports flat config structure from older versions
+  - **Benefits**:
+    - Much easier to navigate 32 configuration options
+    - Collapsible sections in web UI reduce visual clutter
+    - Logical grouping makes related settings easier to find
+    - Cleaner, more professional configuration experience
+
+### Technical Details
+- Added `get_config_value()` helper function to support both flat and nested config access
+- Config reading attempts flat keys first (e.g., `nfl_enabled`), then nested paths (e.g., `['nfl', 'enabled']`)
+- No breaking changes - existing flat configs continue to work
+- Updated logging to show whether config is flat or nested
+- Example nested schema provided in `config_schema_nested_example.json`
+
 ## [1.5.2] - 2025-10-20
 
 ### Added

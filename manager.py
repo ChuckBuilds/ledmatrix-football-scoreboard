@@ -88,8 +88,36 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
 
         # Plugin is self-contained and doesn't depend on base classes
 
-        # Build league configurations from flattened config structure
+        # Build league configurations from config structure (supports both flat and nested schemas)
         # Ensure proper type conversion for all numeric values
+        
+        # Helper function to get config value supporting both flat and nested schemas
+        def get_config_value(config, flat_key, nested_path, default=None):
+            """
+            Get config value from either flat or nested structure.
+            
+            Args:
+                config: Config dictionary
+                flat_key: Flat key (e.g., 'nfl_enabled')
+                nested_path: Nested path as list (e.g., ['nfl', 'enabled'])
+                default: Default value if not found
+            
+            Returns:
+                Config value from flat or nested structure, or default
+            """
+            # Try flat key first (backward compatibility)
+            if flat_key in config:
+                return config.get(flat_key, default)
+            
+            # Try nested path
+            value = config
+            for key in nested_path:
+                if isinstance(value, dict) and key in value:
+                    value = value[key]
+                else:
+                    return default
+            return value
+        
         # Helper function to normalize favorite teams arrays
         def normalize_favorite_teams(value):
             """Convert favorite teams to list, handling string/comma-separated values."""
@@ -111,39 +139,39 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
 
         self.leagues = {
             'nfl': {
-                'enabled': normalize_bool(config.get('nfl_enabled'), True),
-                'favorite_teams': normalize_favorite_teams(config.get('nfl_favorite_teams', [])),
+                'enabled': normalize_bool(get_config_value(config, 'nfl_enabled', ['nfl', 'enabled']), True),
+                'favorite_teams': normalize_favorite_teams(get_config_value(config, 'nfl_favorite_teams', ['nfl', 'favorite_teams'], [])),
                 'display_modes': {
-                    'live': normalize_bool(config.get('nfl_show_live'), True),
-                    'recent': normalize_bool(config.get('nfl_show_recent'), True),
-                    'upcoming': normalize_bool(config.get('nfl_show_upcoming'), True)
+                    'live': normalize_bool(get_config_value(config, 'nfl_show_live', ['nfl', 'display_modes', 'show_live']), True),
+                    'recent': normalize_bool(get_config_value(config, 'nfl_show_recent', ['nfl', 'display_modes', 'show_recent']), True),
+                    'upcoming': normalize_bool(get_config_value(config, 'nfl_show_upcoming', ['nfl', 'display_modes', 'show_upcoming']), True)
                 },
-                'recent_games_to_show': int(config.get('nfl_recent_games_to_show', 5)),
-                'upcoming_games_to_show': int(config.get('nfl_upcoming_games_to_show', 1)),
+                'recent_games_to_show': int(get_config_value(config, 'nfl_recent_games_to_show', ['nfl', 'game_limits', 'recent_games_to_show'], 5)),
+                'upcoming_games_to_show': int(get_config_value(config, 'nfl_upcoming_games_to_show', ['nfl', 'game_limits', 'upcoming_games_to_show'], 1)),
                 'update_interval_seconds': int(config.get('update_interval_seconds', 3600)),
-                'show_records': normalize_bool(config.get('nfl_show_records'), False),
-                'show_ranking': normalize_bool(config.get('nfl_show_ranking'), False),
-                'show_odds': normalize_bool(config.get('nfl_show_odds'), True),
-                'show_favorite_teams_only': normalize_bool(config.get('nfl_show_favorite_teams_only'), True),
-                'show_all_live': normalize_bool(config.get('nfl_show_all_live'), False),
+                'show_records': normalize_bool(get_config_value(config, 'nfl_show_records', ['nfl', 'display_options', 'show_records']), False),
+                'show_ranking': normalize_bool(get_config_value(config, 'nfl_show_ranking', ['nfl', 'display_options', 'show_ranking']), False),
+                'show_odds': normalize_bool(get_config_value(config, 'nfl_show_odds', ['nfl', 'display_options', 'show_odds']), True),
+                'show_favorite_teams_only': normalize_bool(get_config_value(config, 'nfl_show_favorite_teams_only', ['nfl', 'filtering', 'show_favorite_teams_only']), True),
+                'show_all_live': normalize_bool(get_config_value(config, 'nfl_show_all_live', ['nfl', 'filtering', 'show_all_live']), False),
                 'logo_dir': 'assets/sports/nfl_logos'
             },
             'ncaa_fb': {
-                'enabled': normalize_bool(config.get('ncaa_fb_enabled'), False),
-                'favorite_teams': normalize_favorite_teams(config.get('ncaa_fb_favorite_teams', [])),
+                'enabled': normalize_bool(get_config_value(config, 'ncaa_fb_enabled', ['ncaa_fb', 'enabled']), False),
+                'favorite_teams': normalize_favorite_teams(get_config_value(config, 'ncaa_fb_favorite_teams', ['ncaa_fb', 'favorite_teams'], [])),
                 'display_modes': {
-                    'live': normalize_bool(config.get('ncaa_fb_show_live'), True),
-                    'recent': normalize_bool(config.get('ncaa_fb_show_recent'), True),
-                    'upcoming': normalize_bool(config.get('ncaa_fb_show_upcoming'), True)
+                    'live': normalize_bool(get_config_value(config, 'ncaa_fb_show_live', ['ncaa_fb', 'display_modes', 'show_live']), True),
+                    'recent': normalize_bool(get_config_value(config, 'ncaa_fb_show_recent', ['ncaa_fb', 'display_modes', 'show_recent']), True),
+                    'upcoming': normalize_bool(get_config_value(config, 'ncaa_fb_show_upcoming', ['ncaa_fb', 'display_modes', 'show_upcoming']), True)
                 },
-                'recent_games_to_show': int(config.get('ncaa_fb_recent_games_to_show', 1)),
-                'upcoming_games_to_show': int(config.get('ncaa_fb_upcoming_games_to_show', 1)),
+                'recent_games_to_show': int(get_config_value(config, 'ncaa_fb_recent_games_to_show', ['ncaa_fb', 'game_limits', 'recent_games_to_show'], 1)),
+                'upcoming_games_to_show': int(get_config_value(config, 'ncaa_fb_upcoming_games_to_show', ['ncaa_fb', 'game_limits', 'upcoming_games_to_show'], 1)),
                 'update_interval_seconds': int(config.get('update_interval_seconds', 3600)),
-                'show_records': normalize_bool(config.get('ncaa_fb_show_records'), False),
-                'show_ranking': normalize_bool(config.get('ncaa_fb_show_ranking'), True),
-                'show_odds': normalize_bool(config.get('ncaa_fb_show_odds'), True),
-                'show_favorite_teams_only': normalize_bool(config.get('ncaa_fb_show_favorite_teams_only'), True),
-                'show_all_live': normalize_bool(config.get('ncaa_fb_show_all_live'), False),
+                'show_records': normalize_bool(get_config_value(config, 'ncaa_fb_show_records', ['ncaa_fb', 'display_options', 'show_records']), False),
+                'show_ranking': normalize_bool(get_config_value(config, 'ncaa_fb_show_ranking', ['ncaa_fb', 'display_options', 'show_ranking']), True),
+                'show_odds': normalize_bool(get_config_value(config, 'ncaa_fb_show_odds', ['ncaa_fb', 'display_options', 'show_odds']), True),
+                'show_favorite_teams_only': normalize_bool(get_config_value(config, 'ncaa_fb_show_favorite_teams_only', ['ncaa_fb', 'filtering', 'show_favorite_teams_only']), True),
+                'show_all_live': normalize_bool(get_config_value(config, 'ncaa_fb_show_all_live', ['ncaa_fb', 'filtering', 'show_all_live']), False),
                 'logo_dir': 'assets/sports/ncaa_logos'
             }
         }
@@ -206,12 +234,18 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
         # Register fonts with font manager (if available)
         self._register_fonts()
 
-        # Log RAW config values for debugging
+        # Log RAW config values for debugging (supports both flat and nested)
         self.logger.info("=== Raw Config Values ===")
-        self.logger.info(f"  nfl_enabled: {config.get('nfl_enabled')} (type: {type(config.get('nfl_enabled')).__name__})")
-        self.logger.info(f"  nfl_favorite_teams: {config.get('nfl_favorite_teams')} (type: {type(config.get('nfl_favorite_teams')).__name__})")
-        self.logger.info(f"  ncaa_fb_enabled: {config.get('ncaa_fb_enabled')} (type: {type(config.get('ncaa_fb_enabled')).__name__})")
-        self.logger.info(f"  ncaa_fb_favorite_teams: {config.get('ncaa_fb_favorite_teams')} (type: {type(config.get('ncaa_fb_favorite_teams')).__name__})")
+        nfl_enabled_val = get_config_value(config, 'nfl_enabled', ['nfl', 'enabled'])
+        nfl_teams_val = get_config_value(config, 'nfl_favorite_teams', ['nfl', 'favorite_teams'])
+        ncaa_enabled_val = get_config_value(config, 'ncaa_fb_enabled', ['ncaa_fb', 'enabled'])
+        ncaa_teams_val = get_config_value(config, 'ncaa_fb_favorite_teams', ['ncaa_fb', 'favorite_teams'])
+        
+        self.logger.info(f"  nfl_enabled: {nfl_enabled_val} (type: {type(nfl_enabled_val).__name__})")
+        self.logger.info(f"  nfl_favorite_teams: {nfl_teams_val} (type: {type(nfl_teams_val).__name__})")
+        self.logger.info(f"  ncaa_fb_enabled: {ncaa_enabled_val} (type: {type(ncaa_enabled_val).__name__})")
+        self.logger.info(f"  ncaa_fb_favorite_teams: {ncaa_teams_val} (type: {type(ncaa_teams_val).__name__})")
+        self.logger.info(f"  Config structure: {'nested' if 'nfl' in config and isinstance(config.get('nfl'), dict) else 'flat'}")
         
         # Log enabled leagues and their settings
         self.logger.info("=== Normalized League Config ===")
