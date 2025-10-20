@@ -80,10 +80,20 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
 
         # Build league configurations from flattened config structure
         # Ensure proper type conversion for all numeric values
+        # Helper function to normalize favorite teams arrays
+        def normalize_favorite_teams(value):
+            """Convert favorite teams to list, handling string/comma-separated values."""
+            if isinstance(value, list):
+                return [str(team).strip().upper() for team in value if team]
+            elif isinstance(value, str) and value:
+                # Handle comma-separated strings from web UI
+                return [team.strip().upper() for team in value.split(',') if team.strip()]
+            return []
+
         self.leagues = {
             'nfl': {
                 'enabled': config.get('nfl_enabled', True),
-                'favorite_teams': config.get('nfl_favorite_teams', []),
+                'favorite_teams': normalize_favorite_teams(config.get('nfl_favorite_teams', [])),
                 'display_modes': {
                     'live': config.get('nfl_show_live', True),
                     'recent': config.get('nfl_show_recent', True),
@@ -101,7 +111,7 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
             },
             'ncaa_fb': {
                 'enabled': config.get('ncaa_fb_enabled', False),
-                'favorite_teams': config.get('ncaa_fb_favorite_teams', []),
+                'favorite_teams': normalize_favorite_teams(config.get('ncaa_fb_favorite_teams', [])),
                 'display_modes': {
                     'live': config.get('ncaa_fb_show_live', True),
                     'recent': config.get('ncaa_fb_show_recent', True),
@@ -153,14 +163,24 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
         # Register fonts with font manager (if available)
         self._register_fonts()
 
+        # Log RAW config values for debugging
+        self.logger.info("=== Raw Config Values ===")
+        self.logger.info(f"  nfl_enabled: {config.get('nfl_enabled')} (type: {type(config.get('nfl_enabled')).__name__})")
+        self.logger.info(f"  nfl_favorite_teams: {config.get('nfl_favorite_teams')} (type: {type(config.get('nfl_favorite_teams')).__name__})")
+        self.logger.info(f"  ncaa_fb_enabled: {config.get('ncaa_fb_enabled')} (type: {type(config.get('ncaa_fb_enabled')).__name__})")
+        self.logger.info(f"  ncaa_fb_favorite_teams: {config.get('ncaa_fb_favorite_teams')} (type: {type(config.get('ncaa_fb_favorite_teams')).__name__})")
+        
         # Log enabled leagues and their settings
+        self.logger.info("=== Normalized League Config ===")
         enabled_leagues = []
         for league_key, league_config in self.leagues.items():
             if league_config.get('enabled', False):
                 enabled_leagues.append(league_key)
                 # Log favorite teams for enabled leagues
                 favorites = league_config.get('favorite_teams', [])
-                self.logger.info(f"{league_key.upper()} enabled with {len(favorites)} favorite team(s): {favorites}")
+                self.logger.info(f"  {league_key.upper()} enabled with {len(favorites)} favorite team(s): {favorites}")
+            else:
+                self.logger.info(f"  {league_key.upper()} disabled")
 
         self.logger.info("Football scoreboard plugin initialized")
         self.logger.info(f"Enabled leagues: {enabled_leagues}")
@@ -504,7 +524,7 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
             return 'unknown'
 
     def _is_favorite_game(self, game: Dict) -> bool:
-        """Check if game involves a favorite team."""
+        """Check if game involves a favorite team - case insensitive."""
         league = game.get('league')
         league_config = game.get('league_config', {})
         favorites = league_config.get('favorite_teams', [])
@@ -512,9 +532,10 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
         if not favorites:
             return False
 
-        home_abbrev = game.get('home_team', {}).get('abbrev')
-        away_abbrev = game.get('away_team', {}).get('abbrev')
+        home_abbrev = game.get('home_team', {}).get('abbrev', '').upper()
+        away_abbrev = game.get('away_team', {}).get('abbrev', '').upper()
 
+        # Favorites are already normalized to uppercase in config
         return home_abbrev in favorites or away_abbrev in favorites
 
     def display(self, display_mode: str = None, force_clear: bool = False) -> None:

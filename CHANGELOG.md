@@ -1,5 +1,22 @@
 # Changelog
 
+## [1.2.0] - 2025-10-20
+
+### Fixed
+- **CRITICAL: Favorite Teams Array Handling**: Added robust normalization for favorite_teams configuration
+  - Handles both array and comma-separated string formats from web UI
+  - Normalizes all team abbreviations to UPPERCASE for consistent matching
+  - Case-insensitive team matching (TB, tb, Tb all work)
+- **Configuration Validation**: Enhanced config loading with detailed logging
+  - Logs RAW config values with types to diagnose web UI saving issues
+  - Logs normalized values to show what plugin is actually using
+  - Shows enabled/disabled status for each league
+
+### Technical Details
+- Added `normalize_favorite_teams()` helper function
+- Updated `_is_favorite_game()` to use uppercase comparison
+- This ensures UGA, TB, and all favorite teams work regardless of how web UI saves them
+
 ## [1.1.9] - 2025-10-20
 
 ### Added
