@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.3] - 2025-10-20
+
+### Fixed
+- **Logo Loading Case Sensitivity**: Fixed logo loading to try uppercase, lowercase, and original case variations
+- **Missing Logos**: Now correctly finds logo files regardless of case (DET.png vs det.png)
+- **Logo Fallback**: Improved logo search to match original managers' behavior
+
 ## [1.1.2] - 2025-10-19
 
 ### Fixed

@@ -652,18 +652,24 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
                     # Fallback: try relative to current working directory
                     logo_dir = os.path.abspath(logo_dir)
             
-            team_abbrev = team.get('abbrev', '').lower()
+            team_abbrev = team.get('abbrev', '')
             if not team_abbrev:
                 return None
             
-            # Try different logo file extensions
+            # Try different logo file extensions and case variations
             logo_extensions = ['.png', '.jpg', '.jpeg']
             logo_path = None
             
-            for ext in logo_extensions:
-                potential_path = os.path.join(logo_dir, f"{team_abbrev}{ext}")
-                if os.path.exists(potential_path):
-                    logo_path = potential_path
+            # Try uppercase first (most common), then lowercase, then original case
+            abbrev_variations = [team_abbrev.upper(), team_abbrev.lower(), team_abbrev]
+            
+            for abbrev in abbrev_variations:
+                for ext in logo_extensions:
+                    potential_path = os.path.join(logo_dir, f"{abbrev}{ext}")
+                    if os.path.exists(potential_path):
+                        logo_path = potential_path
+                        break
+                if logo_path:
                     break
             
             if not logo_path:
