@@ -554,6 +554,9 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
     def _filter_games_by_mode(self, mode: str) -> List[Dict]:
         """Filter games based on display mode and per-league settings - matching original managers."""
         filtered = []
+        
+        # Debug: log filtering info once per call
+        self.logger.debug(f"Filtering for mode: {mode}, Total games available: {len(self.current_games)}")
 
         for game in self.current_games:
             league_key = game.get('league')
@@ -573,6 +576,14 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
             favorite_teams = league_config.get('favorite_teams', [])
             
             is_favorite_game = self._is_favorite_game(game)
+            
+            # Debug logging for first few games
+            if len(filtered) < 3:
+                home_abbr = game.get('home_team', {}).get('abbrev', '')
+                away_abbr = game.get('away_team', {}).get('abbrev', '')
+                self.logger.debug(f"  Game: {away_abbr}@{home_abbr} ({league_key}, state={state})")
+                self.logger.debug(f"    Favorites: {favorite_teams}, Is favorite: {is_favorite_game}")
+                self.logger.debug(f"    show_favorite_teams_only: {show_favorite_teams_only}, show_all_live: {show_all_live}")
             
             # Filter by game state and per-league settings
             if mode == 'football_live' and state == 'in':
@@ -600,6 +611,7 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
                         continue
                     filtered.append(game)
 
+        self.logger.debug(f"Filtered result: {len(filtered)} games for {mode}")
         return filtered
 
     def _has_live_games(self) -> bool:

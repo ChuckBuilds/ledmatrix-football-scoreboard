@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.1.8] - 2025-10-20
+
+### Added
+- **Enhanced Debug Logging**: Added detailed filtering logs to diagnose game visibility issues
+  - Shows total games available before filtering
+  - Logs first 3 games being evaluated with their favorite status
+  - Shows favorite teams list and filtering settings for each game
+  - Displays final filtered count
+- **Troubleshooting**: Helps identify why UGA or other favorite teams aren't showing
+
 ## [1.1.7] - 2025-10-20
 
 ### Fixed
