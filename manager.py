@@ -1775,8 +1775,6 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
             'current_mode': self.current_display_mode,
             'last_update': self.last_update,
             'display_duration': self.display_duration,
-            'show_records': self.show_records,
-            'show_ranking': self.show_ranking,
             'live_games': len([g for g in self.current_games if g.get('status', {}).get('state') == 'in']),
             'recent_games': len([g for g in self.current_games if g.get('status', {}).get('state') == 'post']),
             'upcoming_games': len([g for g in self.current_games if g.get('status', {}).get('state') == 'pre']),

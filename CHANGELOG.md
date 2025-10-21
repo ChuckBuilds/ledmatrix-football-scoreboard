@@ -1,5 +1,27 @@
 # Changelog
 
+## [2.0.2] - 2025-10-21
+
+### Fixed
+- **CRITICAL: AttributeError in get_info()**: Removed references to deprecated flat config attributes
+  - `show_records` and `show_ranking` are now per-league settings, not top-level attributes
+  - Fixed "AttributeError: 'FootballScoreboardPlugin' object has no attribute 'show_records'"
+  - These values are still available in the `leagues_config` dictionary returned by `get_info()`
+  - No user-facing impact - plugin will now load correctly in web interface
+
+### Technical Details
+- After nested config migration in v2.0.1, these attributes moved to per-league configuration
+- Removed lines 1778-1779 from `get_info()` method that accessed obsolete attributes
+- Settings remain accessible via: `leagues_config['nfl']['show_records']`, etc.
+
+## [2.0.1] - 2025-10-21
+
+### Fixed
+- **Interface Compatibility**: Updated `display()` method signature to match BasePlugin v3 interface
+  - Changed from `display(canvas, explicit_mode=None)` to `display(canvas, width, height, explicit_mode=None)`
+  - Ensures compatibility with LEDMatrix plugin system v2.0+
+  - No functional changes to plugin behavior
+
 ## [1.6.0] - 2025-10-20
 
 ### Changed
