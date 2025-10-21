@@ -872,7 +872,7 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
         # Favorites are already normalized to uppercase in config
         return home_abbrev in favorites or away_abbrev in favorites
 
-    def display(self, force_clear: bool = False) -> None:
+    def display(self, explicit_mode: str = None, force_clear: bool = False) -> None:
         """
         Display football games.
 

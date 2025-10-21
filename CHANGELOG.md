@@ -1,5 +1,20 @@
 # Changelog
 
+## [2.0.3] - 2025-10-21
+
+### Fixed
+- **CRITICAL: display() Method Signature**: Fixed argument mismatch with display controller
+  - Added `explicit_mode` as first parameter: `display(self, explicit_mode=None, force_clear=False)`
+  - Fixed "got multiple values for argument 'force_clear'" error
+  - Display controller passes mode name as first positional argument
+  - Plugin now correctly receives the requested mode from display controller
+
+### Technical Details
+- Display controller calls: `plugin.display('football_live', force_clear=False)`
+- Previous signature: `display(self, force_clear=False)` caused conflict
+- New signature: `display(self, explicit_mode=None, force_clear=False)` matches expected interface
+- The `explicit_mode` parameter receives the mode name ('football_live', 'football_recent', 'football_upcoming')
+
 ## [2.0.2] - 2025-10-21
 
 ### Fixed
