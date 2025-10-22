@@ -1,20 +1,9 @@
 """
 Football Scoreboard Plugin for LEDMatrix
 
-Displays live, recent, and upcoming football games across NFL and NCAA Football.
-Shows real-time scores, game status, down/distance, possession, and team logos.
-
-Features:
-- Multiple league support (NFL, NCAA FB)
-- Live game tracking with quarters and time
-- Recent game results
-- Upcoming game schedules
-- Favorite team prioritization
-- Down & distance tracking
-- Possession indicator
-- Background data fetching
-
-API Version: 1.0.0
+This plugin follows the exact structure of the football.py base class,
+providing the same functionality as the original nfl_manager but using
+the new plugin system and display_controller dynamic calls.
 """
 
 import logging
@@ -29,16 +18,9 @@ import requests
 from PIL import Image, ImageDraw, ImageFont
 
 try:
-    # Try importing from LEDMatrix src directory
     from src.plugin_system.base_plugin import BasePlugin
     from src.background_data_service import get_background_service
     from src.logo_downloader import LogoDownloader, download_missing_logo
-except ImportError:
-    try:
-        # Try importing from plugin_system directly
-        from plugin_system.base_plugin import BasePlugin
-        from background_data_service import get_background_service
-        from logo_downloader import LogoDownloader, download_missing_logo
     except ImportError:
         BasePlugin = None
         get_background_service = None
@@ -50,32 +32,27 @@ logger = logging.getLogger(__name__)
 
 class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
     """
-    Football scoreboard plugin for displaying games across multiple leagues.
+    Football scoreboard plugin following the exact structure of football.py base class.
 
-    Supports NFL and NCAA Football with live, recent, and upcoming game modes.
-
-    Configuration options:
-        leagues: Enable/disable NFL, NCAA FB
-        display_modes: Enable live, recent, upcoming modes
-        favorite_teams: Team abbreviations per league
-        show_records: Display team records
-        show_ranking: Display team rankings
-        background_service: Data fetching configuration
+    This plugin provides the same functionality as the original nfl_manager but
+    uses the new plugin system and display_controller dynamic calls.
     """
 
-    # ESPN API endpoints for each league
-    ESPN_API_URLS = {
-        'nfl': 'https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard',
-        'ncaa_fb': 'https://site.api.espn.com/apis/site/v2/sports/football/college-football/scoreboard'
-    }
-
-    def __init__(self, plugin_id: str, config: Dict[str, Any],
-                 display_manager, cache_manager, plugin_manager):
-        """Initialize the football scoreboard plugin."""
+    def __init__(
+        self,
+        plugin_id: str,
+        config: Dict[str, Any],
+        display_manager,
+        cache_manager,
+        plugin_manager,
+    ):
+        """Initialize the football scoreboard plugin following football.py structure."""
         if BasePlugin:
-            super().__init__(plugin_id, config, display_manager, cache_manager, plugin_manager)
+            super().__init__(
+                plugin_id, config, display_manager, cache_manager, plugin_manager
+            )
         else:
-            # Fallback initialization if BasePlugin is not available
+            # Fallback initialization
             self.plugin_id = plugin_id
             self.config = config
             self.display_manager = display_manager
@@ -83,1208 +60,963 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
             self.plugin_manager = plugin_manager
             self.logger = logging.getLogger(f"plugin.{plugin_id}")
         
-        # Set logger to INFO level to avoid verbose DEBUG messages
         self.logger.setLevel(logging.INFO)
 
-        # Plugin is self-contained and doesn't depend on base classes
+        # Plugin configuration - following football.py structure
+        self.is_enabled = config.get("enabled", True)
+        self.display_width = self.display_manager.matrix.width
+        self.display_height = self.display_manager.matrix.height
 
-        # Build league configurations from config structure (supports both flat and nested schemas)
-        # Ensure proper type conversion for all numeric values
-        
-        # Helper function to get config value supporting both flat and nested schemas
-        def get_config_value(config, flat_key, nested_path, default=None):
-            """
-            Get config value from either flat or nested structure.
-            
-            Args:
-                config: Config dictionary
-                flat_key: Flat key (e.g., 'nfl_enabled')
-                nested_path: Nested path as list (e.g., ['nfl', 'enabled'])
-                default: Default value if not found
-            
-            Returns:
-                Config value from flat or nested structure, or default
-            """
-            # Try flat key first (backward compatibility)
-            if flat_key in config:
-                return config.get(flat_key, default)
-            
-            # Try nested path
-            value = config
-            for key in nested_path:
-                if isinstance(value, dict) and key in value:
-                    value = value[key]
-                else:
-                    return default
-            return value
-        
-        # Helper function to normalize favorite teams arrays
-        def normalize_favorite_teams(value):
-            """Convert favorite teams to list, handling string/comma-separated values."""
-            if isinstance(value, list):
-                return [str(team).strip().upper() for team in value if team]
-            elif isinstance(value, str) and value:
-                # Handle comma-separated strings from web UI
-                return [team.strip().upper() for team in value.split(',') if team.strip()]
-            return []
-        
-        # Helper function to normalize boolean values
-        def normalize_bool(value, default=False):
-            """Convert various boolean representations to actual bool."""
-            if isinstance(value, bool):
-                return value
-            if isinstance(value, str):
-                return value.lower() in ('true', 'on', 'yes', '1')
-            return bool(value) if value is not None else default
-
+        # League configuration - simplified structure like original
         self.leagues = {
-            'nfl': {
-                'enabled': normalize_bool(get_config_value(config, 'nfl_enabled', ['nfl', 'enabled']), True),
-                'favorite_teams': normalize_favorite_teams(get_config_value(config, 'nfl_favorite_teams', ['nfl', 'favorite_teams'], [])),
-                'display_modes': {
-                    'live': normalize_bool(get_config_value(config, 'nfl_show_live', ['nfl', 'display_modes', 'show_live']), True),
-                    'recent': normalize_bool(get_config_value(config, 'nfl_show_recent', ['nfl', 'display_modes', 'show_recent']), True),
-                    'upcoming': normalize_bool(get_config_value(config, 'nfl_show_upcoming', ['nfl', 'display_modes', 'show_upcoming']), True)
-                },
-                'recent_games_to_show': int(get_config_value(config, 'nfl_recent_games_to_show', ['nfl', 'game_limits', 'recent_games_to_show'], 5)),
-                'upcoming_games_to_show': int(get_config_value(config, 'nfl_upcoming_games_to_show', ['nfl', 'game_limits', 'upcoming_games_to_show'], 1)),
-                'update_interval_seconds': int(config.get('update_interval_seconds', 3600)),
-                'show_records': normalize_bool(get_config_value(config, 'nfl_show_records', ['nfl', 'display_options', 'show_records']), False),
-                'show_ranking': normalize_bool(get_config_value(config, 'nfl_show_ranking', ['nfl', 'display_options', 'show_ranking']), False),
-                'show_odds': normalize_bool(get_config_value(config, 'nfl_show_odds', ['nfl', 'display_options', 'show_odds']), True),
-                'show_favorite_teams_only': normalize_bool(get_config_value(config, 'nfl_show_favorite_teams_only', ['nfl', 'filtering', 'show_favorite_teams_only']), True),
-                'show_all_live': normalize_bool(get_config_value(config, 'nfl_show_all_live', ['nfl', 'filtering', 'show_all_live']), False),
-                'logo_dir': 'assets/sports/nfl_logos'
+            "nfl": {
+                "enabled": config.get("nfl", {}).get("enabled", True),
+                "favorite_teams": config.get("nfl", {}).get("favorite_teams", []),
+                "display_modes": config.get("nfl", {}).get(
+                    "display_modes",
+                    {"show_live": True, "show_recent": True, "show_upcoming": True},
+                ),
+                "filtering": config.get("nfl", {}).get(
+                    "filtering",
+                    {"show_favorite_teams_only": False, "show_all_live": True},
+                ),
+                "recent_games_to_show": config.get("nfl", {}).get(
+                    "recent_games_to_show", 5
+                ),
+                "upcoming_games_to_show": config.get("nfl", {}).get(
+                    "upcoming_games_to_show", 10
+                ),
+                "logo_dir": "assets/sports/nfl_logos",
             },
-            'ncaa_fb': {
-                'enabled': normalize_bool(get_config_value(config, 'ncaa_fb_enabled', ['ncaa_fb', 'enabled']), False),
-                'favorite_teams': normalize_favorite_teams(get_config_value(config, 'ncaa_fb_favorite_teams', ['ncaa_fb', 'favorite_teams'], [])),
-                'display_modes': {
-                    'live': normalize_bool(get_config_value(config, 'ncaa_fb_show_live', ['ncaa_fb', 'display_modes', 'show_live']), True),
-                    'recent': normalize_bool(get_config_value(config, 'ncaa_fb_show_recent', ['ncaa_fb', 'display_modes', 'show_recent']), True),
-                    'upcoming': normalize_bool(get_config_value(config, 'ncaa_fb_show_upcoming', ['ncaa_fb', 'display_modes', 'show_upcoming']), True)
-                },
-                'recent_games_to_show': int(get_config_value(config, 'ncaa_fb_recent_games_to_show', ['ncaa_fb', 'game_limits', 'recent_games_to_show'], 1)),
-                'upcoming_games_to_show': int(get_config_value(config, 'ncaa_fb_upcoming_games_to_show', ['ncaa_fb', 'game_limits', 'upcoming_games_to_show'], 1)),
-                'update_interval_seconds': int(config.get('update_interval_seconds', 3600)),
-                'show_records': normalize_bool(get_config_value(config, 'ncaa_fb_show_records', ['ncaa_fb', 'display_options', 'show_records']), False),
-                'show_ranking': normalize_bool(get_config_value(config, 'ncaa_fb_show_ranking', ['ncaa_fb', 'display_options', 'show_ranking']), True),
-                'show_odds': normalize_bool(get_config_value(config, 'ncaa_fb_show_odds', ['ncaa_fb', 'display_options', 'show_odds']), True),
-                'show_favorite_teams_only': normalize_bool(get_config_value(config, 'ncaa_fb_show_favorite_teams_only', ['ncaa_fb', 'filtering', 'show_favorite_teams_only']), True),
-                'show_all_live': normalize_bool(get_config_value(config, 'ncaa_fb_show_all_live', ['ncaa_fb', 'filtering', 'show_all_live']), False),
-                'logo_dir': 'assets/sports/ncaa_logos'
-            }
-        }
-        
-        # LOG CONFIGURATION FOR DEBUGGING
-        self.logger.info("=== LEAGUE CONFIGURATION ===")
-        for league_key, league_config in self.leagues.items():
-            self.logger.info(f"{league_key}: enabled={league_config.get('enabled')}, favorite_teams={league_config.get('favorite_teams')}")
-        self.logger.info("===========================")
-
-        # Global settings - ensure proper type conversion
-        self.global_config = config
-        self.display_duration = float(config.get('display_duration', 30))  # Mode display duration
-        self.game_display_duration = float(config.get('game_display_duration', 15))  # Individual game duration
-
-        # Background service configuration (internal only)
-        self.background_config = {
-            'enabled': True,
-            'request_timeout': 30,
-            'max_retries': 3,
-            'priority': 2
+            "ncaa_fb": {
+                "enabled": config.get("ncaa_fb", {}).get("enabled", False),
+                "favorite_teams": config.get("ncaa_fb", {}).get("favorite_teams", []),
+                "display_modes": config.get("ncaa_fb", {}).get(
+                    "display_modes",
+                    {"show_live": True, "show_recent": True, "show_upcoming": True},
+                ),
+                "filtering": config.get("ncaa_fb", {}).get(
+                    "filtering",
+                    {"show_favorite_teams_only": False, "show_all_live": True},
+                ),
+                "recent_games_to_show": config.get("ncaa_fb", {}).get(
+                    "recent_games_to_show", 5
+                ),
+                "upcoming_games_to_show": config.get("ncaa_fb", {}).get(
+                    "upcoming_games_to_show", 10
+                ),
+                "logo_dir": "assets/sports/ncaa_logos",
+            },
         }
 
-        # State
+        # Global settings
+        self.display_duration = float(config.get("display_duration", 30))
+        self.game_display_duration = float(config.get("game_display_duration", 15))
+
+        # State - following football.py structure
         self.current_games = []
-        self.current_league = None
-        self.current_display_mode = None
+        self.current_game = None
+        self.current_game_index = 0 
+        self.last_game_switch = 0
         self.last_update = 0
         self.initialized = True
         
-        # Game rotation state (matching old managers)
-        self.current_game_index = 0
-        self.last_game_switch = 0
-        self._last_displayed_games_hash = None  # Track which games are currently being displayed
+        # Mode cycling for NFL display modes (separate from future NCAA FB modes)
+        self.current_display_mode = "nfl_live"
+        self.nfl_display_modes = ["nfl_live", "nfl_recent", "nfl_upcoming"]
+        self.mode_index = 0
+        self.last_mode_switch = 0
 
-        # Load fonts for rendering
+        # Load fonts - following football.py structure
         self.fonts = self._load_fonts()
         
-        # Team rankings cache (for NCAA primarily)
-        self._team_rankings_cache = {}
-
-        # Log throttling to reduce noise
-        self._last_cache_log_time = 0
-        self._last_update_log_time = 0
-        self._last_game_count = 0
-        self._log_throttle_seconds = 300  # Only log these messages every 5 minutes
-        
-        # Smart polling - dynamically adjust based on game schedule
-        self._next_poll_interval = 60  # Start with 1 minute, will adjust after first update
-        
-        # Background service for async API fetching
+        # Background service and shared data - following NFL manager structure
         self.background_service = None
-        self.background_fetch_requests = {}  # Track background fetch requests
+        self.background_fetch_requests = {}
+        self.shared_data = None
+        self.last_shared_update = 0
+
         if get_background_service:
             try:
-                self.background_service = get_background_service(cache_manager, max_workers=1)
-                self.logger.info("Background service initialized for async API fetching")
+                self.background_service = get_background_service(
+                    cache_manager, max_workers=1
+                )
+                self.logger.info("Background service initialized")
             except Exception as e:
                 self.logger.warning(f"Could not initialize background service: {e}")
-        else:
-            self.logger.warning("Background service not available, using synchronous fetching")
-        
-        # Season cache tracking for NFL/NCAA FB
-        self._season_cache_keys = {}  # Track which season data we've cached
 
-        # Register fonts with font manager (if available)
-        self._register_fonts()
+        # Warning tracking - following NFL manager structure
+        self._no_data_warning_logged = False
+        self._last_warning_time = 0
+        self._warning_cooldown = 60  # Only log warnings once per minute
 
-        # Log RAW config values for debugging (supports both flat and nested)
-        self.logger.info("=== Raw Config Values ===")
-        nfl_enabled_val = get_config_value(config, 'nfl_enabled', ['nfl', 'enabled'])
-        nfl_teams_val = get_config_value(config, 'nfl_favorite_teams', ['nfl', 'favorite_teams'])
-        ncaa_enabled_val = get_config_value(config, 'ncaa_fb_enabled', ['ncaa_fb', 'enabled'])
-        ncaa_teams_val = get_config_value(config, 'ncaa_fb_favorite_teams', ['ncaa_fb', 'favorite_teams'])
-        
-        self.logger.info(f"  nfl_enabled: {nfl_enabled_val} (type: {type(nfl_enabled_val).__name__})")
-        self.logger.info(f"  nfl_favorite_teams: {nfl_teams_val} (type: {type(nfl_teams_val).__name__})")
-        self.logger.info(f"  ncaa_fb_enabled: {ncaa_enabled_val} (type: {type(ncaa_enabled_val).__name__})")
-        self.logger.info(f"  ncaa_fb_favorite_teams: {ncaa_teams_val} (type: {type(ncaa_teams_val).__name__})")
-        self.logger.info(f"  Config structure: {'nested' if 'nfl' in config and isinstance(config.get('nfl'), dict) else 'flat'}")
-        
-        # Log enabled leagues and their settings
-        self.logger.info("=== Normalized League Config ===")
-        enabled_leagues = []
-        for league_key, league_config in self.leagues.items():
-            if league_config.get('enabled', False):
-                enabled_leagues.append(league_key)
-                # Log favorite teams for enabled leagues
-                favorites = league_config.get('favorite_teams', [])
-                show_fav_only = league_config.get('show_favorite_teams_only')
-                show_all_live = league_config.get('show_all_live')
-                self.logger.info(f"  {league_key.upper()} enabled with {len(favorites)} favorite team(s): {favorites}")
-                self.logger.info(f"    show_favorite_teams_only: {show_fav_only} (type: {type(show_fav_only).__name__})")
-                self.logger.info(f"    show_all_live: {show_all_live} (type: {type(show_all_live).__name__})")
-                self.logger.info(f"    Display modes: live={league_config.get('display_modes', {}).get('live')}, recent={league_config.get('display_modes', {}).get('recent')}, upcoming={league_config.get('display_modes', {}).get('upcoming')}")
-            else:
-                self.logger.info(f"  {league_key.upper()} disabled")
+        self.logger.info(
+            f"Football scoreboard plugin initialized - {self.display_width}x{self.display_height}"
+        )
 
-        self.logger.info("Football scoreboard plugin initialized")
-        self.logger.info(f"Enabled leagues: {enabled_leagues}")
-        self.logger.info(f"Display durations - Mode: {self.display_duration}s, Game rotation: {self.game_display_duration}s")
-
-    def _register_fonts(self):
-        """Register fonts with the font manager."""
+    def _get_timezone(self):
+        """Get timezone from the config file - following original nfl_manager pattern."""
         try:
-            if not hasattr(self.plugin_manager, 'font_manager'):
-                return
-
-            font_manager = self.plugin_manager.font_manager
-
-            # Team name font
-            font_manager.register_manager_font(
-                manager_id=self.plugin_id,
-                element_key=f"{self.plugin_id}.team_name",
-                family="press_start",
-                size_px=10,
-                color=(255, 255, 255)
+            timezone_str = self.config.get("timezone", "UTC")
+            return pytz.timezone(timezone_str)
+        except Exception:
+            self.logger.warning(
+                f"Unknown timezone: {timezone_str}, falling back to UTC"
             )
-
-            # Score font
-            font_manager.register_manager_font(
-                manager_id=self.plugin_id,
-                element_key=f"{self.plugin_id}.score",
-                family="press_start",
-                size_px=12,
-                color=(255, 200, 0)
-            )
-
-            # Status font (quarter, time)
-            font_manager.register_manager_font(
-                manager_id=self.plugin_id,
-                element_key=f"{self.plugin_id}.status",
-                family="four_by_six",
-                size_px=6,
-                color=(0, 255, 0)
-            )
-
-            # Detail font (down/distance, possession)
-            font_manager.register_manager_font(
-                manager_id=self.plugin_id,
-                element_key=f"{self.plugin_id}.detail",
-                family="four_by_six",
-                size_px=6,
-                color=(200, 200, 0)
-            )
-
-            self.logger.info("Football scoreboard fonts registered")
-        except Exception as e:
-            self.logger.warning(f"Error registering fonts: {e}")
+            return pytz.utc
 
     def _load_fonts(self):
-        """Load fonts used by the scoreboard - matching original managers."""
+        """Load fonts used by the scoreboard - following football.py structure."""
         fonts = {}
         try:
-            fonts['score'] = ImageFont.truetype("assets/fonts/PressStart2P-Regular.ttf", 10)
-            fonts['time'] = ImageFont.truetype("assets/fonts/PressStart2P-Regular.ttf", 8)
-            fonts['team'] = ImageFont.truetype("assets/fonts/PressStart2P-Regular.ttf", 8)
-            fonts['status'] = ImageFont.truetype("assets/fonts/4x6-font.ttf", 6)
-            fonts['detail'] = ImageFont.truetype("assets/fonts/4x6-font.ttf", 6)
-            fonts['rank'] = ImageFont.truetype("assets/fonts/PressStart2P-Regular.ttf", 10)
+            fonts["score"] = ImageFont.truetype(
+                "assets/fonts/PressStart2P-Regular.ttf", 10
+            )
+            fonts["time"] = ImageFont.truetype(
+                "assets/fonts/PressStart2P-Regular.ttf", 8
+            )
+            fonts["team"] = ImageFont.truetype(
+                "assets/fonts/PressStart2P-Regular.ttf", 8
+            )
+            fonts["status"] = ImageFont.truetype("assets/fonts/4x6-font.ttf", 6)
+            fonts["detail"] = ImageFont.truetype("assets/fonts/4x6-font.ttf", 6)
+            fonts["rank"] = ImageFont.truetype(
+                "assets/fonts/PressStart2P-Regular.ttf", 10
+            )
             self.logger.info("Successfully loaded fonts")
         except IOError as e:
             self.logger.warning(f"Fonts not found, using default PIL font: {e}")
-            fonts['score'] = ImageFont.load_default()
-            fonts['time'] = ImageFont.load_default()
-            fonts['team'] = ImageFont.load_default()
-            fonts['status'] = ImageFont.load_default()
-            fonts['detail'] = ImageFont.load_default()
-            fonts['rank'] = ImageFont.load_default()
+            fonts["score"] = ImageFont.load_default()
+            fonts["time"] = ImageFont.load_default()
+            fonts["team"] = ImageFont.load_default()
+            fonts["status"] = ImageFont.load_default()
+            fonts["detail"] = ImageFont.load_default()
+            fonts["rank"] = ImageFont.load_default()
         return fonts
 
     def update(self) -> None:
-        """Update football game data for all enabled leagues with smart polling."""
-        self.logger.info(f"=== UPDATE METHOD CALLED === initialized={self.initialized}")
-        
+        """Update football game data - following football.py structure."""
         if not self.initialized:
-            self.logger.warning("Update called but plugin not initialized")
             return
 
-        # Check if we need to update based on smart polling
-        should_update = self._should_update()
-        self.logger.info(f"Smart polling check: should_update={should_update}, last_update={self.last_update}, time_since={time.time() - self.last_update if self.last_update else 'N/A'}s")
-        if not should_update:
-            self.logger.debug("Skipping update due to smart polling interval")
+        # Check if we should update based on interval
+        if not self._should_update():
+            self.logger.debug("Skipping update - not time yet")
             return
-
-        self.logger.info("Proceeding with data update...")
         
         try:
+            self.logger.info("Starting football data update...")
             self.current_games = []
 
+            # Check shared data first - following NFL manager structure
+            if self._check_shared_data():
+                self.logger.info("Using shared data for football games")
+            else:
             # Fetch data for each enabled league
             for league_key, league_config in self.leagues.items():
-                enabled = league_config.get('enabled', False)
-                self.logger.info(f"Checking {league_key}: enabled={enabled} (type={type(enabled)})")
-                if enabled:
+                    if league_config.get("enabled", False):
                     self.logger.info(f"Fetching data for {league_key}...")
                     games = self._fetch_league_data(league_key, league_config)
                     if games:
-                        # Add league info to each game
-                        for game in games:
-                            game['league_config'] = league_config
                         self.current_games.extend(games)
-                        self.logger.info(f"Added {len(games)} {league_key} games to current_games")
+                            self.logger.info(f"Added {len(games)} {league_key} games")
                     else:
-                        self.logger.warning(f"No games returned for {league_key}")
+                            self.logger.warning(f"No games found for {league_key}")
 
-            # Sort games - prioritize live games and favorites
+            # Sort games by priority
             self._sort_games()
-
             self.last_update = time.time()
             
-            # Calculate next update interval based on game states
-            self._calculate_next_update_interval()
-            
-            # Only log occasionally or when game count changes to reduce noise
-            current_time = time.time()
-            game_count = len(self.current_games)
-            if game_count != self._last_game_count or current_time - self._last_update_log_time > self._log_throttle_seconds:
-                # Log detailed breakdown by league and state
-                nfl_games = [g for g in self.current_games if g.get('league') == 'nfl']
-                ncaa_games = [g for g in self.current_games if g.get('league') == 'ncaa_fb']
-                live_games = [g for g in self.current_games if g.get('status', {}).get('state') == 'in']
-                recent_games = [g for g in self.current_games if g.get('status', {}).get('state') == 'post']
-                upcoming_games = [g for g in self.current_games if g.get('status', {}).get('state') == 'pre']
-                
-                self.logger.info(f"Football data updated: {game_count} total games")
-                self.logger.info(f"  NFL: {len(nfl_games)}, NCAA FB: {len(ncaa_games)}")
-                self.logger.info(f"  Live: {len(live_games)}, Recent: {len(recent_games)}, Upcoming: {len(upcoming_games)}")
-                
-                # Log smart polling info
-                if hasattr(self, '_next_poll_interval'):
-                    self.logger.info(f"  Next poll in: {self._next_poll_interval // 60} minutes")
-                
-                self._last_update_log_time = current_time
-                self._last_game_count = game_count
+            # Log filtering status
+            nfl_config = self.leagues.get("nfl", {})
+            filtering = nfl_config.get("filtering", {})
+            show_favorite_teams_only = filtering.get("show_favorite_teams_only", False)
+            favorite_teams = nfl_config.get("favorite_teams", [])
+
+            if show_favorite_teams_only and favorite_teams:
+                self.logger.info(
+                    f"Football filtering enabled: showing only favorite teams {favorite_teams}"
+                )
+            else:
+                self.logger.info("Football filtering disabled: showing all teams")
+
+            # Log detailed game information
+            nfl_games = [g for g in self.current_games if g.get("league") == "nfl"]
+            if nfl_games:
+                live_games = [g for g in nfl_games if g.get("is_live")]
+                recent_games = [g for g in nfl_games if g.get("is_final")]
+                upcoming_games = [g for g in nfl_games if g.get("is_upcoming")]
+
+                self.logger.info(f"NFL Games Summary: {len(live_games)} live, {len(recent_games)} recent, {len(upcoming_games)} upcoming")
+
+                # Log upcoming games details
+                if upcoming_games:
+                    for i, game in enumerate(upcoming_games):
+                        is_favorite = self._is_favorite_game(game)
+                        favorite_indicator = " [FAVORITE]" if is_favorite else ""
+                        self.logger.info(
+                            f"Upcoming game {i+1}: {game.get('away_abbr', '?')}@{game.get('home_abbr', '?')}"
+                            f" - {game.get('game_time', 'No time')}{favorite_indicator}"
+                        )
+                else:
+                    self.logger.warning("No upcoming NFL games found in data")
+            else:
+                self.logger.warning("No NFL games found in current_games")
+
+            self.logger.info(
+                f"Football data updated: {len(self.current_games)} total games"
+            )
 
         except Exception as e:
             self.logger.error(f"Error updating football data: {e}")
 
     def _should_update(self) -> bool:
-        """Determine if we should fetch new data based on smart polling."""
-        if not hasattr(self, '_next_poll_interval'):
-            return True  # First run, always update
-        
-        time_since_last_update = time.time() - self.last_update
-        return time_since_last_update >= self._next_poll_interval
+        """Check if we should update data based on interval."""
+        if not hasattr(self, "last_update") or self.last_update == 0:
+            return True
 
-    def _calculate_next_update_interval(self):
-        """Calculate next update interval based on game states and schedules."""
-        from datetime import datetime, timezone
-        
-        # Check for live games
-        live_games = [g for g in self.current_games if g.get('status', {}).get('state') == 'in']
-        if live_games:
-            self._next_poll_interval = 60  # Poll every 1 minute during live games
-            return
-        
-        # Check for upcoming games and find the soonest one
-        upcoming_games = [g for g in self.current_games if g.get('status', {}).get('state') == 'pre']
-        if upcoming_games:
-            now = datetime.now(timezone.utc)
-            soonest_game_time = None
-            
-            for game in upcoming_games:
-                try:
-                    start_time_str = game.get('start_time', '')
-                    if start_time_str:
-                        game_time = datetime.fromisoformat(start_time_str.replace('Z', '+00:00'))
-                        if soonest_game_time is None or game_time < soonest_game_time:
-                            soonest_game_time = game_time
-                except:
-                    continue
-            
-            if soonest_game_time:
-                time_until_game = (soonest_game_time - now).total_seconds()
-                
-                # Smart polling based on time until next game
-                if time_until_game < 3600:  # Less than 1 hour away
-                    self._next_poll_interval = 60  # Poll every 1 minute
-                elif time_until_game < 7200:  # Less than 2 hours away
-                    self._next_poll_interval = 300  # Poll every 5 minutes
-                elif time_until_game < 86400:  # Less than 1 day away (games today)
-                    self._next_poll_interval = 600  # Poll every 10 minutes
-                elif time_until_game < 172800:  # Less than 2 days away (games tomorrow)
-                    self._next_poll_interval = 1800  # Poll every 30 minutes
-                else:  # Games 2+ days away
-                    self._next_poll_interval = 43200  # Poll every 12 hours
-                
-                return
-        
-        # No live or upcoming games, poll once per day
-        self._next_poll_interval = 86400
+        current_time = time.time()
+        update_interval = self.config.get(
+            "update_interval_seconds", 300
+        )  # Default 5 minutes
 
-    def _sort_games(self):
-        """Sort games by priority, favorites, and appropriate time order."""
-        def sort_key(game):
-            status = game.get('status', {})
-            state = status.get('state')
+        return (current_time - self.last_update) >= update_interval
 
-            # Priority 1: Live games first
-            is_live = state == 'in'
-            live_score = 0 if is_live else 1
-
-            # Priority 2: Favorite teams
-            favorite_score = 0 if self._is_favorite_game(game) else 1
-
-            # Priority 3: Game state (recent, then upcoming)
-            if state == 'post':
-                state_score = 0  # Recent games
-            elif state == 'pre':
-                state_score = 1  # Upcoming games
-            else:
-                state_score = 2  # Other states
-
-            # Priority 4: Start time
-            # Parse start_time to datetime for proper sorting
-            start_time = game.get('start_time', '')
-            try:
-                # ESPN returns ISO format timestamps
-                if start_time:
-                    from datetime import datetime
-                    dt = datetime.fromisoformat(start_time.replace('Z', '+00:00'))
-                    # For recent games (post), negate the timestamp to sort most recent first
-                    # For upcoming games (pre), use normal order to sort soonest first
-                    if state == 'post':
-                        time_score = -dt.timestamp()  # Negative = reverse order (most recent first)
-                    else:
-                        time_score = dt.timestamp()  # Normal order (soonest first)
-                else:
-                    time_score = 0
-            except:
-                time_score = 0
-
-            return (live_score, favorite_score, state_score, time_score)
-
-        self.current_games.sort(key=sort_key)
-
-    def _get_season_dates(self, league_key: str) -> tuple:
-        """Get season start/end dates for a league."""
-        now = datetime.now(pytz.utc)
-        
-        if league_key == 'nfl':
-            # NFL season: August to February
-            season_year = now.year if now.month >= 8 else now.year - 1
-            start_date = f"{season_year}0801"
-            end_date = f"{season_year + 1}0301"
-        elif league_key == 'ncaa_fb':
-            # NCAA FB season: August to January
-            season_year = now.year if now.month >= 8 else now.year - 1
-            start_date = f"{season_year}0801"
-            end_date = f"{season_year + 1}0201"
-        else:
-            # Default: current year
-            start_date = f"{now.year}0101"
-            end_date = f"{now.year}1231"
-        
-        return start_date, end_date, season_year
-    
-    def _should_fetch_live_only(self, league_key: str) -> bool:
-        """Determine if we should fetch only today's games (for live) or full season data.
-        
-        Decision is made PER LEAGUE to handle different game schedules:
-        - NFL: Games typically Sunday/Monday/Thursday
-        - NCAA FB: Games typically Saturday
-        
-        This ensures we don't fetch "today only" for a league that doesn't have games today.
-        """
-        # Check if THIS specific league has any live games currently
-        has_live = any(
-            game.get('status', {}).get('state') == 'in' and game.get('league') == league_key
-            for game in self.current_games
-        )
-        
-        # Check if live mode is enabled for THIS league
-        league_config = self.leagues.get(league_key, {})
-        live_enabled = (
-            league_config.get('enabled', False) and 
-            league_config.get('display_modes', {}).get('live', False)
-        )
-        
-        # If THIS league has live games or live mode is enabled, fetch today's games
-        return has_live or live_enabled
-    
     def _fetch_league_data(self, league_key: str, league_config: Dict) -> List[Dict]:
-        """Fetch game data for a specific league with optimized fetching strategy."""
-        now = datetime.now()
-        base_url = self.ESPN_API_URLS.get(league_key)
-        
-        if not base_url:
-            self.logger.error(f"Unknown league key: {league_key}")
-            return []
-        
-        # Determine fetch strategy: live-only (today) vs season-wide (PER LEAGUE)
-        fetch_live_only = self._should_fetch_live_only(league_key)
-        
-        if fetch_live_only:
-            # Strategy 1: Fetch today's games only (for live games - much faster!)
-            cache_key = f"football_{league_key}_today_{now.strftime('%Y%m%d')}"
-            today = now.strftime('%Y%m%d')
-            url = f"{base_url}?dates={today}&limit=100"
-            
-            # Check cache first (shorter TTL for live games)
-            cached_data = self.cache_manager.get(cache_key)
-            if cached_data and (time.time() - self.last_update) < 60:  # 1 minute cache for live
-                return cached_data
-            
-            self.logger.info(f"Fetching {league_key} live games for today...")
-            
-        else:
-            # Strategy 2: Fetch season-wide data (for recent/upcoming - cached longer)
-            start_date, end_date, season_year = self._get_season_dates(league_key)
-            cache_key = f"football_{league_key}_season_{season_year}"
-            url = f"{base_url}?dates={start_date}-{end_date}&limit=1000"
-            
-            # Check cache first (longer TTL for season data)
-            cached_data = self.cache_manager.get(cache_key)
+        """Fetch game data for a specific league using NFL manager data logic."""
+        # Use smart caching and background fetching like the original NFL manager
+        if league_key == "nfl":
+            data = self._fetch_nfl_api_data(use_cache=True)
+            else:
+            data = self._fetch_ncaa_fb_api_data(use_cache=True)
+
+        if data:
+            games = self._process_api_response(data, league_key, league_config)
+            return games
+
+        return []
+
+    def _fetch_nfl_api_data(self, use_cache: bool = True) -> Optional[Dict]:
+        """Fetches the full season schedule for NFL using background threading."""
+        now = datetime.now(pytz.utc)
+        season_year = now.year
+        if now.month < 8:
+            season_year = now.year - 1
+        datestring = f"{season_year}0801-{season_year+1}0301"
+        cache_key = f"nfl_schedule_{season_year}"
+
+        # Check cache first
+        if use_cache and hasattr(self.plugin_manager, "cache_manager"):
+            cached_data = self.plugin_manager.cache_manager.get(cache_key)
             if cached_data:
-                # Only log occasionally to reduce noise
-                current_time = time.time()
-                if current_time - self._last_cache_log_time > self._log_throttle_seconds:
-                    self.logger.info(f"Using cached {league_key} season data ({len(cached_data)} games)")
-                    self._last_cache_log_time = current_time
-                return cached_data
-            
-            self.logger.info(f"Fetching {league_key} season data ({start_date}-{end_date})...")
-        
-        # Try background service first, fallback to synchronous
-        if self.background_service:
-            return self._fetch_with_background_service(league_key, league_config, url, cache_key)
+                # Validate cached data structure
+                if isinstance(cached_data, dict) and "events" in cached_data:
+                    self.logger.info(f"Using cached NFL schedule for {season_year}")
+                    return cached_data
+                elif isinstance(cached_data, list):
+                    # Handle old cache format (list of events)
+                    self.logger.info(
+                        f"Using cached NFL schedule for {season_year} (legacy format)"
+                    )
+                    return {"events": cached_data}
         else:
-            return self._fetch_synchronous(league_key, league_config, url, cache_key)
-    
-    def _fetch_with_background_service(self, league_key: str, league_config: Dict, 
-                                       url: str, cache_key: str) -> List[Dict]:
-        """Fetch data using background service (async, non-blocking)."""
-        try:
-            # Check if we already have a pending request for this cache key
-            if cache_key in self.background_fetch_requests:
-                self.logger.debug(f"Background fetch already in progress for {cache_key}")
-                # Return cached data if available, even if stale
-                cached = self.cache_manager.get(cache_key)
-                return cached if cached else []
-            
-            # Callback when fetch completes
-            def fetch_callback(result):
-                """Called when background fetch completes."""
-                if result.success:
-                    self.logger.info(f"Background fetch completed for {league_key}: {len(result.data.get('events', []))} events")
-                    # Process and cache the data
-                    games = self._process_api_response(result.data, league_key, league_config)
-                    self.cache_manager.set(cache_key, games)
+                    self.logger.warning(
+                        f"Invalid cached data format for {season_year}: {type(cached_data)}"
+                    )
+                    # Clear invalid cache
+                    self.plugin_manager.cache_manager.clear_cache(cache_key)
+
+        # Start background fetch if background service is available
+        if self.background_service:
+            self._start_background_fetch("nfl", season_year, datestring, cache_key)
+
+        # For immediate response, try to get today's games
+        return self._fetch_todays_games("nfl")
+
+    def _fetch_ncaa_fb_api_data(self, use_cache: bool = True) -> Optional[Dict]:
+        """Fetches the full season schedule for NCAA FB using background threading."""
+        now = datetime.now(pytz.utc)
+        season_year = now.year
+        if now.month < 8:
+            season_year = now.year - 1
+        datestring = f"{season_year}0801-{season_year+1}0301"
+        cache_key = f"ncaa_fb_schedule_{season_year}"
+
+        # Check cache first
+        if use_cache and hasattr(self.plugin_manager, "cache_manager"):
+            cached_data = self.plugin_manager.cache_manager.get(cache_key)
+            if cached_data:
+                # Validate cached data structure
+                if isinstance(cached_data, dict) and "events" in cached_data:
+                    self.logger.info(f"Using cached NCAA FB schedule for {season_year}")
+                    return cached_data
+                elif isinstance(cached_data, list):
+                    # Handle old cache format (list of events)
+                    self.logger.info(
+                        f"Using cached NCAA FB schedule for {season_year} (legacy format)"
+                    )
+                    return {"events": cached_data}
                 else:
-                    self.logger.error(f"Background fetch failed for {league_key}: {result.error}")
+                    self.logger.warning(
+                        f"Invalid cached data format for {season_year}: {type(cached_data)}"
+                    )
+                    # Clear invalid cache
+                    self.plugin_manager.cache_manager.clear_cache(cache_key)
+
+        # Start background fetch if background service is available
+        if self.background_service:
+            self._start_background_fetch("ncaa_fb", season_year, datestring, cache_key)
+
+        # For immediate response, try to get today's games
+        return self._fetch_todays_games("ncaa_fb")
+
+    def _fetch_todays_games(self, league: str) -> Optional[Dict]:
+        """Fetch games for the past few days to cover live, recent, and upcoming games."""
+        try:
+        now = datetime.now()
+
+            # Fetch games from the past 3 days to today + 3 days to cover recent, live, and upcoming
+            all_events = []
+            for days_offset in range(-3, 4):  # -3 days to +3 days
+                target_date = now + timedelta(days=days_offset)
+                formatted_date = target_date.strftime("%Y%m%d")
+
+                if league == "nfl":
+                    url = "https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard"
+                else:
+                    url = "https://site.api.espn.com/apis/site/v2/sports/football/college-football/scoreboard"
+
+                headers = {"User-Agent": "LEDMatrix/1.0", "Accept": "application/json"}
+
+                try:
+                    response = requests.get(
+                        url,
+                        params={"dates": formatted_date, "limit": 1000},
+                        headers=headers,
+                        timeout=15,
+                    )
+                    response.raise_for_status()
+
+                    data = response.json()
+                    events = data.get("events", [])
+                    all_events.extend(events)
+
+                    self.logger.debug(
+                        f"Fetched {len(events)} games for {league} on {formatted_date}"
+                    )
+
+                except Exception as e:
+                    self.logger.debug(
+                        f"Error fetching games for {league} on {formatted_date}: {e}"
+                    )
+                    continue
+
+            self.logger.info(
+                f"Fetched {len(all_events)} total games for {league} across date range"
+            )
+            return {"events": all_events}
+
+        except Exception as e:
+            self.logger.error(f"Error fetching games for {league}: {e}")
+            return None
+
+    def _start_background_fetch(
+        self, league: str, season_year: int, datestring: str, cache_key: str
+    ) -> None:
+        """Start background fetch for season data - following NFL manager structure."""
+        try:
+            # Get background service configuration
+            background_config = self.config.get("background_service", {})
+            timeout = background_config.get("request_timeout", 30)
+            max_retries = background_config.get("max_retries", 3)
+            priority = background_config.get("priority", 2)
+
+            # ESPN API URLs
+            api_urls = {
+                "nfl": "https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard",
+                "ncaa_fb": "https://site.api.espn.com/apis/site/v2/sports/football/college-football/scoreboard",
+            }
+
+            url = api_urls.get(league)
+            if not url:
+                return
+
+            def fetch_callback(result):
+                """Callback when background fetch completes."""
+                if result.success:
+                    self.logger.info(
+                        f"Background fetch completed for {league} {season_year}: {len(result.data.get('events', []))} events"
+                    )
+                else:
+                    self.logger.error(
+                        f"Background fetch failed for {league} {season_year}: {result.error}"
+                    )
                 
                 # Clean up request tracking
-                if cache_key in self.background_fetch_requests:
-                    del self.background_fetch_requests[cache_key]
+                if season_year in self.background_fetch_requests:
+                    del self.background_fetch_requests[season_year]
             
-            # Submit background request
+            # Submit background fetch request
             request_id = self.background_service.submit_fetch_request(
-                sport="football",
-                year=cache_key,  # Use cache_key as unique identifier
+                sport=league,
+                year=season_year,
                 url=url,
                 cache_key=cache_key,
-                params={},
-                headers={
-                    'User-Agent': 'LEDMatrix/1.0',
-                    'Accept': 'application/json'
-                },
-                timeout=self.background_config.get('request_timeout', 30),
-                max_retries=self.background_config.get('max_retries', 3),
-                priority=self.background_config.get('priority', 2),
-                callback=fetch_callback
+                params={"dates": datestring, "limit": 1000},
+                headers={"User-Agent": "LEDMatrix/1.0", "Accept": "application/json"},
+                timeout=timeout,
+                max_retries=max_retries,
+                priority=priority,
+                callback=fetch_callback,
             )
-            
-            self.background_fetch_requests[cache_key] = request_id
-            
-            # Return cached data immediately if available
-            cached = self.cache_manager.get(cache_key)
-            if cached:
-                self.logger.debug(f"Returning cached data while background fetch proceeds")
-                return cached
-            
-            # No cached data, fetch will complete in background
-            self.logger.info(f"Background fetch initiated for {league_key}, data will be available on next update")
-            return []
-            
-        except Exception as e:
-            self.logger.error(f"Error with background service: {e}, falling back to synchronous")
-            return self._fetch_synchronous(league_key, league_config, url, cache_key)
-    
-    def _fetch_synchronous(self, league_key: str, league_config: Dict, 
-                          url: str, cache_key: str) -> List[Dict]:
-        """Fetch data synchronously (blocking)."""
-        try:
-            response = requests.get(url, timeout=self.background_config.get('request_timeout', 30))
-            response.raise_for_status()
-            
-            data = response.json()
-            games = self._process_api_response(data, league_key, league_config)
-            
-            # Cache the games data
-            self.cache_manager.set(cache_key, games)
-            
-            self.logger.info(f"Fetched {len(games)} games for {league_key}")
-            return games
-            
-        except requests.RequestException as e:
-            self.logger.error(f"Error fetching {league_key} data: {e}")
-            return []
-        except Exception as e:
-            self.logger.error(f"Error processing {league_key} data: {e}")
-            return []
 
-    def _process_api_response(self, data: Dict, league_key: str, league_config: Dict) -> List[Dict]:
-        """Process ESPN API response into standardized game format."""
+            # Track the request
+            self.background_fetch_requests[season_year] = request_id
+            
+        except Exception as e:
+            self.logger.error(f"Error starting background fetch for {league}: {e}")
+
+    def _get_weeks_data(self) -> Optional[Dict]:
+        """Get partial data for immediate display - following NFL manager structure."""
+        # This would implement the partial data logic from the original NFL manager
+        # For now, return None to force API fetch
+        return None
+
+    def _check_shared_data(self) -> bool:
+        """Check if shared data is available and recent - following NFL manager structure."""
+        current_time = time.time()
+
+        # Check if shared data exists and is recent (within 5 minutes)
+        if self.shared_data and current_time - self.last_shared_update < 300:
+            try:
+                # Process shared data
+                for league_key, league_config in self.leagues.items():
+                    if league_config.get("enabled", False):
+                        games = self._process_api_response(
+                            self.shared_data, league_key, league_config
+                        )
+                        if games:
+                            self.current_games.extend(games)
+                return True
+        except Exception as e:
+                self.logger.error(f"Error processing shared data: {e}")
+                return False
+
+        return False
+
+    def _process_api_response(
+        self, data: Dict, league_key: str, league_config: Dict
+    ) -> List[Dict]:
+        """Process ESPN API response - following football.py structure."""
         games = []
 
         try:
-            events = data.get('events', [])
+            events = data.get("events", [])
 
             for event in events:
-                try:
-                    game = self._extract_game_info(event, league_key, league_config)
+                game = self._extract_game_details(event, league_key, league_config)
                     if game:
                         games.append(game)
-                except Exception as e:
-                    self.logger.error(f"Error extracting game info: {e}")
-                    continue
 
         except Exception as e:
             self.logger.error(f"Error processing API response: {e}")
 
         return games
 
-    def _extract_game_info(self, event: Dict, league_key: str, league_config: Dict) -> Optional[Dict]:
-        """Extract game information from ESPN event with football-specific details."""
+    def _extract_game_details(
+        self, game_event: Dict, league_key: str, league_config: Dict
+    ) -> Optional[Dict]:
+        """Extract game details following football.py structure exactly."""
         try:
-            competition = event.get('competitions', [{}])[0]
-            status = competition.get('status', {})
-            competitors = competition.get('competitors', [])
+            competition = game_event["competitions"][0]
+            status = competition["status"]
+            competitors = competition["competitors"]
+            game_date_str = game_event["date"]
+            situation = competition.get("situation")
+            start_time_utc = None
 
-            if len(competitors) < 2:
-                return None
+            try:
+                start_time_utc = datetime.fromisoformat(
+                    game_date_str.replace("Z", "+00:00")
+                )
+            except ValueError:
+                self.logger.warning(f"Could not parse game date: {game_date_str}")
 
-            # Find home and away teams
-            home_team = next((c for c in competitors if c.get('homeAway') == 'home'), None)
-            away_team = next((c for c in competitors if c.get('homeAway') == 'away'), None)
+            home_team = next(
+                (c for c in competitors if c.get("homeAway") == "home"), None
+            )
+            away_team = next(
+                (c for c in competitors if c.get("homeAway") == "away"), None
+            )
 
             if not home_team or not away_team:
+                self.logger.warning(
+                    f"Could not find home or away team in event: {game_event.get('id')}"
+                )
                 return None
 
-            # Extract basic game details
-            home_team_id = home_team.get('team', {}).get('id')
-            away_team_id = away_team.get('team', {}).get('id')
-            
-            game = {
-                'league': league_key,
-                'league_config': league_config,
-                'game_id': event.get('id'),
-                'home_id': home_team_id,
-                'away_id': away_team_id,
-                'home_team': {
-                    'name': home_team.get('team', {}).get('displayName', 'Unknown'),
-                    'abbrev': home_team.get('team', {}).get('abbreviation', 'UNK'),
-                    'score': int(home_team.get('score', 0)),
-                    'logo': home_team.get('team', {}).get('logo')
-                },
-                'away_team': {
-                    'name': away_team.get('team', {}).get('displayName', 'Unknown'),
-                    'abbrev': away_team.get('team', {}).get('abbreviation', 'UNK'),
-                    'score': int(away_team.get('score', 0)),
-                    'logo': away_team.get('team', {}).get('logo')
-                },
-                'home_record': home_team.get('records', [{}])[0].get('summary', '') if home_team.get('records') else '',
-                'away_record': away_team.get('records', [{}])[0].get('summary', '') if away_team.get('records') else '',
-                'status': {
-                    'state': status.get('type', {}).get('state', 'unknown'),
-                    'detail': status.get('type', {}).get('detail', ''),
-                    'short_detail': status.get('type', {}).get('shortDetail', ''),
-                    'period': status.get('period', 0),
-                    'display_clock': status.get('displayClock', '')
-                },
-                'start_time': event.get('date', ''),
-                'venue': competition.get('venue', {}).get('fullName', 'Unknown Venue'),
-                'is_halftime': status.get('type', {}).get('name') == 'STATUS_HALFTIME'
-            }
+            try:
+                home_abbr = home_team["team"]["abbreviation"]
+            except KeyError:
+                home_abbr = home_team["team"]["name"][:3]
+            try:
+                away_abbr = away_team["team"]["abbreviation"]
+            except KeyError:
+                away_abbr = away_team["team"]["name"][:3]
 
-            # Add football-specific details
-            situation = competition.get('situation', {})
+            # Check if this is a favorite team game
+            favorite_teams = league_config.get("favorite_teams", [])
+            is_favorite_game = (
+                home_abbr in favorite_teams or away_abbr in favorite_teams
+            )
+
+            # Only log debug info for favorite team games
+            if is_favorite_game:
+                self.logger.debug(
+                    f"Processing favorite team game: {game_event.get('id')}"
+                )
+                self.logger.debug(
+                    f"Found teams: {away_abbr}@{home_abbr}, Status: {status['type']['name']}, State: {status['type']['state']}"
+                )
+
+            game_time, game_date = "", ""
+            if start_time_utc:
+                local_time = start_time_utc.astimezone(self._get_timezone())
+                game_time = local_time.strftime("%I:%M%p").lower().lstrip("0")
+                game_date = local_time.strftime("%m/%d").lstrip("0").replace("/0", "/")
+
+            home_record = (
+                home_team.get("records", [{}])[0].get("summary", "")
+                if home_team.get("records")
+                else ""
+            )
+            away_record = (
+                away_team.get("records", [{}])[0].get("summary", "")
+                if away_team.get("records")
+                else ""
+            )
+
+            # Don't show "0-0" records - set to blank instead
+            if home_record in {"0-0", "0-0-0"}:
+                home_record = ""
+            if away_record in {"0-0", "0-0-0"}:
+                away_record = ""
+
+            # --- Football Specific Details (Following football.py exactly) ---
+            down_distance_text = ""
+            down_distance_text_long = ""
             possession_indicator = None
-            
-            if situation:
-                game['down_distance'] = situation.get('shortDownDistanceText', '')
-                game['possession'] = situation.get('possession')
-                game['is_redzone'] = situation.get('isRedZone', False)
-                
-                # Map possession to home/away indicator (matching original)
-                possession_team_id = situation.get('possession')
+            scoring_event = ""
+            home_timeouts = 0
+            away_timeouts = 0
+            is_redzone = False
+            possession = None
+
+            if situation and status["type"]["state"] == "in":
+                down_distance_text = situation.get("shortDownDistanceText")
+                down_distance_text_long = situation.get("downDistanceText")
+
+                # Detect scoring events from status detail
+                status_detail = status["type"].get("detail", "").lower()
+                status_short = status["type"].get("shortDetail", "").lower()
+                is_redzone = situation.get("isRedZone")
+                possession = situation.get("possession")
+
+                # Check for scoring events in status text
+                if any(keyword in status_detail for keyword in ["touchdown", "td"]):
+                    scoring_event = "TOUCHDOWN"
+                elif any(keyword in status_detail for keyword in ["field goal", "fg"]):
+                    scoring_event = "FIELD GOAL"
+                elif any(
+                    keyword in status_detail
+                    for keyword in ["extra point", "pat", "point after"]
+                ):
+                    scoring_event = "PAT"
+                elif any(keyword in status_short for keyword in ["touchdown", "td"]):
+                    scoring_event = "TOUCHDOWN"
+                elif any(keyword in status_short for keyword in ["field goal", "fg"]):
+                    scoring_event = "FIELD GOAL"
+                elif any(keyword in status_short for keyword in ["extra point", "pat"]):
+                    scoring_event = "PAT"
+
+                # Determine possession based on team ID
+                possession_team_id = situation.get("possession")
                 if possession_team_id:
-                    if possession_team_id == home_team_id:
+                    if possession_team_id == home_team.get("id"):
                         possession_indicator = "home"
-                    elif possession_team_id == away_team_id:
+                    elif possession_team_id == away_team.get("id"):
                         possession_indicator = "away"
                 
-                # Add more detailed football info
-                game['down'] = situation.get('down')
-                game['distance'] = situation.get('distance')
-                game['yard_line'] = situation.get('yardLine')
-                game['possession_text'] = situation.get('possessionText', '')
-                
-                # Timeouts (default to 3 if not specified, matching original)
-                game['home_timeouts'] = situation.get('homeTimeouts', 3)
-                game['away_timeouts'] = situation.get('awayTimeouts', 3)
+                home_timeouts = situation.get("homeTimeouts", 3)
+                away_timeouts = situation.get("awayTimeouts", 3)
+
+            # Format period/quarter
+            period = status.get("period", 0)
+            period_text = ""
+            if status["type"]["state"] == "in":
+                if period == 0:
+                    period_text = "Start"
+                elif period >= 1 and period <= 4:
+                    period_text = f"Q{period}"
+                elif period > 4:
+                    period_text = f"OT{period - 4}"
+            elif (
+                status["type"]["state"] == "halftime"
+                or status["type"]["name"] == "STATUS_HALFTIME"
+            ):
+                period_text = "HALF"
+            elif status["type"]["state"] == "post":
+                if period > 4:
+                    period_text = "Final/OT"
             else:
-                game['down_distance'] = ''
-                game['possession'] = None
-                game['is_redzone'] = False
-                game['home_timeouts'] = 0
-                game['away_timeouts'] = 0
-            
-            # Add possession indicator
-            game['possession_indicator'] = possession_indicator
-            
-            # Add scoring events detection
-            game['scoring_event'] = self._detect_scoring_event(status)
-            
-            # Add game phase info
-            game['game_phase'] = self._determine_game_phase(status, league_key)
-            
-            return game
+                    period_text = "Final"
+            elif status["type"]["state"] == "pre":
+                period_text = game_time
+
+            details = {
+                "id": game_event.get("id"),
+                "league": league_key,
+                "league_config": league_config,
+                "game_time": game_time,
+                "game_date": game_date,
+                "start_time_utc": start_time_utc,
+                "status_text": status["type"]["shortDetail"],
+                "is_live": status["type"]["state"] == "in",
+                "is_final": status["type"]["state"] == "post",
+                "is_upcoming": (
+                    status["type"]["state"] == "pre"
+                    or status["type"]["name"].lower()
+                    in ["scheduled", "pre-game", "status_scheduled"]
+                ),
+                "is_halftime": status["type"]["state"] == "halftime"
+                or status["type"]["name"] == "STATUS_HALFTIME",
+                "is_period_break": status["type"]["name"] == "STATUS_END_PERIOD",
+                "home_abbr": home_abbr,
+                "home_id": home_team["id"],
+                "home_score": home_team.get("score", "0"),
+                "home_logo_path": Path(
+                    league_config.get("logo_dir", "assets/sports/nfl_logos")
+                )
+                / f"{home_abbr}.png",
+                "home_logo_url": home_team["team"].get("logo"),
+                "home_record": home_record,
+                "away_abbr": away_abbr,
+                "away_id": away_team["id"],
+                "away_score": away_team.get("score", "0"),
+                "away_logo_path": Path(
+                    league_config.get("logo_dir", "assets/sports/nfl_logos")
+                )
+                / f"{away_abbr}.png",
+                "away_logo_url": away_team["team"].get("logo"),
+                "away_record": away_record,
+                "is_within_window": True,
+                "period": period,
+                "period_text": period_text,
+                "clock": status.get("displayClock", "0:00"),
+                "home_timeouts": home_timeouts,
+                "away_timeouts": away_timeouts,
+                "down_distance_text": down_distance_text,
+                "down_distance_text_long": down_distance_text_long,
+                "is_redzone": is_redzone,
+                "possession": possession,
+                "possession_indicator": possession_indicator,
+                "scoring_event": scoring_event,
+            }
+
+            # Basic validation
+            if not details["home_abbr"] or not details["away_abbr"]:
+                self.logger.warning(
+                    f"Missing team abbreviation in event: {details['id']}"
+                )
+                return None
+
+            self.logger.debug(
+                f"Extracted: {details['away_abbr']}@{details['home_abbr']}, Status: {status['type']['name']}, Live: {details['is_live']}, Final: {details['is_final']}, Upcoming: {details['is_upcoming']}"
+            )
+
+            return details
 
         except Exception as e:
-            self.logger.error(f"Error extracting game info: {e}")
+            self.logger.error(
+                f"Error extracting game details: {e} from event: {game_event.get('id')}",
+                exc_info=True,
+            )
             return None
 
-    def _detect_scoring_event(self, status: Dict) -> str:
-        """Detect if there's a scoring event happening."""
-        try:
-            status_detail = status.get('type', {}).get('detail', '').lower()
-            status_short = status.get('type', {}).get('shortDetail', '').lower()
-            
-            scoring_keywords = ['touchdown', 'field goal', 'safety', 'extra point', 'two-point', 'conversion']
-            
-            for keyword in scoring_keywords:
-                if keyword in status_detail or keyword in status_short:
-                    return keyword
-            
-            return ""
-        except:
-            return ""
+    def _sort_games(self):
+        """Sort games by priority - following football.py structure."""
 
-    def _determine_game_phase(self, status: Dict, league: str) -> str:
-        """Determine the current phase of the game."""
-        try:
-            state = status.get('type', {}).get('state', '')
-            period = status.get('period', 0)
-            
-            if state == 'pre':
-                return 'pregame'
-            elif state == 'in':
-                if league == 'nfl':
-                    if period <= 4:
-                        return f'Q{period}'
-                    else:
-                        return 'OT'
-                else:  # ncaa_fb
-                    if period <= 4:
-                        return f'Q{period}'
-                    else:
-                        return 'OT'
-            elif state == 'post':
-                return 'final'
+        def sort_key(game):
+            # Priority 1: Live games first
+            is_live = game.get("is_live", False)
+            live_score = 0 if is_live else 1
+
+            # Priority 2: Favorite teams
+            favorite_score = 0 if self._is_favorite_game(game) else 1
+
+            # Priority 3: Game state
+            if game.get("is_final", False):
+                state_score = 0  # Recent games
+            elif game.get("is_upcoming", False):
+                state_score = 1  # Upcoming games
             else:
-                return 'unknown'
-        except:
-            return 'unknown'
+                state_score = 2
+
+            return (live_score, favorite_score, state_score)
+
+        self.current_games.sort(key=sort_key)
 
     def _is_favorite_game(self, game: Dict) -> bool:
-        """Check if game involves a favorite team - case insensitive."""
-        league = game.get('league')
-        league_config = game.get('league_config', {})
-        favorites = league_config.get('favorite_teams', [])
+        """Check if game involves a favorite team - following football.py structure."""
+        league_config = game.get("league_config", {})
+        favorites = league_config.get("favorite_teams", [])
 
         if not favorites:
             return False
 
-        home_abbrev = game.get('home_team', {}).get('abbrev', '').upper()
-        away_abbrev = game.get('away_team', {}).get('abbrev', '').upper()
-        
-        # Debug: Log the actual game structure for the first few checks
-        if not hasattr(self, '_favorite_check_count'):
-            self._favorite_check_count = 0
-        
-        if self._favorite_check_count < 3:
-            self.logger.info(f"=== Favorite Check Debug #{self._favorite_check_count + 1} ===")
-            self.logger.info(f"  Game dict keys: {list(game.keys())}")
-            self.logger.info(f"  home_team keys: {list(game.get('home_team', {}).keys())}")
-            self.logger.info(f"  away_team keys: {list(game.get('away_team', {}).keys())}")
-            self.logger.info(f"  home_abbrev from game: '{home_abbrev}'")
-            self.logger.info(f"  away_abbrev from game: '{away_abbrev}'")
-            self.logger.info(f"  favorites list: {favorites}")
-            self.logger.info(f"  home_abbrev in favorites: {home_abbrev in favorites}")
-            self.logger.info(f"  away_abbrev in favorites: {away_abbrev in favorites}")
-            self._favorite_check_count += 1
+        home_abbr = game.get("home_abbr", "").upper()
+        away_abbr = game.get("away_abbr", "").upper()
 
-        # Favorites are already normalized to uppercase in config
-        return home_abbrev in favorites or away_abbrev in favorites
+        return home_abbr in favorites or away_abbr in favorites
 
-    def display(self, explicit_mode: str = None, force_clear: bool = False) -> None:
-        """
-        Display football games.
+    def _filter_games_by_mode(self, games: List[Dict], mode: str) -> List[Dict]:
+        """Filter games based on NFL display mode (nfl_live, nfl_recent, nfl_upcoming)."""
+        if not games:
+            return []
 
-        Args:
-            force_clear: If True, clear display before rendering
-        """
-        self.logger.info(f"=== DISPLAY METHOD CALLED === force_clear={force_clear}, initialized={self.initialized}")
-        
-        try:
-            if not self.initialized:
-                self.logger.error("Football plugin not initialized, cannot display")
-                self._display_error("Football plugin not initialized")
-                return
+        filtered_games = []
 
-            # Auto-select display mode based on available games and priorities
-            # This matches the BasePlugin interface where plugins determine their own mode
-            if self._has_live_games():
-                display_mode = 'football_live'
-            else:
-                # Fall back to recent or upcoming
-                display_mode = 'football_recent' if self._has_recent_games() else 'football_upcoming'
-            
-            self.logger.info(f"Auto-selected display_mode={display_mode}, current_games count={len(self.current_games)}")
-            self.current_display_mode = display_mode
+        for game in games:
+            league = game.get("league", "nfl")
+            league_config = game.get("league_config", {})
+            display_modes = league_config.get("display_modes", {})
 
-            # Filter games by display mode
-            self.logger.info(f"Step 3: About to filter games for {display_mode}")
-            filtered_games = self._filter_games_by_mode(display_mode)
-            self.logger.info(f"Step 4: Filtered {len(filtered_games)} games")
-
-            if not filtered_games:
-                self.logger.info(f"Step 5: No games available for {display_mode} after filtering {len(self.current_games)} total games")
-                # Show "no games" message since this is auto-selected mode
-                self._display_no_games(display_mode)
-                return
-
-            self.logger.info(f"Step 6: Displaying {len(filtered_games)} {display_mode} game(s)")
-
-            # Handle game rotation (matching old managers)
-            current_time = time.time()
-            
-            # Create hash of filtered game IDs to detect when game list changes
-            games_hash = tuple(g.get('game_id') for g in filtered_games)
-            
-            # Reset index if games list changed
-            if games_hash != self._last_displayed_games_hash:
-                self.logger.debug(f"Game list changed, resetting rotation")
-                self.current_game_index = 0
-                self.last_game_switch = current_time
-                self._last_displayed_games_hash = games_hash
-            
-            # Check if it's time to switch games (matching old SportsRecent/SportsUpcoming logic)
-            if len(filtered_games) > 1 and current_time - self.last_game_switch >= self.game_display_duration:
-                self.current_game_index = (self.current_game_index + 1) % len(filtered_games)
-                self.last_game_switch = current_time
-                force_clear = True  # Force redraw on switch
-                
-                # Log game switching (matching old managers)
-                game = filtered_games[self.current_game_index]
-                away_abbr = game.get('away_team', {}).get('abbrev', 'UNK')
-                home_abbr = game.get('home_team', {}).get('abbrev', 'UNK')
-                self.logger.info(f"[{display_mode}] Switched to: {away_abbr} @ {home_abbr}")
-            
-            # Display current game
-            self.logger.info(f"Step 7: About to call _display_game")
-            game = filtered_games[self.current_game_index]
-            self._display_game(game, display_mode)
-            self.logger.info(f"Step 8: _display_game completed")
-            
-        except Exception as e:
-            self.logger.error(f"EXCEPTION in display() method: {e}", exc_info=True)
-
-    def _filter_games_by_mode(self, mode: str) -> List[Dict]:
-        """Filter games based on display mode with limits per favorite team."""
-        filtered = []
-        
-        # Track game counts per favorite team (league_key:team_abbr)
-        team_game_counts = {}
-        
-        # Debug: log filtering info once per call
-        self.logger.debug(f"Filtering for mode: {mode}, Total games available: {len(self.current_games)}")
-
-        for game in self.current_games:
-            league_key = game.get('league')
-            league_config = game.get('league_config', {})
-            status = game.get('status', {})
-            state = status.get('state')
-
-            # Check if this mode is enabled for this league
-            display_modes = league_config.get('display_modes', {})
-            mode_enabled = display_modes.get(mode.replace('football_', ''), False)
-            if not mode_enabled:
+            # Only process NFL games for NFL modes
+            if league != "nfl":
                 continue
 
-            # Check favorite team filtering
-            show_favorite_teams_only = league_config.get('show_favorite_teams_only', True)
-            show_all_live = league_config.get('show_all_live', False)
-            favorite_teams = league_config.get('favorite_teams', [])
-            
-            # If no favorite teams configured, treat as "show all" to avoid filtering out everything
-            if not favorite_teams and show_favorite_teams_only:
-                # No favorites configured but "show favorites only" is on
-                # This is likely a config error - disable favorite filtering
-                show_favorite_teams_only = False
-            
-            is_favorite_game = self._is_favorite_game(game)
-            
-            # Get team abbreviations
-            home_abbr = game.get('home_team', {}).get('abbrev', '').upper()
-            away_abbr = game.get('away_team', {}).get('abbrev', '').upper()
-            
-            # Debug logging for first few games
-            if len(filtered) < 3:
-                home_abbr_debug = game.get('home_team', {}).get('abbrev', '')
-                away_abbr_debug = game.get('away_team', {}).get('abbrev', '')
-                self.logger.debug(f"  Game: {away_abbr_debug}@{home_abbr_debug} ({league_key}, state={state})")
-                self.logger.debug(f"    ESPN API returned: away='{away_abbr_debug}' (upper='{away_abbr}'), home='{home_abbr_debug}' (upper='{home_abbr}')")
-                self.logger.debug(f"    Favorites list: {favorite_teams}")
-                self.logger.debug(f"    Checking: '{away_abbr}' in {favorite_teams} = {away_abbr in favorite_teams}")
-                self.logger.debug(f"    Checking: '{home_abbr}' in {favorite_teams} = {home_abbr in favorite_teams}")
-                self.logger.debug(f"    Is favorite game: {is_favorite_game}")
-                self.logger.debug(f"    show_favorite_teams_only: {show_favorite_teams_only}, show_all_live: {show_all_live}")
-            
-            # Filter by game state and per-league settings
-            if mode == 'football_live' and state == 'in':
-                # For live games: check show_all_live OR favorite team filter
-                # No limits on live games - show all of them
-                if show_all_live or not show_favorite_teams_only or is_favorite_game:
-                    filtered.append(game)
+            # Check if this NFL mode is enabled
+            mode_enabled = False
+            if mode == "nfl_live":
+                mode_enabled = display_modes.get("show_live", True)
+                game_matches = game.get("is_live", False)
+            elif mode == "nfl_recent":
+                mode_enabled = display_modes.get("show_recent", True)
+                game_matches = game.get("is_final", False)
+            elif mode == "nfl_upcoming":
+                mode_enabled = display_modes.get("show_upcoming", True)
+                game_matches = game.get("is_upcoming", False)
+            else:
+                continue
 
-            elif mode == 'football_recent' and state == 'post':
-                # For recent games: apply limits PER FAVORITE TEAM
-                if not show_favorite_teams_only or is_favorite_game:
-                    recent_limit = league_config.get('recent_games_to_show', 5)
-                    
-                    # Check if any of the favorite teams in this game are under the limit
-                    can_add = False
-                    teams_in_game = []
-                    
-                    if show_favorite_teams_only and favorite_teams:
-                        # Only count games for favorite teams
-                        if home_abbr in favorite_teams:
-                            teams_in_game.append(home_abbr)
-                        if away_abbr in favorite_teams:
-                            teams_in_game.append(away_abbr)
-                    else:
-                        # If not filtering by favorites, treat each game as its own "team" for counting
-                        teams_in_game = [f"{away_abbr}@{home_abbr}"]
-                    
-                    # Check if we can add this game for any of the teams involved
-                    for team in teams_in_game:
-                        team_key = f"{league_key}:{team}:post"
-                        current_count = team_game_counts.get(team_key, 0)
-                        if current_count < recent_limit:
-                            can_add = True
-                            break
-                    
-                    if can_add:
-                        # Increment count for all teams in this game
-                        for team in teams_in_game:
-                            team_key = f"{league_key}:{team}:post"
-                            team_game_counts[team_key] = team_game_counts.get(team_key, 0) + 1
-                        filtered.append(game)
+            # Only include NFL games if the mode is enabled and the game matches the criteria
+            if mode_enabled and game_matches:
+                filtered_games.append(game)
 
-            elif mode == 'football_upcoming' and state == 'pre':
-                # For upcoming games: apply limits PER FAVORITE TEAM
-                if not show_favorite_teams_only or is_favorite_game:
-                    upcoming_limit = league_config.get('upcoming_games_to_show', 10)
-                    
-                    # Check if any of the favorite teams in this game are under the limit
-                    can_add = False
-                    teams_in_game = []
-                    
-                    if show_favorite_teams_only and favorite_teams:
-                        # Only count games for favorite teams
-                        if home_abbr in favorite_teams:
-                            teams_in_game.append(home_abbr)
-                        if away_abbr in favorite_teams:
-                            teams_in_game.append(away_abbr)
-                    else:
-                        # If not filtering by favorites, treat each game as its own "team" for counting
-                        teams_in_game = [f"{away_abbr}@{home_abbr}"]
-                    
-                    # Check if we can add this game for any of the teams involved
-                    for team in teams_in_game:
-                        team_key = f"{league_key}:{team}:pre"
-                        current_count = team_game_counts.get(team_key, 0)
-                        if current_count < upcoming_limit:
-                            can_add = True
-                            break
-                    
-                    if can_add:
-                        # Increment count for all teams in this game
-                        for team in teams_in_game:
-                            team_key = f"{league_key}:{team}:pre"
-                            team_game_counts[team_key] = team_game_counts.get(team_key, 0) + 1
-                        filtered.append(game)
+        # Apply favorite teams filtering if enabled
+        if filtered_games:
+            league_config = self.leagues.get("nfl", {})
+            filtering = league_config.get("filtering", {})
+            show_favorite_teams_only = filtering.get("show_favorite_teams_only", False)
 
-        self.logger.debug(f"Filtered result: {len(filtered)} games for {mode}")
-        return filtered
+            if show_favorite_teams_only:
+                favorite_teams = league_config.get("favorite_teams", [])
+                if favorite_teams:
+                    filtered_games = [
+                        game for game in filtered_games if self._is_favorite_game(game)
+                    ]
 
-    def _has_live_games(self) -> bool:
-        """Check if there are any live games available."""
-        return any(game.get('status', {}).get('state') == 'in' for game in self.current_games)
+        # Sort filtered games by priority
+        filtered_games.sort(
+            key=lambda g: (
+                0 if g.get("is_live", False) else 1,  # Live games first
+                0 if self._is_favorite_game(g) else 1,  # Favorite teams first
+                (
+                    g.get("period", 0) if g.get("is_live", False) else 0
+                ),  # Higher period for live games
+            )
+        )
 
-    def _has_recent_games(self) -> bool:
-        """Check if there are any recent games available."""
-        return any(game.get('status', {}).get('state') == 'post' for game in self.current_games)
+        return filtered_games
 
-    def has_live_content(self) -> bool:
-        """
-        Override BasePlugin method to indicate when plugin has live content.
-        This is used by display controller for live priority system.
-        """
-        return self._has_live_games()
-    
-    def get_live_modes(self) -> list:
-        """
-        Override BasePlugin method to specify which modes to show during live priority.
-        Only show the live mode, not recent/upcoming.
-        """
-        return ['football_live']
+    def display(self, force_clear: bool = False) -> None:
+        """Display NFL games with mode cycling between nfl_live, nfl_recent, and nfl_upcoming."""
+        if not self.is_enabled:
+            return
 
-    def _display_game(self, game: Dict, mode: str):
-        """Display a single game with professional scorebug layout matching old managers."""
         try:
-            matrix_width = self.display_manager.matrix.width
-            matrix_height = self.display_manager.matrix.height
+            # Debug logging
+            self.logger.debug(
+                f"Display called - current_games: {len(self.current_games)}, mode: {self.current_display_mode}"
+            )
 
-            # Create image with transparency support
-            main_img = Image.new('RGBA', (matrix_width, matrix_height), (0, 0, 0, 255))
-            overlay = Image.new('RGBA', (matrix_width, matrix_height), (0, 0, 0, 0))
+            # Handle NFL mode cycling
+            current_time = time.time()
+            if current_time - self.last_mode_switch >= self.display_duration:
+                self.mode_index = (self.mode_index + 1) % len(self.nfl_display_modes)
+                self.current_display_mode = self.nfl_display_modes[self.mode_index]
+                self.last_mode_switch = current_time
+                self.current_game_index = 0  # Reset game index when switching modes
+                force_clear = True
+                self.logger.info(
+                    f"Switching to NFL display mode: {self.current_display_mode}"
+                )
+
+            # Filter games based on current NFL mode
+            filtered_games = self._filter_games_by_mode(
+                self.current_games, self.current_display_mode
+            )
+            self.logger.debug(
+                f"Filtered games for {self.current_display_mode}: {len(filtered_games)}"
+            )
+
+            # Log which games are being displayed
+            if filtered_games:
+                for i, game in enumerate(filtered_games):
+                    is_favorite = self._is_favorite_game(game)
+                    favorite_indicator = " [FAVORITE]" if is_favorite else ""
+                    self.logger.info(
+                        f"Displaying game {i+1}: {game.get('away_abbr', '?')}@{game.get('home_abbr', '?')}"
+                        f" - {game.get('period_text', 'Unknown')}{favorite_indicator}"
+                    )
+                    else:
+                # Log what games were available before filtering
+                all_nfl_games = [g for g in self.current_games if g.get("league") == "nfl"]
+                if all_nfl_games:
+                    self.logger.info(f"Total NFL games available: {len(all_nfl_games)}")
+                    for i, game in enumerate(all_nfl_games):
+                        is_upcoming = game.get("is_upcoming", False)
+                        is_favorite = self._is_favorite_game(game)
+                        favorite_indicator = " [FAVORITE]" if is_favorite else ""
+                        status_indicator = " [UPCOMING]" if is_upcoming else ""
+                        self.logger.info(
+                            f"Available game {i+1}: {game.get('away_abbr', '?')}@{game.get('home_abbr', '?')}"
+                            f" - {game.get('period_text', 'Unknown')}{favorite_indicator}{status_indicator}"
+                        )
+                else:
+                    self.logger.info("No NFL games found in current_games")
+
+            if not filtered_games:
+                # Use warning cooldown logic from NFL manager
+                if (
+                    not self._no_data_warning_logged
+                    or current_time - self._last_warning_time > self._warning_cooldown
+                ):
+                    self.logger.warning(
+                        f"No {self.current_display_mode} NFL games available to display"
+                    )
+                    self._no_data_warning_logged = True
+                    self._last_warning_time = current_time
+
+                # Draw a placeholder when no games are available
+                self._draw_no_games_placeholder()
+                return
+
+            # Handle game rotation within the current NFL mode
+            if (
+                len(filtered_games) > 1
+                and current_time - self.last_game_switch >= self.game_display_duration
+            ):
+                self.current_game_index = (self.current_game_index + 1) % len(
+                    filtered_games
+                )
+                self.last_game_switch = current_time
+                force_clear = True
+
+            # Display current NFL game
+            game = filtered_games[self.current_game_index]
+            self.logger.debug(
+                f"Displaying game: {game.get('away_abbr', '?')}@{game.get('home_abbr', '?')}"
+            )
+            self._draw_scorebug_layout(game, force_clear)
+
+        except Exception as e:
+            self.logger.error(
+                f"Error during display call in {self.__class__.__name__}: {e}",
+                exc_info=True,
+            )
+
+    def _draw_no_games_placeholder(self) -> None:
+        """Draw a placeholder when no games are available."""
+        try:
+            main_img = Image.new(
+                "RGBA", (self.display_width, self.display_height), (0, 0, 0, 255)
+            )
+            overlay = Image.new(
+                "RGBA", (self.display_width, self.display_height), (0, 0, 0, 0)
+            )
             draw_overlay = ImageDraw.Draw(overlay)
 
-            # Get team info
-            home_team = game.get('home_team', {})
-            away_team = game.get('away_team', {})
-            status = game.get('status', {})
-            
-            # Get football-specific info
-            down_distance = game.get('down_distance', '')
-            possession = game.get('possession', '')
-            game_phase = game.get('game_phase', '')
-            scoring_event = self._detect_scoring_event(status)
-            is_redzone = game.get('is_redzone', False)
+            # Draw "No Games" message
+            message = (
+                f"No {self.current_display_mode.replace('nfl_', '').title()} Games"
+            )
+            message_width = draw_overlay.textlength(message, font=self.fonts["time"])
+            message_x = (self.display_width - message_width) // 2
+            message_y = (self.display_height // 2) - 5
+            self._draw_text_with_outline(
+                draw_overlay, message, (message_x, message_y), self.fonts["time"]
+            )
 
-            # Team info
-            home_abbrev = home_team.get('abbrev', 'HOME')
-            away_abbrev = away_team.get('abbrev', 'AWAY')
-            home_score = home_team.get('score', 0)
-            away_score = away_team.get('score', 0)
+            # Draw current mode
+            mode_text = f"Mode: {self.current_display_mode}"
+            mode_width = draw_overlay.textlength(mode_text, font=self.fonts["detail"])
+            mode_x = (self.display_width - mode_width) // 2
+            mode_y = (self.display_height // 2) + 10
+            self._draw_text_with_outline(
+                draw_overlay, mode_text, (mode_x, mode_y), self.fonts["detail"]
+            )
 
-            # Load team logos
-            home_logo = self._load_team_logo(home_team, game.get('league', ''))
-            away_logo = self._load_team_logo(away_team, game.get('league', ''))
+            # Composite the text overlay onto the main image
+            main_img = Image.alpha_composite(main_img, overlay)
+            main_img = main_img.convert("RGB")
 
-            # If logos failed to load, show text fallback
-            if not home_logo or not away_logo:
-                self.logger.warning("Failed to load team logos, using text fallback")
-                self._draw_text_fallback(draw_overlay, home_team, away_team, status, game, matrix_width, matrix_height)
-            else:
-                # Use different layouts based on game state
-                if status.get('state') == 'pre':
-                    # Upcoming games: Use special upcoming layout
-                    self._draw_upcoming_layout(draw_overlay, main_img, home_logo, away_logo, 
-                                            home_team, away_team, status, game, 
-                                            matrix_width, matrix_height)
-                elif status.get('state') == 'post':
-                    # Recent/Final games: Use recent layout (different styling)
-                    self._draw_recent_layout(draw_overlay, main_img, home_logo, away_logo,
-                                           home_team, away_team, status, game,
-                                           matrix_width, matrix_height)
-                else:
-                    # Live games: Use professional scorebug layout
-                    self._draw_scorebug_layout(draw_overlay, main_img, home_logo, away_logo, 
-                                             home_team, away_team, status, game, 
-                                             matrix_width, matrix_height)
-
-            # Composite the overlay onto main image
-            final_img = Image.alpha_composite(main_img, overlay)
-            
-            self.display_manager.image = final_img.convert('RGB').copy()
+            # Display the final image
+            self.display_manager.image.paste(main_img, (0, 0))
             self.display_manager.update_display()
 
         except Exception as e:
-            self.logger.error(f"Error displaying game: {e}")
-            self._display_error("Display error")
+            self.logger.error(f"Error drawing no games placeholder: {e}", exc_info=True)
 
-    def _load_team_logo(self, team: Dict, league: str) -> Optional[Image.Image]:
-        """Load and resize team logo."""
+    def _draw_scorebug_layout(self, game: Dict, force_clear: bool = False) -> None:
+        """Draw the detailed scorebug layout following football.py structure exactly."""
         try:
-            # Get logo directory from league configuration
-            league_config = self.leagues.get(league, {})
-            logo_dir = league_config.get('logo_dir', 'assets/sports/nfl_logos')
-            
-            # Convert relative path to absolute path by finding LEDMatrix project root
-            if not os.path.isabs(logo_dir):
-                # Try to find LEDMatrix project root
-                current_dir = os.path.dirname(os.path.abspath(__file__))
-                # Go up from plugin directory to find LEDMatrix root
-                ledmatrix_root = None
-                for parent in [current_dir, os.path.dirname(current_dir), os.path.dirname(os.path.dirname(current_dir))]:
-                    if os.path.exists(os.path.join(parent, 'assets', 'sports')):
-                        ledmatrix_root = parent
-                        break
-                
-                if ledmatrix_root:
-                    logo_dir = os.path.join(ledmatrix_root, logo_dir)
-                else:
-                    # Fallback: try relative to current working directory
-                    logo_dir = os.path.abspath(logo_dir)
-            
-            team_abbrev = team.get('abbrev', '')
-            if not team_abbrev:
-                return None
-            
-            # Try different logo file extensions and case variations
-            logo_extensions = ['.png', '.jpg', '.jpeg']
-            logo_path = None
-            
-            # Try uppercase first (most common), then lowercase, then original case
-            abbrev_variations = [team_abbrev.upper(), team_abbrev.lower(), team_abbrev]
-            
-            for abbrev in abbrev_variations:
-                for ext in logo_extensions:
-                    potential_path = os.path.join(logo_dir, f"{abbrev}{ext}")
-                    if os.path.exists(potential_path):
-                        logo_path = potential_path
-                        break
-                if logo_path:
-                    break
-            
-            if not logo_path:
-                # Try with team name instead of abbreviation
-                team_name = team.get('name', '').lower().replace(' ', '_')
-                for ext in logo_extensions:
-                    potential_path = os.path.join(logo_dir, f"{team_name}{ext}")
-                    if os.path.exists(potential_path):
-                        logo_path = potential_path
-                        break
-            
-            # If still not found, try to download missing logo (matching old managers)
-            if not logo_path and download_missing_logo:
-                primary_logo_path = os.path.join(logo_dir, f"{team_abbrev.upper()}.png")
-                
-                # Check if LogoDownloader is available for filename variations
-                if LogoDownloader:
-                    try:
-                        filename_variations = LogoDownloader.get_logo_filename_variations(team_abbrev)
-                        for filename in filename_variations:
-                            test_path = os.path.join(logo_dir, filename)
-                            if os.path.exists(test_path):
-                                logo_path = test_path
-                                self.logger.debug(f"Found logo at alternative path: {logo_path}")
-                                break
-                    except Exception as e:
-                        self.logger.debug(f"Error checking filename variations: {e}")
-                
-                # If still not found after variations, download it
-                if not logo_path:
-                    team_id = team.get('id', '')
-                    team_logo_url = team.get('logo', '')  # ESPN API provides logo URL
-                    
-                    self.logger.info(f"Logo not found for {team_abbrev} at {primary_logo_path}. Attempting to download.")
-                    
-                    try:
-                        # Try to download the logo from ESPN API
-                        # This will create a placeholder if download fails
-                        download_missing_logo(league, team_id, team_abbrev, Path(primary_logo_path), team_logo_url)
-                        logo_path = primary_logo_path if os.path.exists(primary_logo_path) else None
-                    except Exception as e:
-                        self.logger.warning(f"Failed to download logo for {team_abbrev}: {e}")
-                        logo_path = None
-            
-            if not logo_path:
-                # Logo not found even after download attempt - use text fallback
-                self.logger.debug(f"No logo available for {team_abbrev}, will use text fallback")
-                return None
-            
-            # Load and resize logo (matching original managers)
-            logo = Image.open(logo_path).convert('RGBA')
-            # Use same sizing as original managers: display dimensions * 1.5
-            max_width = int(self.display_manager.matrix.width * 1.5)
-            max_height = int(self.display_manager.matrix.height * 1.5)
-            logo.thumbnail((max_width, max_height), Image.Resampling.LANCZOS)
-            
-            return logo
-            
-        except Exception as e:
-            self.logger.debug(f"Could not load logo for {team.get('abbrev', 'unknown')}: {e}")
-            return None
+            main_img = Image.new(
+                "RGBA", (self.display_width, self.display_height), (0, 0, 0, 255)
+            )
+            overlay = Image.new(
+                "RGBA", (self.display_width, self.display_height), (0, 0, 0, 0)
+            )
+            draw_overlay = ImageDraw.Draw(overlay)
 
-    def _draw_scorebug_layout(self, draw_overlay: ImageDraw.Draw, main_img: Image.Image,
-                            home_logo: Image.Image, away_logo: Image.Image,
-                            home_team: Dict, away_team: Dict, status: Dict, game: Dict,
-                            matrix_width: int, matrix_height: int):
-        """Draw professional scorebug layout matching old managers exactly."""
-        try:
-            center_y = matrix_height // 2
-            
-            # Draw team logos (matching original positioning)
-            home_x = matrix_width - home_logo.width + 10
+            home_logo = self._load_and_resize_logo(
+                game["home_id"],
+                game["home_abbr"],
+                game["home_logo_path"],
+                game.get("home_logo_url"),
+            )
+            away_logo = self._load_and_resize_logo(
+                game["away_id"],
+                game["away_abbr"],
+                game["away_logo_path"],
+                game.get("away_logo_url"),
+            )
+
+            if not home_logo or not away_logo:
+                self.logger.error(f"Failed to load logos for game: {game.get('id')}")
+                # Draw placeholder text if logos fail
+                draw_final = ImageDraw.Draw(main_img.convert("RGB"))
+                self._draw_text_with_outline(
+                    draw_final, "Logo Error", (5, 5), self.fonts["status"]
+                )
+                self.display_manager.image.paste(main_img.convert("RGB"), (0, 0))
+                self.display_manager.update_display()
+                return
+
+            center_y = self.display_height // 2
+
+            # Draw logos
+            home_x = self.display_width - home_logo.width + 10
             home_y = center_y - (home_logo.height // 2)
             main_img.paste(home_logo, (home_x, home_y), home_logo)
             
@@ -1292,508 +1024,337 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
             away_y = center_y - (away_logo.height // 2)
             main_img.paste(away_logo, (away_x, away_y), away_logo)
             
-            # Draw scores (centered) - use proper font
-            home_score = str(home_team.get('score', 0))
-            away_score = str(away_team.get('score', 0))
+            # Scores (centered, slightly above bottom) - Only show for live and recent games
+            if game.get("is_live") or game.get("is_final"):
+                home_score = str(game.get("home_score", "0"))
+                away_score = str(game.get("away_score", "0"))
             score_text = f"{away_score}-{home_score}"
-            
-            score_width = draw_overlay.textlength(score_text, font=self.fonts['score'])
-            score_x = (matrix_width - score_width) // 2
-            score_y = (matrix_height // 2) - 3
-            self._draw_text_with_outline(draw_overlay, score_text, (score_x, score_y), self.fonts['score'], fill=(255, 200, 0))
-            
-            # Period/Quarter and Clock (Top center) - use proper font
-            period_clock_text = f"{game.get('game_phase', '')} {status.get('display_clock', '')}".strip()
-            if game.get('is_halftime'):
+                score_width = draw_overlay.textlength(
+                    score_text, font=self.fonts["score"]
+                )
+                score_x = (self.display_width - score_width) // 2
+                score_y = (self.display_height // 2) - 3
+                self._draw_text_with_outline(
+                    draw_overlay, score_text, (score_x, score_y), self.fonts["score"]
+                )
+
+            # Period/Quarter and Clock (Top center) - Only show clock for live games
+            if game.get("is_live"):
+                period_clock_text = (
+                    f"{game.get('period_text', '')} {game.get('clock', '')}".strip()
+                )
+                if game.get("is_halftime"):
                 period_clock_text = "Halftime"
-            elif status.get('state') == 'post':
-                period_clock_text = "FINAL"
-            elif status.get('state') == 'pre':
-                period_clock_text = "UPCOMING"
-            
-            status_width = draw_overlay.textlength(period_clock_text, font=self.fonts['time'])
-            status_x = (matrix_width - status_width) // 2
+                elif game.get("is_period_break"):
+                    period_clock_text = game.get("status_text", "Period Break")
+
+                status_width = draw_overlay.textlength(
+                    period_clock_text, font=self.fonts["time"]
+                )
+                status_x = (self.display_width - status_width) // 2
             status_y = 1
-            self._draw_text_with_outline(draw_overlay, period_clock_text, (status_x, status_y), self.fonts['time'], fill=(0, 255, 0))
-            
-            # Down & Distance or Scoring Event (Below scores)
-            scoring_event = self._detect_scoring_event(status)
-            down_distance = game.get('down_distance', '')
-            
-            # Show scoring event if detected, otherwise show down & distance
-            if scoring_event and status.get('state') == 'in':
-                # Display scoring event with special formatting
-                event_width = draw_overlay.textlength(scoring_event, font=self.fonts['detail'])
-                event_x = (matrix_width - event_width) // 2
-                event_y = matrix_height - 7
-                
-                # Color coding for different scoring events (matching original)
-                if 'touchdown' in scoring_event.lower():
-                    event_color = (255, 215, 0)  # Gold
-                elif 'field goal' in scoring_event.lower():
-                    event_color = (0, 255, 0)    # Green
-                elif 'extra point' in scoring_event.lower() or 'pat' in scoring_event.lower():
-                    event_color = (255, 165, 0)  # Orange
-                else:
-                    event_color = (255, 255, 255)  # White
-                
-                self._draw_text_with_outline(draw_overlay, scoring_event.upper(), (event_x, event_y), self.fonts['detail'], fill=event_color)
-                
-            elif down_distance and status.get('state') == 'in':
-                # Show down & distance
-                dd_width = draw_overlay.textlength(down_distance, font=self.fonts['detail'])
-                dd_x = (matrix_width - dd_width) // 2
-                dd_y = matrix_height - 7
-                down_color = (200, 200, 0) if not game.get('is_redzone', False) else (255, 0, 0)
-                self._draw_text_with_outline(draw_overlay, down_distance, (dd_x, dd_y), self.fonts['detail'], fill=down_color)
-                
-                # Possession Indicator (small football icon)
-                possession = game.get('possession_indicator', '')
-                if possession:
-                    self._draw_possession_indicator(draw_overlay, possession, dd_x, dd_width, dd_y)
-            
-            # Timeouts (Bottom corners) - only for live games
-            if status.get('state') == 'in':
-                self._draw_timeouts(draw_overlay, game, matrix_width, matrix_height)
-            
-            # Draw records or rankings if enabled (matching original)
-            league_config = game.get('league_config', {})
-            if league_config.get('show_records') or league_config.get('show_ranking'):
-                self._draw_records_and_rankings(draw_overlay, game, matrix_width, matrix_height, league_config)
-            
-        except Exception as e:
-            self.logger.error(f"Error drawing scorebug layout: {e}")
+                self._draw_text_with_outline(
+                    draw_overlay,
+                    period_clock_text,
+                    (status_x, status_y),
+                    self.fonts["time"],
+                )
 
-    def _draw_recent_layout(self, draw_overlay: ImageDraw.Draw, main_img: Image.Image,
-                           home_logo: Image.Image, away_logo: Image.Image,
-                           home_team: Dict, away_team: Dict, status: Dict, game: Dict,
-                           matrix_width: int, matrix_height: int):
-        """Draw recent/final game layout matching original SportsRecent styling."""
-        try:
-            center_y = matrix_height // 2
-            
-            # Draw team logos (closer to edges for recent games, matching original)
-            home_x = matrix_width - home_logo.width + 2  # Closer to edge
-            home_y = center_y - (home_logo.height // 2)
-            main_img.paste(home_logo, (home_x, home_y), home_logo)
-            
-            away_x = -2  # Closer to edge
-            away_y = center_y - (away_logo.height // 2)
-            main_img.paste(away_logo, (away_x, away_y), away_logo)
-            
-            # Final Scores (AT BOTTOM, matching original SportsRecent)
-            home_score = str(home_team.get('score', 0))
-            away_score = str(away_team.get('score', 0))
-            score_text = f"{away_score}-{home_score}"
-            
-            score_width = draw_overlay.textlength(score_text, font=self.fonts['score'])
-            score_x = (matrix_width - score_width) // 2
-            score_y = matrix_height - 14  # At bottom, not middle!
-            # WHITE color for final scores (not gold)
-            self._draw_text_with_outline(draw_overlay, score_text, (score_x, score_y), self.fonts['score'], fill=(255, 255, 255))
-            
-            # "Final" text at top (matching original)
-            period_text = game.get('period_text', 'Final')  # Use period_text for Final/OT notation
-            if not period_text or period_text == '':
-                period_text = "Final"
-            
-            status_width = draw_overlay.textlength(period_text, font=self.fonts['time'])
-            status_x = (matrix_width - status_width) // 2
-            status_y = 1  # At top
-            # WHITE color for status (not green)
-            self._draw_text_with_outline(draw_overlay, period_text, (status_x, status_y), self.fonts['time'], fill=(255, 255, 255))
-            
-            # Draw odds if available and enabled (matching original)
-            league_config = game.get('league_config', {})
-            if league_config.get('show_odds') and 'odds' in game and game['odds']:
-                self._draw_dynamic_odds(draw_overlay, game['odds'], matrix_width, matrix_height)
-            
-            # Draw records or rankings if enabled (matching original)
-            if league_config.get('show_records') or league_config.get('show_ranking'):
-                self._draw_records_and_rankings(draw_overlay, game, matrix_width, matrix_height, league_config)
-            
-        except Exception as e:
-            self.logger.error(f"Error drawing recent layout: {e}")
+            elif game.get("is_upcoming"):
+                # Format upcoming games like the original nfl_manager
+                game_date = game.get("game_date", "")
+                game_time = game.get("game_time", "")
 
-    def _draw_upcoming_layout(self, draw_overlay: ImageDraw.Draw, main_img: Image.Image,
-                            home_logo: Image.Image, away_logo: Image.Image,
-                            home_team: Dict, away_team: Dict, status: Dict, game: Dict,
-                            matrix_width: int, matrix_height: int):
-        """Draw upcoming game layout matching original NCAA FB manager exactly."""
-        try:
-            center_y = matrix_height // 2
-            
-            # Draw team logos (matching original positioning)
-            home_x = matrix_width - home_logo.width + 10
-            home_y = center_y - (home_logo.height // 2)
-            main_img.paste(home_logo, (home_x, home_y), home_logo)
-            
-            away_x = -10
-            away_y = center_y - (away_logo.height // 2)
-            main_img.paste(away_logo, (away_x, away_y), away_logo)
-            
-            # "Next Game" at the top (use smaller status font)
-            status_font = self.fonts['status']
-            if matrix_width > 128:
-                status_font = self.fonts['time']
+                # "Next Game" at the top (use smaller status font for smaller displays)
+                status_font = self.fonts["status"]
+                if self.display_width > 128:
+                    status_font = self.fonts["time"]
             status_text = "Next Game"
             status_width = draw_overlay.textlength(status_text, font=status_font)
-            status_x = (matrix_width - status_width) // 2
+                status_x = (self.display_width - status_width) // 2
             status_y = 1
-            self._draw_text_with_outline(draw_overlay, status_text, (status_x, status_y), status_font)
-            
-            # Parse game date and time from start_time
-            start_time = game.get('start_time', '')
-            game_date = ''
-            game_time = ''
-            
-            if start_time:
-                try:
-                    from datetime import datetime
-                    import pytz
-                    # Parse the start_time (ISO format)
-                    dt = datetime.fromisoformat(start_time.replace('Z', '+00:00'))
-                    # Convert to local time
-                    local_dt = dt.astimezone()
-                    # Format date and time
-                    game_date = local_dt.strftime('%m/%d')
-                    game_time = local_dt.strftime('%I:%M%p').lstrip('0')
-                except Exception as e:
-                    self.logger.debug(f"Error parsing start_time {start_time}: {e}")
-                    game_date = "TBD"
-                    game_time = "TBD"
-            else:
-                game_date = "TBD"
-                game_time = "TBD"
+                self._draw_text_with_outline(
+                    draw_overlay, status_text, (status_x, status_y), status_font
+                )
             
             # Date text (centered, below "Next Game")
-            date_width = draw_overlay.textlength(game_date, font=self.fonts['time'])
-            date_x = (matrix_width - date_width) // 2
-            date_y = center_y - 7  # Raise date slightly
-            self._draw_text_with_outline(draw_overlay, game_date, (date_x, date_y), self.fonts['time'])
+                date_width = draw_overlay.textlength(game_date, font=self.fonts["time"])
+                date_x = (self.display_width - date_width) // 2
+                date_y = center_y - 7  # Position above vertical center
+                self._draw_text_with_outline(
+                    draw_overlay, game_date, (date_x, date_y), self.fonts["time"]
+                )
             
             # Time text (centered, below Date)
-            time_width = draw_overlay.textlength(game_time, font=self.fonts['time'])
-            time_x = (matrix_width - time_width) // 2
-            time_y = date_y + 9  # Place time below date
-            self._draw_text_with_outline(draw_overlay, game_time, (time_x, time_y), self.fonts['time'])
-            
-            # Draw odds if available and enabled
-            league_config = game.get('league_config', {})
-            if league_config.get('show_odds') and 'odds' in game and game['odds']:
-                self._draw_dynamic_odds(draw_overlay, game['odds'], matrix_width, matrix_height)
-            
-            # Draw records or rankings if enabled (matching original)
-            if league_config.get('show_records') or league_config.get('show_ranking'):
-                self._draw_records_and_rankings(draw_overlay, game, matrix_width, matrix_height, league_config)
-            
-        except Exception as e:
-            self.logger.error(f"Error drawing upcoming layout: {e}")
+                time_width = draw_overlay.textlength(game_time, font=self.fonts["time"])
+                time_x = (self.display_width - time_width) // 2
+                time_y = date_y + 9  # Position below date
+                self._draw_text_with_outline(
+                    draw_overlay, game_time, (time_x, time_y), self.fonts["time"]
+                )
 
-    def _draw_dynamic_odds(self, draw: ImageDraw.Draw, odds: Dict[str, Any], width: int, height: int) -> None:
-        """Draw odds with dynamic positioning - only show negative spread and position O/U based on favored team."""
-        try:
-            home_team_odds = odds.get('home_team_odds', {})
-            away_team_odds = odds.get('away_team_odds', {})
-            home_spread = home_team_odds.get('spread_odds')
-            away_spread = away_team_odds.get('spread_odds')
-
-            # Get top-level spread as fallback
-            top_level_spread = odds.get('spread')
-            
-            # If we have a top-level spread and the individual spreads are None or 0, use the top-level
-            if top_level_spread is not None:
-                if home_spread is None or home_spread == 0.0:
-                    home_spread = top_level_spread
-                if away_spread is None:
-                    away_spread = -top_level_spread
-
-            # Determine which team is favored (has negative spread)
-            home_favored = home_spread is not None and home_spread < 0
-            away_favored = away_spread is not None and away_spread < 0
-            
-            # Only show spread if one team is favored
-            if home_favored or away_favored:
-                spread_value = home_spread if home_favored else away_spread
-                spread_text = f"{spread_value:.1f}"
-                
-                # Position spread text in top corners
-                spread_font = self.fonts['detail']
-                spread_width = draw.textlength(spread_text, font=spread_font)
-                
-                if home_favored:
-                    # Home team favored - show spread on right
-                    spread_x = width - spread_width - 2
-                    spread_y = 1
                 else:
-                    # Away team favored - show spread on left
-                    spread_x = 2
-                    spread_y = 1
-                
-                self._draw_text_with_outline(draw, spread_text, (spread_x, spread_y), spread_font, fill=(0, 255, 0))
-            
-            # Draw over/under if available
-            over_under = odds.get('over_under')
-            if over_under is not None:
-                ou_text = f"O/U: {over_under:.0f}"
-                ou_font = self.fonts['detail']
-                ou_width = draw.textlength(ou_text, font=ou_font)
-                ou_x = (width - ou_width) // 2
-                ou_y = 1
-                self._draw_text_with_outline(draw, ou_text, (ou_x, ou_y), ou_font, fill=(0, 255, 0))
-                
-        except Exception as e:
-            self.logger.error(f"Error drawing dynamic odds: {e}")
+                # For final games, show "Final" status
+                period_clock_text = game.get("period_text", "Final")
+                status_width = draw_overlay.textlength(
+                    period_clock_text, font=self.fonts["time"]
+                )
+                status_x = (self.display_width - status_width) // 2
+                status_y = 1
+                self._draw_text_with_outline(
+                    draw_overlay,
+                    period_clock_text,
+                    (status_x, status_y),
+                    self.fonts["time"],
+                )
 
-    def _draw_text_fallback(self, draw_overlay: ImageDraw.Draw, home_team: Dict, away_team: Dict, 
-                          status: Dict, game: Dict, matrix_width: int, matrix_height: int):
-        """Draw text-only fallback when logos are not available - with proper fonts."""
-        try:
-            home_abbrev = home_team.get('abbrev', 'HOME')
-            away_abbrev = away_team.get('abbrev', 'AWAY')
-            home_score = home_team.get('score', 0)
-            away_score = away_team.get('score', 0)
-            
-            # Team matchup
-            matchup_text = f"{away_abbrev} @ {home_abbrev}"
-            self._draw_text_with_outline(draw_overlay, matchup_text, (2, 2), self.fonts['team'], fill=(255, 255, 255))
-            
-            # Scores
-            score_text = f"{away_score} - {home_score}"
-            self._draw_text_with_outline(draw_overlay, score_text, (2, 12), self.fonts['score'], fill=(255, 200, 0))
-            
-            # Game status
-            if status.get('state') == 'in':
-                period_clock_text = f"{game.get('game_phase', '')} {status.get('display_clock', '')}"
-                self._draw_text_with_outline(draw_overlay, period_clock_text, (2, 22), self.fonts['time'], fill=(0, 255, 0))
-                
-                # Down & distance
-                down_distance = game.get('down_distance', '')
-                if down_distance:
-                    self._draw_text_with_outline(draw_overlay, down_distance, (2, 32), self.fonts['detail'], fill=(200, 200, 0))
-            elif status.get('state') == 'post':
-                self._draw_text_with_outline(draw_overlay, "FINAL", (2, 22), self.fonts['time'], fill=(200, 200, 200))
+            # Down & Distance or Scoring Event (Below Period/Clock)
+            scoring_event = game.get("scoring_event", "")
+            down_distance = game.get("down_distance_text", "")
+            if self.display_width > 128:
+                down_distance = game.get("down_distance_text_long", "")
+
+            # Show scoring event if detected, otherwise show down & distance
+            if scoring_event and game.get("is_live"):
+                # Display scoring event with special formatting
+                event_width = draw_overlay.textlength(
+                    scoring_event, font=self.fonts["detail"]
+                )
+                event_x = (self.display_width - event_width) // 2
+                event_y = (self.display_height) - 7
+
+                # Color coding for different scoring events
+                if scoring_event == "TOUCHDOWN":
+                    event_color = (255, 215, 0)  # Gold
+                elif scoring_event == "FIELD GOAL":
+                    event_color = (0, 255, 0)  # Green
+                elif scoring_event == "PAT":
+                    event_color = (255, 165, 0)  # Orange
             else:
-                self._draw_text_with_outline(draw_overlay, "UPCOMING", (2, 22), self.fonts['time'], fill=(255, 255, 0))
-                
-        except Exception as e:
-            self.logger.error(f"Error drawing text fallback: {e}")
+                    event_color = (255, 255, 255)  # White
 
-    def _draw_text_with_outline(self, draw: ImageDraw.Draw, text: str, position: tuple, font, fill=(255, 255, 255), outline_color=(0, 0, 0)):
-        """Draw text with a black outline for better readability - matching original managers."""
+                self._draw_text_with_outline(
+                    draw_overlay,
+                    scoring_event,
+                    (event_x, event_y),
+                    self.fonts["detail"],
+                    fill=event_color,
+                )
+            elif down_distance and game.get("is_live"):
+                dd_width = draw_overlay.textlength(
+                    down_distance, font=self.fonts["detail"]
+                )
+                dd_x = (self.display_width - dd_width) // 2
+                dd_y = (self.display_height) - 7
+                down_color = (
+                    (200, 200, 0) if not game.get("is_redzone", False) else (255, 0, 0)
+                )
+                self._draw_text_with_outline(
+                    draw_overlay,
+                    down_distance,
+                    (dd_x, dd_y),
+                    self.fonts["detail"],
+                    fill=down_color,
+                )
+
+                # Possession Indicator (small football icon)
+                possession = game.get("possession_indicator")
+                if possession:
+            ball_radius_x = 3
+            ball_radius_y = 2
+                    ball_color = (139, 69, 19)
+                    lace_color = (255, 255, 255)
+            
+                    detail_font_height_approx = 6
+                    ball_y_center = dd_y + (detail_font_height_approx // 2)
+
+            possession_ball_padding = 3
+            
+            if possession == "away":
+                ball_x_center = dd_x - possession_ball_padding - ball_radius_x
+            elif possession == "home":
+                        ball_x_center = (
+                            dd_x + dd_width + possession_ball_padding + ball_radius_x
+                        )
+            else:
+                        ball_x_center = 0
+            
+            if ball_x_center > 0:
+                        # Draw the football shape (ellipse)
+                        draw_overlay.ellipse(
+                            (
+                                ball_x_center - ball_radius_x,
+                                ball_y_center - ball_radius_y,
+                                ball_x_center + ball_radius_x,
+                                ball_y_center + ball_radius_y,
+                            ),
+                            fill=ball_color,
+                            outline=(0, 0, 0),
+                        )
+                        # Draw a simple horizontal lace
+                        draw_overlay.line(
+                            (
+                                ball_x_center - 1,
+                                ball_y_center,
+                                ball_x_center + 1,
+                                ball_y_center,
+                            ),
+                            fill=lace_color,
+                            width=1,
+                        )
+
+            # Timeouts (Bottom corners) - Only show for live games
+            if game.get("is_live"):
+            timeout_bar_width = 4
+            timeout_bar_height = 2
+            timeout_spacing = 1
+                timeout_y = self.display_height - timeout_bar_height - 1
+            
+                # Away Timeouts (Bottom Left)
+                away_timeouts_remaining = game.get("away_timeouts", 0)
+            for i in range(3):
+                to_x = 2 + i * (timeout_bar_width + timeout_spacing)
+                    color = (
+                        (255, 255, 255) if i < away_timeouts_remaining else (80, 80, 80)
+                    )
+                    draw_overlay.rectangle(
+                        [
+                            to_x,
+                            timeout_y,
+                            to_x + timeout_bar_width,
+                            timeout_y + timeout_bar_height,
+                        ],
+                        fill=color,
+                        outline=(0, 0, 0),
+                    )
+
+                # Home Timeouts (Bottom Right)
+                home_timeouts_remaining = game.get("home_timeouts", 0)
+            for i in range(3):
+                    to_x = (
+                        self.display_width
+                        - 2
+                        - timeout_bar_width
+                        - (2 - i) * (timeout_bar_width + timeout_spacing)
+                    )
+                    color = (
+                        (255, 255, 255) if i < home_timeouts_remaining else (80, 80, 80)
+                    )
+                    draw_overlay.rectangle(
+                        [
+                            to_x,
+                            timeout_y,
+                            to_x + timeout_bar_width,
+                            timeout_y + timeout_bar_height,
+                        ],
+                        fill=color,
+                        outline=(0, 0, 0),
+                    )
+
+            # Composite the text overlay onto the main image
+            main_img = Image.alpha_composite(main_img, overlay)
+            main_img = main_img.convert("RGB")
+
+            # Display the final image
+            self.display_manager.image.paste(main_img, (0, 0))
+            self.display_manager.update_display()
+
+        except Exception as e:
+            self.logger.error(f"Error displaying Football game: {e}", exc_info=True)
+
+    def _load_and_resize_logo(
+        self, team_id: str, team_abbr: str, logo_path: Path, logo_url: str = None
+    ) -> Optional[Image.Image]:
+        """Load and resize team logo - following football.py structure."""
+        try:
+            # Try to load from local path first
+            if logo_path and logo_path.exists():
+                logo = Image.open(logo_path).convert("RGBA")
+            elif logo_url and download_missing_logo:
+                # Try to download missing logo
+                try:
+                    download_missing_logo(
+                        "football", team_id, team_abbr, logo_path, logo_url
+                    )
+                    if logo_path.exists():
+                        logo = Image.open(logo_path).convert("RGBA")
+                    else:
+                        return None
+                except Exception as e:
+                    self.logger.warning(f"Failed to download logo for {team_abbr}: {e}")
+                    return None
+                    else:
+                return None
+
+            # Resize logo
+            max_width = int(self.display_width * 1.5)
+            max_height = int(self.display_height * 1.5)
+            logo.thumbnail((max_width, max_height), Image.Resampling.LANCZOS)
+
+            return logo
+
+        except Exception as e:
+            self.logger.debug(f"Could not load logo for {team_abbr}: {e}")
+            return None
+
+    def _draw_text_with_outline(
+        self,
+        draw: ImageDraw.Draw,
+        text: str,
+        position: tuple,
+        font,
+        fill=(255, 255, 255),
+        outline_color=(0, 0, 0),
+    ):
+        """Draw text with outline - following football.py structure."""
         try:
             x, y = position
             # Draw outline
-            for dx, dy in [(-1, -1), (-1, 0), (-1, 1), (0, -1), (0, 1), (1, -1), (1, 0), (1, 1)]:
+            for dx, dy in [
+                (-1, -1),
+                (-1, 0),
+                (-1, 1),
+                (0, -1),
+                (0, 1),
+                (1, -1),
+                (1, 0),
+                (1, 1),
+            ]:
                 draw.text((x + dx, y + dy), text, font=font, fill=outline_color)
             # Draw main text
             draw.text((x, y), text, font=font, fill=fill)
         except Exception as e:
             self.logger.error(f"Error drawing text with outline: {e}")
 
-    def _draw_possession_indicator(self, draw: ImageDraw.Draw, possession: str, dd_x: int, dd_width: int, dd_y: int):
-        """Draw possession indicator (football icon)."""
-        try:
-            ball_radius_x = 3
-            ball_radius_y = 2
-            ball_color = (139, 69, 19)  # Brown
-            lace_color = (255, 255, 255)  # White
-            
-            ball_y_center = dd_y + 3  # Center with text
-            possession_ball_padding = 3
-            
-            if possession == "away":
-                ball_x_center = dd_x - possession_ball_padding - ball_radius_x
-            elif possession == "home":
-                ball_x_center = dd_x + dd_width + possession_ball_padding + ball_radius_x
-            else:
-                return
-            
-            if ball_x_center > 0:
-                # Draw football shape
-                draw.ellipse(
-                    (ball_x_center - ball_radius_x, ball_y_center - ball_radius_y,
-                     ball_x_center + ball_radius_x, ball_y_center + ball_radius_y),
-                    fill=ball_color, outline=(0, 0, 0)
-                )
-                # Draw lace
-                draw.line(
-                    (ball_x_center - 1, ball_y_center, ball_x_center + 1, ball_y_center),
-                    fill=lace_color, width=1
-                )
-        except Exception as e:
-            self.logger.error(f"Error drawing possession indicator: {e}")
-
-    def _draw_timeouts(self, draw: ImageDraw.Draw, game: Dict, matrix_width: int, matrix_height: int):
-        """Draw timeout indicators in bottom corners - matching original."""
-        try:
-            timeout_bar_width = 4
-            timeout_bar_height = 2
-            timeout_spacing = 1
-            timeout_y = matrix_height - timeout_bar_height - 1
-            
-            # Away timeouts (bottom left)
-            away_timeouts = game.get('away_timeouts', 0)
-            for i in range(3):
-                to_x = 2 + i * (timeout_bar_width + timeout_spacing)
-                color = (255, 255, 255) if i < away_timeouts else (80, 80, 80)
-                draw.rectangle([to_x, timeout_y, to_x + timeout_bar_width, timeout_y + timeout_bar_height], 
-                             fill=color, outline=(0, 0, 0))
-            
-            # Home timeouts (bottom right)
-            home_timeouts = game.get('home_timeouts', 0)
-            for i in range(3):
-                to_x = matrix_width - 2 - timeout_bar_width - (2 - i) * (timeout_bar_width + timeout_spacing)
-                color = (255, 255, 255) if i < home_timeouts else (80, 80, 80)
-                draw.rectangle([to_x, timeout_y, to_x + timeout_bar_width, timeout_y + timeout_bar_height], 
-                             fill=color, outline=(0, 0, 0))
-        except Exception as e:
-            self.logger.error(f"Error drawing timeouts: {e}")
-
-    def _draw_records_and_rankings(self, draw: ImageDraw.Draw, game: Dict, matrix_width: int, matrix_height: int, league_config: Dict):
-        """Draw team records or rankings - matching original managers."""
-        try:
-            # Use detail font for records/rankings
-            record_font = self.fonts['detail']
-            
-            # Get team info
-            home_abbr = game.get('home_team', {}).get('abbrev', '')
-            away_abbr = game.get('away_team', {}).get('abbrev', '')
-            
-            # Calculate positioning (bottom of screen, above timeouts)
-            record_bbox = draw.textbbox((0, 0), "0-0", font=record_font)
-            record_height = record_bbox[3] - record_bbox[1]
-            record_y = matrix_height - record_height - 4
-            
-            # Display away team info (left side)
-            if away_abbr:
-                if league_config.get('show_ranking') and league_config.get('show_records'):
-                    # Rankings take priority
-                    away_rank = self._team_rankings_cache.get(away_abbr, 0)
-                    if away_rank > 0:
-                        away_text = f"#{away_rank}"
-                    else:
-                        away_text = ''
-                elif league_config.get('show_ranking'):
-                    # Show ranking only
-                    away_rank = self._team_rankings_cache.get(away_abbr, 0)
-                    if away_rank > 0:
-                        away_text = f"#{away_rank}"
-                    else:
-                        away_text = ''
-                elif league_config.get('show_records'):
-                    # Show record only
-                    away_text = game.get('away_record', '')
-                else:
-                    away_text = ''
-                
-                if away_text:
-                    away_record_x = 3
-                    self._draw_text_with_outline(draw, away_text, (away_record_x, record_y), record_font)
-            
-            # Display home team info (right side)
-            if home_abbr:
-                if league_config.get('show_ranking') and league_config.get('show_records'):
-                    # Rankings take priority
-                    home_rank = self._team_rankings_cache.get(home_abbr, 0)
-                    if home_rank > 0:
-                        home_text = f"#{home_rank}"
-                    else:
-                        home_text = ''
-                elif league_config.get('show_ranking'):
-                    # Show ranking only
-                    home_rank = self._team_rankings_cache.get(home_abbr, 0)
-                    if home_rank > 0:
-                        home_text = f"#{home_rank}"
-                    else:
-                        home_text = ''
-                elif league_config.get('show_records'):
-                    # Show record only
-                    home_text = game.get('home_record', '')
-                else:
-                    home_text = ''
-                
-                if home_text:
-                    home_record_bbox = draw.textbbox((0, 0), home_text, font=record_font)
-                    home_record_width = home_record_bbox[2] - home_record_bbox[0]
-                    home_record_x = matrix_width - home_record_width - 3
-                    self._draw_text_with_outline(draw, home_text, (home_record_x, record_y), record_font)
-        
-        except Exception as e:
-            self.logger.error(f"Error drawing records/rankings: {e}")
-
-    def _display_no_games(self, mode: str):
-        """Display message when no games are available."""
-        img = Image.new('RGB', (self.display_manager.matrix.width,
-                               self.display_manager.matrix.height),
-                       (0, 0, 0))
-        draw = ImageDraw.Draw(img)
-
-        message = {
-            'football_live': "No Live Games",
-            'football_recent': "No Recent Games",
-            'football_upcoming': "No Upcoming Games"
-        }.get(mode, "No Games")
-
-        draw.text((5, 12), message, fill=(150, 150, 150))
-
-        self.display_manager.image = img.copy()
-        self.display_manager.update_display()
-
-    def _display_error(self, message: str):
-        """Display error message."""
-        img = Image.new('RGB', (self.display_manager.matrix.width,
-                               self.display_manager.matrix.height),
-                       (0, 0, 0))
-        draw = ImageDraw.Draw(img)
-        draw.text((5, 12), message, fill=(255, 0, 0))
-
-        self.display_manager.image = img.copy()
-        self.display_manager.update_display()
-
     def get_display_duration(self) -> float:
         """Get display duration from config."""
         return self.display_duration
 
     def get_info(self) -> Dict[str, Any]:
-        """Return plugin info for web UI."""
+        """Return plugin info."""
         if BasePlugin:
             info = super().get_info()
         else:
-            # Fallback info structure
             info = {
-                'plugin_id': self.plugin_id,
-                'enabled': self.enabled,
-                'version': '1.0.1'
+                "plugin_id": self.plugin_id,
+                "enabled": self.is_enabled,
+                "version": "1.0.0",
             }
 
-        # Get league-specific configurations
-        leagues_config = {}
-        for league_key, league_config in self.leagues.items():
-            leagues_config[league_key] = {
-                'enabled': league_config.get('enabled', False),
-                'favorite_teams': league_config.get('favorite_teams', []),
-                'display_modes': league_config.get('display_modes', {}),
-                'recent_games_to_show': league_config.get('recent_games_to_show', 5),
-                'upcoming_games_to_show': league_config.get('upcoming_games_to_show', 10),
-                'update_interval_seconds': league_config.get('update_interval_seconds', 60)
+        info.update(
+            {
+                "total_games": len(self.current_games),
+                "current_game_index": self.current_game_index,
+                "last_update": self.last_update,
+                "display_duration": self.display_duration,
+                "current_display_mode": self.current_display_mode,
+                "nfl_display_modes": self.nfl_display_modes,
             }
-
-        info.update({
-            'total_games': len(self.current_games),
-            'enabled_leagues': [k for k, v in self.leagues.items() if v.get('enabled', False)],
-            'current_mode': self.current_display_mode,
-            'last_update': self.last_update,
-            'display_duration': self.display_duration,
-            'live_games': len([g for g in self.current_games if g.get('status', {}).get('state') == 'in']),
-            'recent_games': len([g for g in self.current_games if g.get('status', {}).get('state') == 'post']),
-            'upcoming_games': len([g for g in self.current_games if g.get('status', {}).get('state') == 'pre']),
-            'leagues_config': leagues_config,
-            'global_config': self.global_config
-        })
+        )
         return info
 
     def cleanup(self) -> None:
         """Cleanup resources."""
         self.current_games = []
+        self.current_game = None
         self.logger.info("Football scoreboard plugin cleaned up")
