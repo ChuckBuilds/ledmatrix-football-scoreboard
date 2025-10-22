@@ -1,5 +1,20 @@
 # Changelog
 
+## [2.0.4] - 2025-10-21
+
+### Added
+- **Diagnostic Logging**: Added detailed logging to identify configuration and data fetching issues
+  - Logs league configuration (enabled status, favorite teams) on initialization
+  - Logs smart polling decisions (should_update, time_since_last_update)
+  - Logs each league check with enabled status and type information
+  - Helps diagnose why plugin isn't fetching game data
+
+### Technical Details
+- Configuration logged at startup: enabled status for each league
+- Update method logs polling interval checks
+- League iteration logs show whether each league is enabled and its data type
+- Purpose: Identify if configuration is being read correctly or if smart polling is blocking updates
+
 ## [2.0.3] - 2025-10-21
 
 ### Fixed

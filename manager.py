@@ -175,6 +175,12 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
                 'logo_dir': 'assets/sports/ncaa_logos'
             }
         }
+        
+        # LOG CONFIGURATION FOR DEBUGGING
+        self.logger.info("=== LEAGUE CONFIGURATION ===")
+        for league_key, league_config in self.leagues.items():
+            self.logger.info(f"{league_key}: enabled={league_config.get('enabled')}, favorite_teams={league_config.get('favorite_teams')}")
+        self.logger.info("===========================")
 
         # Global settings - ensure proper type conversion
         self.global_config = config
@@ -346,7 +352,9 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
             return
 
         # Check if we need to update based on smart polling
-        if not self._should_update():
+        should_update = self._should_update()
+        self.logger.info(f"Smart polling check: should_update={should_update}, last_update={self.last_update}, time_since={time.time() - self.last_update if self.last_update else 'N/A'}s")
+        if not should_update:
             self.logger.debug("Skipping update due to smart polling interval")
             return
 
@@ -357,7 +365,9 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
 
             # Fetch data for each enabled league
             for league_key, league_config in self.leagues.items():
-                if league_config.get('enabled', False):
+                enabled = league_config.get('enabled', False)
+                self.logger.info(f"Checking {league_key}: enabled={enabled} (type={type(enabled)})")
+                if enabled:
                     self.logger.info(f"Fetching data for {league_key}...")
                     games = self._fetch_league_data(league_key, league_config)
                     if games:
