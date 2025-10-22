@@ -65,6 +65,25 @@
             }
           }
         },
+        "live_priority": {
+          "type": "boolean",
+          "default": true,
+          "description": "Give live games priority over other modes. When enabled, live games will interrupt the normal mode rotation and be displayed immediately when available."
+        },
+        "live_game_duration": {
+          "type": "integer",
+          "default": 30,
+          "minimum": 10,
+          "maximum": 120,
+          "description": "Duration in seconds to display each live game before rotating to the next live game"
+        },
+        "live_update_interval": {
+          "type": "integer",
+          "default": 30,
+          "minimum": 5,
+          "maximum": 300,
+          "description": "How often to update live game data (seconds)"
+        },
         "game_limits": {
           "type": "object",
           "title": "Game Limits",
@@ -166,6 +185,25 @@
               "description": "Show upcoming NCAA FB games"
             }
           }
+        },
+        "live_priority": {
+          "type": "boolean",
+          "default": true,
+          "description": "Give live games priority over other modes. When enabled, live games will interrupt the normal mode rotation and be displayed immediately when available."
+        },
+        "live_game_duration": {
+          "type": "integer",
+          "default": 20,
+          "minimum": 10,
+          "maximum": 120,
+          "description": "Duration in seconds to display each live game before rotating to the next live game"
+        },
+        "live_update_interval": {
+          "type": "integer",
+          "default": 30,
+          "minimum": 5,
+          "maximum": 300,
+          "description": "How often to update live game data (seconds)"
         },
         "game_limits": {
           "type": "object",
