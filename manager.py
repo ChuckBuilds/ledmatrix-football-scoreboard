@@ -121,6 +121,19 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
         self.last_update = 0
         self.initialized = True
         
+        # Live game management (like NFL manager)
+        self.live_games = []
+        self.current_live_game_index = 0
+        self.last_live_game_switch = 0
+        self.live_game_display_duration = float(config.get("live_game_display_duration", 20))  # seconds per live game
+        self.live_update_interval = float(config.get("live_update_interval", 30))  # seconds between live game updates
+        self.last_live_update = 0
+        
+        # Game rotation management (like SportsRecent/SportsUpcoming)
+        self.current_game_index = 0
+        self.last_game_switch = 0
+        self.games_list = []  # Filtered list for current display mode
+        
         # Mode cycling for NFL display modes (separate from future NCAA FB modes)
         self.current_display_mode = "nfl_live"
         self.nfl_display_modes = ["nfl_live", "nfl_recent", "nfl_upcoming"]
@@ -199,6 +212,12 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
         if not self.initialized:
             return
 
+        current_time = time.time()
+        
+        # Check if we need to update live games specifically
+        if self._should_update_live_games(current_time):
+            self._update_live_games(current_time)
+
         # Check if we should update based on interval
         if not self._should_update():
             self.logger.debug("Skipping update - not time yet")
@@ -225,7 +244,7 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
 
             # Sort games by priority
             self._sort_games()
-            self.last_update = time.time()
+            self.last_update = current_time
             
             # Log filtering status
             nfl_config = self.leagues.get("nfl", {})
@@ -281,6 +300,34 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
         )  # Default 5 minutes
 
         return (current_time - self.last_update) >= update_interval
+    
+    def _should_update_live_games(self, current_time: float) -> bool:
+        """Check if enough time has passed to update live games specifically."""
+        return (current_time - self.last_live_update) >= self.live_update_interval
+    
+    def _update_live_games(self, current_time: float) -> None:
+        """Update live games specifically - like NFL manager."""
+        self.logger.debug("Updating live games...")
+        
+        # Get current live games from all games
+        new_live_games = []
+        for game in self.current_games:
+            if game.get("is_live", False) or game.get("is_halftime", False):
+                # Filter for favorite teams if enabled
+                league_config = game.get("league_config", {})
+                filtering = league_config.get("filtering", {})
+                show_favorite_teams_only = filtering.get("show_favorite_teams_only", False)
+                
+                if not show_favorite_teams_only or self._is_favorite_game(game):
+                    new_live_games.append(game)
+        
+        # Check if live games have changed
+        if new_live_games != self.live_games:
+            self.logger.info(f"Live games updated: {len(new_live_games)} games")
+            self.live_games = new_live_games
+            self.current_live_game_index = 0  # Reset to first game
+        
+        self.last_live_update = current_time
 
     def _fetch_league_data(self, league_key: str, league_config: Dict) -> List[Dict]:
         """Fetch game data for a specific league using NFL manager data logic."""
@@ -320,11 +367,11 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
                     )
                     return {"events": cached_data}
         else:
-                    self.logger.warning(
-                        f"Invalid cached data format for {season_year}: {type(cached_data)}"
-                    )
-                    # Clear invalid cache
-                    self.plugin_manager.cache_manager.clear_cache(cache_key)
+            self.logger.warning(
+                f"Invalid cached data format for {season_year}: {type(cached_data)}"
+            )
+            # Clear invalid cache
+            self.plugin_manager.cache_manager.clear_cache(cache_key)
 
         # Start background fetch if background service is available
         if self.background_service:
@@ -864,7 +911,7 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
             if mode_enabled and game_matches:
                 filtered_games.append(game)
 
-        # Apply favorite teams filtering if enabled
+        # Apply favorite teams filtering if enabled - one game per favorite team
         if filtered_games:
             league_config = self.leagues.get("nfl", {})
             filtering = league_config.get("filtering", {})
@@ -873,9 +920,35 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
             if show_favorite_teams_only:
                 favorite_teams = league_config.get("favorite_teams", [])
                 if favorite_teams:
-                    filtered_games = [
-                        game for game in filtered_games if self._is_favorite_game(game)
-                    ]
+                    # Get all games involving favorite teams
+                    favorite_team_games = [game for game in filtered_games if self._is_favorite_game(game)]
+                    
+                    # Select one game per favorite team (like NFL manager)
+                    team_games = []
+                    for team in favorite_teams:
+                        # Find games where this team is playing
+                        team_specific_games = [game for game in favorite_team_games
+                                              if game.get('home_abbr') == team or game.get('away_abbr') == team]
+                        
+                        if team_specific_games:
+                            if mode == "nfl_recent":
+                                # Sort by game time and take the most recent
+                                team_specific_games.sort(key=lambda g: g.get('start_time_utc') or datetime.min.replace(tzinfo=timezone.utc), reverse=True)
+                            elif mode == "nfl_upcoming":
+                                # Sort by game time and take the earliest
+                                team_specific_games.sort(key=lambda g: g.get('start_time_utc') or datetime.max.replace(tzinfo=timezone.utc))
+                            
+                            team_games.append(team_specific_games[0])
+                    
+                    # Sort the final list appropriately
+                    if mode == "nfl_recent":
+                        # Sort by game time (most recent first)
+                        team_games.sort(key=lambda g: g.get('start_time_utc') or datetime.min.replace(tzinfo=timezone.utc), reverse=True)
+                    elif mode == "nfl_upcoming":
+                        # Sort by game time (earliest first)
+                        team_games.sort(key=lambda g: g.get('start_time_utc') or datetime.max.replace(tzinfo=timezone.utc))
+                    
+                    filtered_games = team_games
 
         # Sort filtered games by priority
         filtered_games.sort(
@@ -908,22 +981,56 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
                 self.current_display_mode = self.nfl_display_modes[self.mode_index]
                 self.last_mode_switch = current_time
                 self.current_game_index = 0  # Reset game index when switching modes
+                self.last_game_switch = current_time  # Set game switch timer to current time when switching modes
                 force_clear = True
                 self.logger.info(
                     f"Switching to NFL display mode: {self.current_display_mode}"
                 )
 
-            # Filter games based on current NFL mode
-            filtered_games = self._filter_games_by_mode(
-                self.current_games, self.current_display_mode
-            )
-            self.logger.debug(
-                f"Filtered games for {self.current_display_mode}: {len(filtered_games)}"
-            )
+            # Special handling for live games - like NFL manager
+            if self.current_display_mode == "nfl_live":
+                if self.live_games:
+                    # Use dedicated live games list with automatic switching
+                    self.games_list = self.live_games
+                    self.logger.debug(f"Using {len(self.games_list)} live games")
+                    
+                    # Handle live game switching
+                    if len(self.games_list) > 1 and current_time - self.last_live_game_switch >= self.live_game_display_duration:
+                        self.current_live_game_index = (self.current_live_game_index + 1) % len(self.games_list)
+                        self.last_live_game_switch = current_time
+                        self.current_game_index = self.current_live_game_index
+                        force_clear = True
+                        self.logger.info(f"Switching to live game {self.current_live_game_index + 1} of {len(self.games_list)}")
+                    else:
+                        # Use the current live game index
+                        self.current_game_index = self.current_live_game_index
+                else:
+                    # No live games - skip to next mode like NFL manager
+                    self.logger.debug("No live games available, skipping to next mode")
+                    self.mode_index = (self.mode_index + 1) % len(self.nfl_display_modes)
+                    self.current_display_mode = self.nfl_display_modes[self.mode_index]
+                    self.last_mode_switch = current_time
+                    self.current_game_index = 0
+                    self.last_game_switch = current_time
+                    force_clear = True
+                    self.logger.info(f"No live games, switching to: {self.current_display_mode}")
+                    
+                    # Filter games for the new mode
+                    self.games_list = self._filter_games_by_mode(
+                        self.current_games, self.current_display_mode
+                    )
+            else:
+                # Regular filtering for non-live modes
+                self.games_list = self._filter_games_by_mode(
+                    self.current_games, self.current_display_mode
+                )
+                self.logger.debug(
+                    f"Filtered games for {self.current_display_mode}: {len(self.games_list)}"
+                )
 
             # Log which games are being displayed
-            if filtered_games:
-                for i, game in enumerate(filtered_games):
+            if self.games_list:
+                for i, game in enumerate(self.games_list):
                     is_favorite = self._is_favorite_game(game)
                     favorite_indicator = " [FAVORITE]" if is_favorite else ""
                     self.logger.info(
@@ -947,7 +1054,7 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
                 else:
                     self.logger.info("No NFL games found in current_games")
 
-            if not filtered_games:
+            if not self.games_list:
                 # Use warning cooldown logic from NFL manager
                 if (
                     not self._no_data_warning_logged
@@ -963,19 +1070,25 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
                 self._draw_no_games_placeholder()
                 return
 
-            # Handle game rotation within the current NFL mode
-            if (
-                len(filtered_games) > 1
-                and current_time - self.last_game_switch >= self.game_display_duration
-            ):
-                self.current_game_index = (self.current_game_index + 1) % len(
-                    filtered_games
-                )
-                self.last_game_switch = current_time
-                force_clear = True
+            # Handle game rotation within the current NFL mode (like SportsRecent/SportsUpcoming)
+            # Only check for rotation if we have multiple games and enough time has passed
+            if len(self.games_list) > 1:
+                time_since_switch = current_time - self.last_game_switch
+                self.logger.info(f"Game rotation check: {len(self.games_list)} games, current_index: {self.current_game_index}, time since switch: {time_since_switch:.1f}s, duration: {self.game_display_duration}s")
+                
+                if time_since_switch >= self.game_display_duration:
+                    self.current_game_index = (self.current_game_index + 1) % len(self.games_list)
+                    self.last_game_switch = current_time
+                    force_clear = True
+                    
+                    # Log team switching with sport prefix (like original NFL managers)
+                    current_game = self.games_list[self.current_game_index]
+                    away_abbr = current_game.get('away_abbr', 'UNK')
+                    home_abbr = current_game.get('home_abbr', 'UNK')
+                    self.logger.info(f"[NFL {self.current_display_mode.replace('nfl_', '').title()}] Rotating to {away_abbr} vs {home_abbr}")
 
             # Display current NFL game
-            game = filtered_games[self.current_game_index]
+            game = self.games_list[self.current_game_index]
             self.logger.debug(
                 f"Displaying game: {game.get('away_abbr', '?')}@{game.get('home_abbr', '?')}"
             )
