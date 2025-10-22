@@ -21,11 +21,11 @@ try:
     from src.plugin_system.base_plugin import BasePlugin
     from src.background_data_service import get_background_service
     from src.logo_downloader import LogoDownloader, download_missing_logo
-    except ImportError:
-        BasePlugin = None
-        get_background_service = None
-        LogoDownloader = None
-        download_missing_logo = None
+except ImportError:
+    BasePlugin = None
+    get_background_service = None
+    LogoDownloader = None
+    download_missing_logo = None
 
 logger = logging.getLogger(__name__)
 
@@ -212,15 +212,15 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
             if self._check_shared_data():
                 self.logger.info("Using shared data for football games")
             else:
-            # Fetch data for each enabled league
-            for league_key, league_config in self.leagues.items():
+                # Fetch data for each enabled league
+                for league_key, league_config in self.leagues.items():
                     if league_config.get("enabled", False):
-                    self.logger.info(f"Fetching data for {league_key}...")
-                    games = self._fetch_league_data(league_key, league_config)
-                    if games:
-                        self.current_games.extend(games)
+                        self.logger.info(f"Fetching data for {league_key}...")
+                        games = self._fetch_league_data(league_key, league_config)
+                        if games:
+                            self.current_games.extend(games)
                             self.logger.info(f"Added {len(games)} {league_key} games")
-                    else:
+                        else:
                             self.logger.warning(f"No games found for {league_key}")
 
             # Sort games by priority
@@ -287,7 +287,7 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
         # Use smart caching and background fetching like the original NFL manager
         if league_key == "nfl":
             data = self._fetch_nfl_api_data(use_cache=True)
-            else:
+        else:
             data = self._fetch_ncaa_fb_api_data(use_cache=True)
 
         if data:
@@ -331,7 +331,8 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
             self._start_background_fetch("nfl", season_year, datestring, cache_key)
 
         # For immediate response, try to get today's games
-        return self._fetch_todays_games("nfl")
+        # But also try to get some upcoming games beyond the 7-day window
+        return self._fetch_extended_games("nfl")
 
     def _fetch_ncaa_fb_api_data(self, use_cache: bool = True) -> Optional[Dict]:
         """Fetches the full season schedule for NCAA FB using background threading."""
@@ -370,10 +371,60 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
         # For immediate response, try to get today's games
         return self._fetch_todays_games("ncaa_fb")
 
+    def _fetch_extended_games(self, league: str) -> Optional[Dict]:
+        """Fetch games for an extended period to cover upcoming games beyond the next few days."""
+        try:
+            now = datetime.now()
+
+            # Fetch games from the past 7 days to today + 14 days to cover more upcoming games
+            all_events = []
+            for days_offset in range(-7, 15):  # -7 days to +14 days
+                target_date = now + timedelta(days=days_offset)
+                formatted_date = target_date.strftime("%Y%m%d")
+
+                if league == "nfl":
+                    url = "https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard"
+                else:
+                    url = "https://site.api.espn.com/apis/site/v2/sports/football/college-football/scoreboard"
+
+                headers = {"User-Agent": "LEDMatrix/1.0", "Accept": "application/json"}
+
+                try:
+                    response = requests.get(
+                        url,
+                        params={"dates": formatted_date, "limit": 1000},
+                        headers=headers,
+                        timeout=15,
+                    )
+                    response.raise_for_status()
+
+                    data = response.json()
+                    events = data.get("events", [])
+                    all_events.extend(events)
+
+                    self.logger.debug(
+                        f"Fetched {len(events)} games for {league} on {formatted_date}"
+                    )
+
+                except Exception as e:
+                    self.logger.debug(
+                        f"Error fetching games for {league} on {formatted_date}: {e}"
+                    )
+                    continue
+
+            self.logger.info(
+                f"Fetched {len(all_events)} total games for {league} across extended date range"
+            )
+            return {"events": all_events}
+
+        except Exception as e:
+            self.logger.error(f"Error fetching extended games for {league}: {e}")
+            return None
+
     def _fetch_todays_games(self, league: str) -> Optional[Dict]:
         """Fetch games for the past few days to cover live, recent, and upcoming games."""
         try:
-        now = datetime.now()
+            now = datetime.now()
 
             # Fetch games from the past 3 days to today + 3 days to cover recent, live, and upcoming
             all_events = []
@@ -498,7 +549,7 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
                         if games:
                             self.current_games.extend(games)
                 return True
-        except Exception as e:
+            except Exception as e:
                 self.logger.error(f"Error processing shared data: {e}")
                 return False
 
@@ -515,8 +566,8 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
 
             for event in events:
                 game = self._extract_game_details(event, league_key, league_config)
-                    if game:
-                        games.append(game)
+                if game:
+                    games.append(game)
 
         except Exception as e:
             self.logger.error(f"Error processing API response: {e}")
@@ -668,7 +719,7 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
             elif status["type"]["state"] == "post":
                 if period > 4:
                     period_text = "Final/OT"
-            else:
+                else:
                     period_text = "Final"
             elif status["type"]["state"] == "pre":
                 period_text = game_time
@@ -879,7 +930,7 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
                         f"Displaying game {i+1}: {game.get('away_abbr', '?')}@{game.get('home_abbr', '?')}"
                         f" - {game.get('period_text', 'Unknown')}{favorite_indicator}"
                     )
-                    else:
+            else:
                 # Log what games were available before filtering
                 all_nfl_games = [g for g in self.current_games if g.get("league") == "nfl"]
                 if all_nfl_games:
@@ -1028,7 +1079,7 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
             if game.get("is_live") or game.get("is_final"):
                 home_score = str(game.get("home_score", "0"))
                 away_score = str(game.get("away_score", "0"))
-            score_text = f"{away_score}-{home_score}"
+                score_text = f"{away_score}-{home_score}"
                 score_width = draw_overlay.textlength(
                     score_text, font=self.fonts["score"]
                 )
@@ -1044,7 +1095,7 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
                     f"{game.get('period_text', '')} {game.get('clock', '')}".strip()
                 )
                 if game.get("is_halftime"):
-                period_clock_text = "Halftime"
+                    period_clock_text = "Halftime"
                 elif game.get("is_period_break"):
                     period_clock_text = game.get("status_text", "Period Break")
 
@@ -1052,7 +1103,7 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
                     period_clock_text, font=self.fonts["time"]
                 )
                 status_x = (self.display_width - status_width) // 2
-            status_y = 1
+                status_y = 1
                 self._draw_text_with_outline(
                     draw_overlay,
                     period_clock_text,
@@ -1069,23 +1120,23 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
                 status_font = self.fonts["status"]
                 if self.display_width > 128:
                     status_font = self.fonts["time"]
-            status_text = "Next Game"
-            status_width = draw_overlay.textlength(status_text, font=status_font)
+                status_text = "Next Game"
+                status_width = draw_overlay.textlength(status_text, font=status_font)
                 status_x = (self.display_width - status_width) // 2
-            status_y = 1
+                status_y = 1
                 self._draw_text_with_outline(
                     draw_overlay, status_text, (status_x, status_y), status_font
                 )
-            
-            # Date text (centered, below "Next Game")
+                
+                # Date text (centered, below "Next Game")
                 date_width = draw_overlay.textlength(game_date, font=self.fonts["time"])
                 date_x = (self.display_width - date_width) // 2
                 date_y = center_y - 7  # Position above vertical center
                 self._draw_text_with_outline(
                     draw_overlay, game_date, (date_x, date_y), self.fonts["time"]
                 )
-            
-            # Time text (centered, below Date)
+                
+                # Time text (centered, below Date)
                 time_width = draw_overlay.textlength(game_time, font=self.fonts["time"])
                 time_x = (self.display_width - time_width) // 2
                 time_y = date_y + 9  # Position below date
@@ -1093,7 +1144,7 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
                     draw_overlay, game_time, (time_x, time_y), self.fonts["time"]
                 )
 
-                else:
+            else:
                 # For final games, show "Final" status
                 period_clock_text = game.get("period_text", "Final")
                 status_width = draw_overlay.textlength(
@@ -1130,7 +1181,7 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
                     event_color = (0, 255, 0)  # Green
                 elif scoring_event == "PAT":
                     event_color = (255, 165, 0)  # Orange
-            else:
+                else:
                     event_color = (255, 255, 255)  # White
 
                 self._draw_text_with_outline(
@@ -1160,26 +1211,26 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
                 # Possession Indicator (small football icon)
                 possession = game.get("possession_indicator")
                 if possession:
-            ball_radius_x = 3
-            ball_radius_y = 2
+                    ball_radius_x = 3
+                    ball_radius_y = 2
                     ball_color = (139, 69, 19)
                     lace_color = (255, 255, 255)
             
                     detail_font_height_approx = 6
                     ball_y_center = dd_y + (detail_font_height_approx // 2)
 
-            possession_ball_padding = 3
+                    possession_ball_padding = 3
             
-            if possession == "away":
-                ball_x_center = dd_x - possession_ball_padding - ball_radius_x
-            elif possession == "home":
+                    if possession == "away":
+                        ball_x_center = dd_x - possession_ball_padding - ball_radius_x
+                    elif possession == "home":
                         ball_x_center = (
                             dd_x + dd_width + possession_ball_padding + ball_radius_x
                         )
-            else:
+                    else:
                         ball_x_center = 0
-            
-            if ball_x_center > 0:
+                    
+                    if ball_x_center > 0:
                         # Draw the football shape (ellipse)
                         draw_overlay.ellipse(
                             (
@@ -1205,15 +1256,15 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
 
             # Timeouts (Bottom corners) - Only show for live games
             if game.get("is_live"):
-            timeout_bar_width = 4
-            timeout_bar_height = 2
-            timeout_spacing = 1
+                timeout_bar_width = 4
+                timeout_bar_height = 2
+                timeout_spacing = 1
                 timeout_y = self.display_height - timeout_bar_height - 1
             
                 # Away Timeouts (Bottom Left)
                 away_timeouts_remaining = game.get("away_timeouts", 0)
-            for i in range(3):
-                to_x = 2 + i * (timeout_bar_width + timeout_spacing)
+                for i in range(3):
+                    to_x = 2 + i * (timeout_bar_width + timeout_spacing)
                     color = (
                         (255, 255, 255) if i < away_timeouts_remaining else (80, 80, 80)
                     )
@@ -1230,7 +1281,7 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
 
                 # Home Timeouts (Bottom Right)
                 home_timeouts_remaining = game.get("home_timeouts", 0)
-            for i in range(3):
+                for i in range(3):
                     to_x = (
                         self.display_width
                         - 2
@@ -1283,7 +1334,7 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
                 except Exception as e:
                     self.logger.warning(f"Failed to download logo for {team_abbr}: {e}")
                     return None
-                    else:
+            else:
                 return None
 
             # Resize logo
