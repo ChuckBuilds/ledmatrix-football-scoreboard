@@ -7,21 +7,18 @@ The plugin has been broken down into focused modules for better maintainability.
 
 import logging
 import time
-from datetime import datetime, timezone
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any
 
-import pytz
 from PIL import ImageFont
 
 try:
     from src.plugin_system.base_plugin import BasePlugin
     from src.background_data_service import get_background_service
-    from src.logo_downloader import LogoDownloader, download_missing_logo
+    from src.base_odds_manager import BaseOddsManager
 except ImportError:
     BasePlugin = None
     get_background_service = None
-    LogoDownloader = None
-    download_missing_logo = None
+    BaseOddsManager = None
 
 # Import our new modules
 import sys
@@ -117,6 +114,27 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
         # Global settings
         self.display_duration = float(config.get("display_duration", 30))
         self.game_display_duration = float(config.get("game_display_duration", 15))
+        
+        # Additional settings from old managers
+        self.show_records = config.get("show_records", False)
+        self.show_ranking = config.get("show_ranking", False)
+        self.show_odds = config.get("show_odds", False)
+        
+        # Initialize odds manager if enabled
+        self.odds_manager = None
+        if self.show_odds and BaseOddsManager:
+            try:
+                # Try to get config_manager from cache_manager
+                config_manager = getattr(cache_manager, 'config_manager', None)
+                self.odds_manager = BaseOddsManager(cache_manager, config_manager)
+                self.logger.info("Odds manager initialized")
+            except Exception as e:
+                self.logger.warning("Could not initialize odds manager: %s", e)
+        
+        # Team rankings cache (mirrors old managers)
+        self._team_rankings_cache = {}
+        self._rankings_cache_timestamp = 0
+        self._rankings_cache_duration = 3600  # Cache rankings for 1 hour
 
         # State management
         self.current_games = []
@@ -170,6 +188,7 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
         self._last_warning_time = 0
         self._warning_cooldown = 60
 
+
         self.logger.info(f"Football scoreboard plugin initialized - {self.display_width}x{self.display_height}")
 
     def _initialize_modules(self):
@@ -202,6 +221,10 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
             self.scoreboard_renderer = ScoreboardRenderer(
                 self.display_manager, self.fonts, self.display_width, self.display_height, self.logger
             )
+            # Pass additional settings to renderer
+            self.scoreboard_renderer.show_records = self.show_records
+            self.scoreboard_renderer.show_ranking = self.show_ranking
+            self.scoreboard_renderer._team_rankings_cache = self._team_rankings_cache
             self.logger.info("Scoreboard renderer initialized")
 
         except Exception as e:
@@ -251,6 +274,7 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
             self.logger.debug("Skipping update - not time yet")
             return
 
+
         self.logger.info("Starting football data update...")
         
         # Fetch data for each enabled league
@@ -272,6 +296,14 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
 
         # Update current games
         self.current_games = all_games
+        
+        # Update team rankings if enabled
+        if self.show_ranking:
+            self._update_team_rankings()
+        
+        # Fetch odds for games if enabled
+        if self.show_odds and self.odds_manager:
+            self._fetch_odds_for_games(all_games)
         
         # Log summary
         self._log_games_summary()
@@ -314,12 +346,100 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
         recent_count = len([g for g in self.current_games if g.get("is_final", False)])
         upcoming_count = len([g for g in self.current_games if g.get("is_upcoming", False)])
         
-        self.logger.info(f"NFL Games Summary: {live_count} live, {recent_count} recent, {upcoming_count} upcoming")
+        self.logger.info(f"Football Games Summary: {live_count} live, {recent_count} recent, {upcoming_count} upcoming")
+    
+    def _update_team_rankings(self):
+        """Update team rankings cache (mirrors old managers)."""
+        try:
+            current_time = time.time()
+            
+            # Check if we need to update rankings
+            if (current_time - self._rankings_cache_timestamp) < self._rankings_cache_duration:
+                return  # Cache is still valid
+            
+            # Fetch rankings for both leagues
+            total_rankings = 0
+            
+            # Fetch NCAA FB rankings if NCAA FB is enabled
+            if self.leagues.get("ncaa_fb", {}).get("enabled", False):
+                ncaa_rankings = self.ap_rankings_manager._fetch_ncaa_fb_rankings()
+                if ncaa_rankings:
+                    self._team_rankings_cache.update(ncaa_rankings)
+                    total_rankings += len(ncaa_rankings)
+                    self.logger.info(f"Updated NCAA FB rankings: {len(ncaa_rankings)} teams")
+            
+            # Fetch NFL rankings if NFL is enabled
+            if self.leagues.get("nfl", {}).get("enabled", False):
+                nfl_rankings = self.ap_rankings_manager._fetch_nfl_rankings()
+                if nfl_rankings:
+                    self._team_rankings_cache.update(nfl_rankings)
+                    total_rankings += len(nfl_rankings)
+                    self.logger.info(f"Updated NFL rankings: {len(nfl_rankings)} teams")
+            
+            if total_rankings > 0:
+                self._rankings_cache_timestamp = current_time
+                self.logger.info(f"Updated team rankings: {total_rankings} total teams")
+            
+            # Update renderer's rankings cache
+            if hasattr(self, 'scoreboard_renderer'):
+                self.scoreboard_renderer._team_rankings_cache = self._team_rankings_cache
+                
+        except Exception as e:
+            self.logger.error(f"Error updating team rankings: {e}")
+    
+    def _fetch_odds_for_games(self, games: list) -> None:
+        """Fetch odds for all games if enabled (matches old managers)."""
+        if not self.show_odds or not self.odds_manager:
+            return
+        
+        try:
+            for game in games:
+                self._fetch_odds(game)
+        except Exception as e:
+            self.logger.error(f"Error fetching odds for games: {e}")
+    
+    def _fetch_odds(self, game: Dict) -> None:
+        """Fetch odds for a specific game using BaseOddsManager."""
+        try:
+            if not self.show_odds or not self.odds_manager:
+                return
+            
+            # Determine sport and league for odds lookup
+            league = game.get("league", "nfl")
+            if league == "nfl":
+                sport = "football"
+                league_for_odds = "nfl"
+            elif league == "ncaa_fb":
+                sport = "football"
+                league_for_odds = "ncaa_fb"
+            else:
+                return
+            
+            # Determine update interval based on game state
+            is_live = game.get('is_live', False)
+            update_interval = 60 if is_live else 3600
+            
+            # Fetch odds using BaseOddsManager
+            odds_data = self.odds_manager.get_odds(
+                sport=sport,
+                league=league_for_odds,
+                event_id=game['id'],
+                update_interval_seconds=update_interval
+            )
+            
+            if odds_data:
+                game['odds'] = odds_data
+                self.logger.debug("Attached odds to game %s", game['id'])
+                
+        except Exception as e:
+            self.logger.error("Error fetching odds for game %s: %s", game.get('id', 'N/A'), e)
+    
 
     def display(self, force_clear: bool = False) -> None:
         """Display football games with mode cycling."""
         if not self.is_enabled:
             return
+
 
         try:
             current_time = time.time()

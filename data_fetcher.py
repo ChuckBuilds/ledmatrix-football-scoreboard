@@ -6,15 +6,13 @@ for both NFL and NCAA FB games.
 """
 
 import logging
-import time
 from datetime import datetime, timedelta
-from typing import Dict, Any, Optional, List
+from typing import Dict, Optional, List
 import pytz
 import requests
-from pathlib import Path
 
 try:
-    from src.background_data_service import get_background_service
+    from src.background_data_service import get_background_service  # noqa: F401
 except ImportError:
     get_background_service = None
 
@@ -58,11 +56,11 @@ class FootballDataFetcher:
             if cached_data:
                 # Validate cached data structure
                 if isinstance(cached_data, dict) and "events" in cached_data:
-                    self.logger.info(f"Using cached NFL schedule for {season_year}")
+                    self.logger.info("Using cached NFL schedule for %s", season_year)
                     return cached_data
                 elif isinstance(cached_data, list):
                     # Handle old cache format (list of events)
-                    self.logger.info(f"Using cached NFL schedule for {season_year} (legacy format)")
+                    self.logger.info("Using cached NFL schedule for %s (legacy format)", season_year)
                     return {"events": cached_data}
 
         # Start background fetch if background service is available
@@ -87,11 +85,11 @@ class FootballDataFetcher:
             if cached_data:
                 # Validate cached data structure
                 if isinstance(cached_data, dict) and "events" in cached_data:
-                    self.logger.info(f"Using cached NCAA FB schedule for {season_year}")
+                    self.logger.info("Using cached NCAA FB schedule for %s", season_year)
                     return cached_data
                 elif isinstance(cached_data, list):
                     # Handle old cache format (list of events)
-                    self.logger.info(f"Using cached NCAA FB schedule for {season_year} (legacy format)")
+                    self.logger.info("Using cached NCAA FB schedule for %s (legacy format)", season_year)
                     return {"events": cached_data}
 
         # Start background fetch if background service is available
@@ -139,14 +137,14 @@ class FootballDataFetcher:
                         all_events.extend(data["events"])
                         
                 except Exception as e:
-                    self.logger.warning(f"Error fetching {league} games for {formatted_date}: {e}")
+                    self.logger.warning("Error fetching %s games for %s: %s", league, formatted_date, e)
                     continue
 
-            self.logger.info(f"Fetched {len(all_events)} total games for {league} across extended date range")
+            self.logger.info("Fetched %d total games for %s across extended date range", len(all_events), league)
             return {"events": all_events}
             
         except Exception as e:
-            self.logger.error(f"Error fetching extended games for {league}: {e}")
+            self.logger.error("Error fetching extended games for %s: %s", league, e)
             return None
     
     def _fetch_todays_games(self, league: str) -> Optional[Dict]:
@@ -173,10 +171,10 @@ class FootballDataFetcher:
             return data
             
         except Exception as e:
-            self.logger.error(f"Error fetching today's {league} games: {e}")
+            self.logger.error("Error fetching today's %s games: %s", league, e)
             return None
     
-    def _fetch_full_season_games(self, league: str, season_year: int, datestring: str) -> Optional[Dict]:
+    def _fetch_full_season_games(self, league: str, season_year: int, datestring: str) -> Optional[Dict]:  # noqa: ARG002
         """Fetch full season games for NCAA FB (matches original NCAA FB manager behavior)."""
         try:
             if league == "ncaa_fb":
@@ -193,22 +191,22 @@ class FootballDataFetcher:
             response.raise_for_status()
             data = response.json()
             
-            self.logger.info(f"Fetched full season {league} data: {len(data.get('events', []))} events")
+            self.logger.info("Fetched full season %s data: %d events", league, len(data.get('events', [])))
             return data
             
         except Exception as e:
-            self.logger.error(f"Error fetching full season {league} games: {e}")
+            self.logger.error("Error fetching full season %s games: %s", league, e)
             return None
     
-    def _start_background_fetch(self, sport: str, season_year: int, datestring: str, cache_key: str):
+    def _start_background_fetch(self, sport: str, season_year: int, datestring: str, cache_key: str):  # noqa: ARG002
         """Start background fetch for full season data."""
         try:
             def fetch_callback(result):
                 """Callback when background fetch completes."""
                 if result.success:
-                    self.logger.info(f"Background fetch completed for {sport} {season_year}: {len(result.data.get('events', []))} events")
+                    self.logger.info("Background fetch completed for %s %s: %d events", sport, season_year, len(result.data.get('events', [])))
                 else:
-                    self.logger.error(f"Background fetch failed for {sport} {season_year}: {result.error}")
+                    self.logger.error("Background fetch failed for %s %s: %s", sport, season_year, result.error)
                 
                 # Clean up request tracking
                 if season_year in self.background_fetch_requests:
@@ -243,10 +241,10 @@ class FootballDataFetcher:
             
             # Track the request
             self.background_fetch_requests[season_year] = request_id
-            self.logger.info(f"Started background fetch for {sport} {season_year}")
+            self.logger.info("Started background fetch for %s %s", sport, season_year)
             
         except Exception as e:
-            self.logger.error(f"Error starting background fetch for {sport}: {e}")
+            self.logger.error("Error starting background fetch for %s: %s", sport, e)
     
     def process_api_response(self, data: Dict, league_key: str, league_config: Dict) -> List[Dict]:
         """Process API response data into standardized game format."""
@@ -260,13 +258,13 @@ class FootballDataFetcher:
                 if game:
                     games.append(game)
             except Exception as e:
-                self.logger.warning(f"Error processing game event: {e}")
+                self.logger.warning("Error processing game event: %s", e)
                 continue
 
         return games
     
     def _extract_game_details(self, event: Dict, league_key: str, league_config: Dict) -> Optional[Dict]:
-        """Extract game details from ESPN API event data."""
+        """Extract game details from ESPN API event data - mirrors old football managers exactly."""
         try:
             # Extract basic game info
             game_id = event.get("id", "")
@@ -275,7 +273,7 @@ class FootballDataFetcher:
             # Parse date
             try:
                 game_date = datetime.fromisoformat(date_str.replace('Z', '+00:00'))
-            except:
+            except (ValueError, TypeError):
                 game_date = datetime.now(pytz.utc)
             
             # Extract teams
@@ -308,61 +306,161 @@ class FootballDataFetcher:
             
             home_abbr = home_team.get("abbreviation", "HOME")
             away_abbr = away_team.get("abbreviation", "AWAY")
+            home_id = home_team.get("id", "")
+            away_id = away_team.get("id", "")
             home_score = home_competitor.get("score", "0")
             away_score = away_competitor.get("score", "0")
+            
+            # Get logo URLs from team data
+            home_logo_url = home_team.get("logo")
+            away_logo_url = away_team.get("logo")
+            
+            # Extract team records (Win-Loss-Tie) - matches old managers
+            home_record = home_competitor.get('records', [{}])[0].get('summary', '') if home_competitor.get('records') else ''
+            away_record = away_competitor.get('records', [{}])[0].get('summary', '') if away_competitor.get('records') else ''
+            
+            # Don't show "0-0" records - set to blank instead (matches old managers)
+            if home_record in {"0-0", "0-0-0"}:
+                home_record = ''
+            if away_record in {"0-0", "0-0-0"}:
+                away_record = ''
+            
+            # Determine logo directory based on league
+            if league_key == "nfl":
+                logo_dir = "assets/sports/nfl_logos"
+            else:  # ncaa_fb
+                logo_dir = "assets/sports/ncaa_logos"
+            
+            # Import LogoDownloader for normalization
+            try:
+                from src.logo_downloader import LogoDownloader
+                from pathlib import Path
+                
+                # Normalize abbreviations and create logo paths
+                home_logo_path = Path(logo_dir) / f"{LogoDownloader.normalize_abbreviation(home_abbr)}.png"
+                away_logo_path = Path(logo_dir) / f"{LogoDownloader.normalize_abbreviation(away_abbr)}.png"
+            except ImportError:
+                # Fallback if LogoDownloader not available
+                from pathlib import Path
+                home_logo_path = Path(logo_dir) / f"{home_abbr}.png"
+                away_logo_path = Path(logo_dir) / f"{away_abbr}.png"
             
             # Extract game status
             status = competition.get("status", {})
             period = status.get("period", 0)
             clock = status.get("displayClock", "")
             type_code = status.get("type", {}).get("name", "")
+            status_state = status.get("type", {}).get("state", "")
             
-            # Determine game state
-            is_live = type_code in ["STATUS_IN_PROGRESS", "STATUS_HALFTIME"]
-            is_final = type_code == "STATUS_FINAL"
-            is_upcoming = type_code in ["STATUS_SCHEDULED", "STATUS_PRE"]
+            # Determine game state (matches old managers - uses status_state primarily)
+            is_live = status_state == "in"
+            is_final = status_state == "post"
+            is_upcoming = (status_state == "pre" or 
+                          type_code.lower() in ['scheduled', 'pre-game', 'status_scheduled'])
+            is_halftime = status_state == "halftime" or type_code == "STATUS_HALFTIME"
+            is_period_break = status.get("type", {}).get("detail", "").lower() in ["period break", "timeout"]
             
-            # Create period text
-            if is_live:
-                if period <= 4:
-                    period_text = f"Q{period}"
-                else:
-                    period_text = f"OT{period-4}"
-                if clock:
-                    period_text += f" {clock}"
-            elif is_final:
-                if period <= 4:
-                    period_text = "Final"
-                else:
-                    period_text = f"Final OT{period-4}"
-            else:
-                # Upcoming game - format time
-                try:
-                    game_time = game_date.strftime("%I:%M%p").lower()
-                    period_text = game_time
-                except:
-                    period_text = "TBD"
+            # --- Football Specific Details (mirrors old football.py exactly) ---
+            down_distance_text = ""
+            down_distance_text_long = ""
+            possession_indicator = None
+            scoring_event = ""
+            home_timeouts = 0  # Start at 0, only live games will have timeout data
+            away_timeouts = 0  # Start at 0, only live games will have timeout data
+            is_redzone = False
+            possession = None
             
-            # Format date and time for display
+            # Extract situation data for live games
+            situation = competition.get("situation", {})
+            if situation and status_state == "in":
+                down_distance_text = situation.get("shortDownDistanceText", "")
+                down_distance_text_long = situation.get("downDistanceText", "")
+                is_redzone = situation.get("isRedZone", False)
+                possession = situation.get("possession")
+                
+                # Detect scoring events from status detail
+                status_detail = status.get("type", {}).get("detail", "").lower()
+                status_short = status.get("type", {}).get("shortDetail", "").lower()
+                
+                if any(keyword in status_detail for keyword in ["touchdown", "td"]):
+                    scoring_event = "TOUCHDOWN"
+                elif any(keyword in status_detail for keyword in ["field goal", "fg"]):
+                    scoring_event = "FIELD GOAL"
+                elif any(keyword in status_detail for keyword in ["extra point", "pat", "point after"]):
+                    scoring_event = "PAT"
+                elif any(keyword in status_short for keyword in ["touchdown", "td"]):
+                    scoring_event = "TOUCHDOWN"
+                elif any(keyword in status_short for keyword in ["field goal", "fg"]):
+                    scoring_event = "FIELD GOAL"
+                elif any(keyword in status_short for keyword in ["extra point", "pat"]):
+                    scoring_event = "PAT"
+                
+                # Determine possession indicator
+                possession_team_id = situation.get("possession")
+                if possession_team_id:
+                    if possession_team_id == home_id:
+                        possession_indicator = "home"
+                    elif possession_team_id == away_id:
+                        possession_indicator = "away"
+                
+                # Get timeout data for live games (defaults to 3 if not available)
+                home_timeouts = situation.get("homeTimeouts", 3)
+                away_timeouts = situation.get("awayTimeouts", 3)
+            
+            # Format date and time for display (do this BEFORE period_text uses it)
             formatted_date = ""
             formatted_time = ""
+            game_time = ""
+            
             if is_upcoming:
                 try:
-                    # Format date (e.g., "Oct 27" or "10/27")
-                    formatted_date = game_date.strftime("%b %d")  # "Oct 27"
-                    # Format time (e.g., "1:00pm")
-                    formatted_time = game_date.strftime("%I:%M%p").lower().lstrip('0')  # "1:00pm"
-                except:
+                    formatted_date = game_date.strftime("%b %d")
+                    formatted_time = game_date.strftime("%I:%M%p").lower().lstrip('0')
+                except (ValueError, TypeError):
                     formatted_date = "TBD"
                     formatted_time = "TBD"
             
-            # Create game object
+            # Format game_time for period_text (like old managers)
+            if status_state == "pre":
+                try:
+                    game_time = game_date.strftime("%I:%M%p").lower().lstrip('0')
+                except (ValueError, TypeError):
+                    game_time = "TBD"
+            
+            # Format period/quarter (mirrors old football.py exactly)
+            period_text = ""
+            if status_state == "in":
+                if period == 0:
+                    period_text = "Start"
+                elif period >= 1 and period <= 4:
+                    period_text = f"Q{period}"
+                elif period > 4:
+                    period_text = f"OT{period - 4}"
+            elif status_state == "halftime" or type_code == "STATUS_HALFTIME":
+                period_text = "HALF"
+            elif status_state == "post":
+                if period > 4:
+                    period_text = "Final/OT"
+                else:
+                    period_text = "Final"
+            elif status_state == "pre":
+                # Match old managers - use game_time variable
+                period_text = game_time
+            
+            # Create status_text (period + clock for live games, just period for others)
+            status_text = period_text
+            if status_state == "in" and clock:
+                status_text = f"{period_text} {clock}"
+            
+            # Create game object with all football-specific data
             game = {
                 "id": game_id,
                 "league": league_key,
                 "league_config": league_config,
                 "home_abbr": home_abbr,
                 "away_abbr": away_abbr,
+                "home_id": home_id,
+                "away_id": away_id,
                 "home_score": home_score,
                 "away_score": away_score,
                 "period": period,
@@ -371,14 +469,33 @@ class FootballDataFetcher:
                 "is_live": is_live,
                 "is_final": is_final,
                 "is_upcoming": is_upcoming,
+                "is_halftime": is_halftime,
+                "is_period_break": is_period_break,
                 "start_time_utc": game_date,
-                "status_text": period_text,
-                "game_date": formatted_date,  # For upcoming games display
-                "game_time": formatted_time   # For upcoming games display
+                "status_text": status_text,
+                "game_date": formatted_date,
+                "game_time": formatted_time,
+                # Logo paths and URLs (matches old managers)
+                "home_logo_path": home_logo_path,
+                "away_logo_path": away_logo_path,
+                "home_logo_url": home_logo_url,
+                "away_logo_url": away_logo_url,
+                # Team records (matches old managers)
+                "home_record": home_record,
+                "away_record": away_record,
+                # Football-specific data
+                "down_distance_text": down_distance_text,
+                "down_distance_text_long": down_distance_text_long,
+                "possession_indicator": possession_indicator,
+                "scoring_event": scoring_event,
+                "home_timeouts": home_timeouts,
+                "away_timeouts": away_timeouts,
+                "is_redzone": is_redzone,
+                "possession": possession
             }
             
             return game
             
         except Exception as e:
-            self.logger.error(f"Error extracting game details: {e}")
+            self.logger.error("Error extracting game details: %s", e)
             return None

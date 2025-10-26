@@ -155,6 +155,76 @@ class APRankingsManager:
         except Exception as e:
             self.logger.error(f"Error fetching team rankings: {e}")
             return {}
+
+    def _fetch_nfl_rankings(self) -> Dict[str, int]:
+        """
+        Fetch NFL power rankings based on standings/records.
+        Since NFL doesn't have formal rankings like NCAA, we'll use standings data.
+        
+        Returns:
+            Dictionary mapping team abbreviations to their rankings
+        """
+        current_time = time.time()
+        
+        # Check if we have cached rankings that are still valid
+        if (self._rankings_cache and 
+            current_time - self._cache_timestamp < self._cache_duration):
+            return self._rankings_cache
+        
+        try:
+            # Use NFL standings endpoint to get team records
+            standings_url = "https://site.api.espn.com/apis/site/v2/sports/football/nfl/standings"
+            response = requests.get(standings_url, timeout=self.request_timeout)
+            response.raise_for_status()
+            data = response.json()
+            
+            rankings = {}
+            standings = data.get('children', [])
+            
+            if standings:
+                # Process each conference
+                for conference in standings:
+                    divisions = conference.get('children', [])
+                    for division in divisions:
+                        teams = division.get('standings', {}).get('entries', [])
+                        
+                        # Sort teams by win percentage (wins/total games)
+                        team_records = []
+                        for team in teams:
+                            stats = team.get('stats', [])
+                            wins = 0
+                            losses = 0
+                            
+                            for stat in stats:
+                                if stat.get('name') == 'wins':
+                                    wins = stat.get('value', 0)
+                                elif stat.get('name') == 'losses':
+                                    losses = stat.get('value', 0)
+                            
+                            team_info = team.get('team', {})
+                            team_abbr = team_info.get('abbreviation', '')
+                            
+                            if team_abbr and (wins > 0 or losses > 0):
+                                win_pct = wins / (wins + losses) if (wins + losses) > 0 else 0
+                                team_records.append((team_abbr, win_pct, wins, losses))
+                        
+                        # Sort by win percentage (descending), then by wins
+                        team_records.sort(key=lambda x: (x[1], x[2]), reverse=True)
+                        
+                        # Assign rankings within division (1-4)
+                        for i, (team_abbr, win_pct, wins, losses) in enumerate(team_records):
+                            rankings[team_abbr] = i + 1
+                
+                # Cache the results
+                self._rankings_cache = rankings
+                self._cache_timestamp = current_time
+                
+                self.logger.info(f"Fetched NFL rankings for {len(rankings)} teams")
+                return rankings
+                
+        except Exception as e:
+            self.logger.error(f"Error fetching NFL rankings: {e}")
+            return {}
     
     def get_team_rank(self, team_abbr: str) -> Optional[int]:
         """
