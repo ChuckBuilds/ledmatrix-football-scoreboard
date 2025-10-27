@@ -1,73 +1,92 @@
-## Major Refactoring: Stop Reinventing the Wheel
+# Release Notes - Football Scoreboard Plugin v2.0.5
 
-This release represents a complete refactoring of the football scoreboard plugin to reuse the proven, battle-tested football managers from the LEDMatrix core project instead of maintaining duplicate custom code.
+## 🚀 Major Features Added
 
-### What's Changed
+### Background Service Integration
+- **Complete BackgroundDataService**: Full threading implementation with 1 worker for memory optimization
+- **Non-blocking Data Fetching**: Season data fetched in background without blocking display loop
+- **Request Tracking**: Comprehensive request management with status monitoring
+- **Callback System**: Async callbacks when background fetches complete
+- **Graceful Fallback**: Falls back to synchronous fetching if background service unavailable
 
-**🔄 Architecture Refactor**
-- Replaced custom modular architecture with proven LEDMatrix managers
-- Now uses battle-tested NFL and NCAA FB managers from LEDMatrix core
-- Eliminated duplicate code maintenance burden
+### Production-Ready Data Management
+- **Full Season Caching**: Complete NFL (Aug-Mar) and NCAA FB (Aug-Feb) season data caching
+- **Smart Cache Validation**: Validates cache structure and handles legacy formats
+- **Real ESPN API Integration**: All data comes from live ESPN API endpoints
+- **Comprehensive Error Handling**: Retry logic with exponential backoff
+- **Memory Optimization**: Single worker thread to minimize memory usage
 
-**📁 New Files Added**
-- `sports.py` - SportsCore, SportsLive, SportsRecent, SportsUpcoming base classes
-- `football.py` - Football and FootballLive classes with rendering
-- `data_sources.py` - ESPNDataSource for API calls
-- `nfl_managers.py` - NFL live/recent/upcoming managers
-- `ncaa_fb_managers.py` - NCAA FB live/recent/upcoming managers
-- `base_odds_manager.py` - Simplified odds fetching
-- `logo_downloader.py` - Team logo downloading with placeholders
-- `dynamic_team_resolver.py` - Dynamic team name resolution
+### Advanced Odds Integration
+- **Real Odds Data**: Production-ready odds fetching from ESPN API
+- **Intelligent Caching**: 1-hour cache for rankings, full season cache for schedules
+- **Dynamic Odds Display**: Shows negative spreads and over/under with proper positioning
+- **Mock Object Handling**: Graceful handling of test environments
 
-**🗑️ Files Removed**
-- `data_fetcher.py` - Replaced by ESPNDataSource
-- `game_filter.py` - Replaced by manager filtering
-- `scoreboard_renderer.py` - Replaced by Football class rendering
-- `ap_rankings.py` - Replaced by manager rankings
+### Dynamic Team Resolution
+- **AP_TOP_25 Support**: Automatic resolution to current top 25 ranked teams
+- **Multiple Patterns**: Support for AP_TOP_10, AP_TOP_5 patterns
+- **Real-Time Rankings**: Fetches live rankings from ESPN API
+- **Caching**: 1-hour cache to avoid excessive API calls
 
-**🧪 Testing & Development**
-- Added comprehensive test suite (`test_football_plugin.py`)
-- Added emulator demo (`emulator_demo.py`)
-- Verified with pygame RGB emulator
-- All tests passing
+## 🔧 Technical Improvements
 
-### Benefits
+### Code Quality
+- **Consistent Formatting**: Applied black formatting across all files
+- **Type Safety**: Enhanced type hints and error handling
+- **Documentation**: Comprehensive docstrings and inline comments
+- **Error Recovery**: Graceful handling of API failures and network issues
 
-✅ **Proven Code**: Reusing battle-tested managers that already work  
-✅ **Less Maintenance**: One codebase to maintain instead of duplicates  
-✅ **Feature Parity**: Immediately get all features from working implementation  
-✅ **No Reinvention**: Stop duplicating effort on solved problems  
+### Configuration
+- **Schema Compatibility**: Updated configuration schema to work with nested structure
+- **Background Service Config**: Configurable timeouts, retries, and priorities
+- **Plugin Integration**: Seamless integration with LEDMatrix plugin system
 
-### Ready for Plugin Store
+### Performance
+- **Background Threading**: Non-blocking data fetching prevents display lag
+- **Intelligent Caching**: Reduces API calls and improves response times
+- **Memory Efficiency**: Optimized threading and data structures
+- **Request Management**: Tracks and manages background requests efficiently
 
-This plugin is now 100% ready for the LEDMatrix plugin store:
-- ✅ Proper manifest.json with all required fields
-- ✅ Complete configuration schema
-- ✅ Comprehensive error handling
-- ✅ Real ESPN API integration
-- ✅ PIL image rendering
-- ✅ Mode cycling (live/recent/upcoming)
-- ✅ Team logo downloading
-- ✅ Works with pygame emulator
+## 🎯 Feature Parity Achieved
 
-### Installation
+The plugin now has **complete feature parity** with the original LEDMatrix managers:
 
-Download and install via the LEDMatrix plugin store or manually:
+| Feature | Original LEDMatrix | Plugin v2.0.5 |
+|---------|-------------------|---------------|
+| Background Service | ✅ | ✅ **Complete** |
+| Season Caching | ✅ | ✅ **Complete** |
+| Request Tracking | ✅ | ✅ **Complete** |
+| Threading | ✅ | ✅ **Non-blocking** |
+| Error Handling | ✅ | ✅ **Comprehensive** |
+| Memory Usage | ✅ | ✅ **Optimized** |
+| Odds Integration | ✅ | ✅ **Production-ready** |
+| Dynamic Teams | ✅ | ✅ **AP_TOP_25** |
 
-```bash
-# Download the release
-wget https://github.com/ChuckBuilds/ledmatrix-football-scoreboard/archive/refs/tags/v2.0.5.zip
+## 🧪 Testing & Validation
 
-# Extract to plugins directory
-unzip v2.0.5.zip -d /path/to/ledmatrix/plugins/
-```
+- **Emulator Testing**: Successfully tested with pygame RGB emulator
+- **Real Data**: All tests use live ESPN API data (no mock elements)
+- **Background Service**: Verified threading and request management
+- **Odds Integration**: Confirmed real odds data loading and display
+- **Configuration**: Validated nested configuration schema compatibility
 
-### Testing
+## 📦 Installation & Usage
 
-Run the test suite to verify everything works:
+The plugin is now **fully production-ready** and can be:
+- Downloaded from the plugin store
+- Installed on Raspberry Pi LEDMatrix systems
+- Used with real NFL and NCAA Football data
+- Configured with AP_TOP_25 dynamic team selection
 
-```bash
-cd ledmatrix-football-scoreboard
-python test_football_plugin.py
-python emulator_demo.py
-```
+## 🔄 Migration Notes
+
+- **Configuration**: Existing configurations remain compatible
+- **Cache**: Legacy cache formats are automatically handled
+- **Background Service**: Automatically falls back if service unavailable
+- **No Breaking Changes**: All existing functionality preserved
+
+---
+
+**Version**: 2.0.5  
+**Release Date**: October 27, 2025  
+**Status**: Production Ready ✅
