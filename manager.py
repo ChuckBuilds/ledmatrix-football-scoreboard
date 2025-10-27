@@ -150,33 +150,27 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
         """
         league_config = self.config.get(league, {})
 
+        # Extract nested configurations
+        game_limits = league_config.get("game_limits", {})
+        display_options = league_config.get("display_options", {})
+        filtering = league_config.get("filtering", {})
+        display_modes = league_config.get("display_modes", {})
+
         # Create manager config with expected structure
         manager_config = {
             f"{league}_scoreboard": {
                 "enabled": league_config.get("enabled", False),
                 "favorite_teams": league_config.get("favorite_teams", []),
-                "display_modes": league_config.get(
-                    "display_modes",
-                    {
-                        f"{league}_live": True,
-                        f"{league}_recent": True,
-                        f"{league}_upcoming": True,
-                    },
-                ),
-                "filtering": league_config.get(
-                    "filtering",
-                    {"show_favorite_teams_only": False, "show_all_live": True},
-                ),
-                "recent_games_to_show": league_config.get("recent_games_to_show", 5),
-                "upcoming_games_to_show": league_config.get(
-                    "upcoming_games_to_show", 10
-                ),
+                "display_modes": display_modes,
+                "filtering": filtering,
+                "recent_games_to_show": game_limits.get("recent_games_to_show", 5),
+                "upcoming_games_to_show": game_limits.get("upcoming_games_to_show", 10),
                 "logo_dir": league_config.get(
                     "logo_dir", f"assets/sports/{league}_logos"
                 ),
-                "show_records": self.show_records,
-                "show_ranking": self.show_ranking,
-                "show_odds": self.show_odds,
+                "show_records": display_options.get("show_records", self.show_records),
+                "show_ranking": display_options.get("show_ranking", self.show_ranking),
+                "show_odds": display_options.get("show_odds", self.show_odds),
                 "test_mode": league_config.get("test_mode", False),
                 "update_interval_seconds": league_config.get(
                     "update_interval_seconds", 300

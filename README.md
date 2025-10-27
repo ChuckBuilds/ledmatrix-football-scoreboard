@@ -1,31 +1,49 @@
 # Football Scoreboard Plugin
 
-A plugin for LEDMatrix that displays live, recent, and upcoming football games across NFL and NCAA Football leagues.
+A production-ready plugin for LEDMatrix that displays live, recent, and upcoming football games across NFL and NCAA Football leagues. This plugin reuses the proven, battle-tested code from the main LEDMatrix project for maximum reliability and feature completeness.
 
-## Features
+## 🏈 Features
 
-- **Multiple League Support**: NFL and NCAA Football
-- **Live Game Tracking**: Real-time scores, quarters, time remaining
-- **Recent Games**: Recently completed games with final scores
-- **Upcoming Games**: Scheduled games with start times
-- **Favorite Teams**: Prioritize games involving your favorite teams
-- **Professional Scorebug Display**: Team logos, scores, and game details with professional layout
+### Core Functionality
+- **Multiple League Support**: NFL and NCAA Football with independent configuration
+- **Live Game Tracking**: Real-time scores, quarters, time remaining, down & distance
+- **Recent Games**: Recently completed games with final scores and records
+- **Upcoming Games**: Scheduled games with start times and odds
+- **Dynamic Team Resolution**: Support for `AP_TOP_25`, `AP_TOP_10`, `AP_TOP_5` automatic team selection
+- **Production-Ready**: Real ESPN API integration with caching and error handling
+
+### Professional Display
+- **Team Logos**: Professional team logos with automatic download fallback
+- **Scorebug Layout**: Broadcast-quality scoreboard display
 - **Football-Specific Details**: Down & distance, possession indicators, timeout tracking
-- **Visual Enhancements**: Redzone highlighting, scoring event notifications, color-coded game states
-- **Background Data Fetching**: Efficient API calls without blocking display
+- **Color-Coded States**: Live (green), final (gray), upcoming (yellow), redzone (red)
+- **Odds Integration**: Real-time betting odds display with spread and over/under
+- **Rankings Display**: AP Top 25 rankings for NCAA Football teams
 
-## Configuration
+### Advanced Features
+- **Background Data Service**: Non-blocking API calls with intelligent caching
+- **Smart Filtering**: Show favorite teams only or all games
+- **Mode Cycling**: Automatic rotation between live, recent, and upcoming games
+- **Error Recovery**: Graceful handling of API failures and missing data
+- **Memory Optimized**: Efficient resource usage for Raspberry Pi deployment
+
+## ⚙️ Configuration
 
 ### Global Settings
 
-- `display_duration`: How long to show each game (5-60 seconds, default: 15)
-- `show_records`: Display team win-loss records (default: false)
-- `show_ranking`: Display team rankings when available (default: false)
-- `background_service`: Configure API request settings
+```json
+{
+  "enabled": true,
+  "display_duration": 30,
+  "game_display_duration": 15,
+  "show_records": false,
+  "show_ranking": false,
+  "show_odds": true,
+  "timezone": "UTC"
+}
+```
 
-### Per-League Settings
-
-#### NFL Configuration
+### NFL Configuration
 
 ```json
 {
@@ -33,101 +51,187 @@ A plugin for LEDMatrix that displays live, recent, and upcoming football games a
     "enabled": true,
     "favorite_teams": ["TB", "DAL", "GB"],
     "display_modes": {
-      "live": true,
-      "recent": true,
-      "upcoming": true
+      "show_live": true,
+      "show_recent": true,
+      "show_upcoming": true
     },
-    "recent_games_to_show": 5,
-    "upcoming_games_to_show": 10
+    "game_limits": {
+      "recent_games_to_show": 5,
+      "upcoming_games_to_show": 2
+    },
+    "display_options": {
+      "show_records": true,
+      "show_ranking": false,
+      "show_odds": true
+    },
+    "filtering": {
+      "show_favorite_teams_only": true,
+      "show_all_live": false
+    },
+    "live_update_interval": 30,
+    "live_game_duration": 20
   }
 }
 ```
 
-#### NCAA Football Configuration
+### NCAA Football Configuration
 
 ```json
 {
   "ncaa_fb": {
     "enabled": true,
-    "favorite_teams": ["UGA", "AUB", "BAMA"],
+    "favorite_teams": ["AP_TOP_25", "UGA", "ALA"],
     "display_modes": {
-      "live": true,
-      "recent": true,
-      "upcoming": true
+      "show_live": true,
+      "show_recent": true,
+      "show_upcoming": true
     },
-    "recent_games_to_show": 5,
-    "upcoming_games_to_show": 10
+    "game_limits": {
+      "recent_games_to_show": 3,
+      "upcoming_games_to_show": 2
+    },
+    "display_options": {
+      "show_records": false,
+      "show_ranking": true,
+      "show_odds": true
+    },
+    "filtering": {
+      "show_favorite_teams_only": true,
+      "show_all_live": false
+    },
+    "live_update_interval": 30,
+    "live_game_duration": 20
   }
 }
 ```
 
-## Display Modes
+## 🎯 Dynamic Team Resolution
 
-The plugin supports three display modes:
+The plugin supports automatic team selection using dynamic patterns:
 
-1. **football_live**: Shows currently active games
-2. **football_recent**: Shows recently completed games
-3. **football_upcoming**: Shows scheduled upcoming games
+- **`AP_TOP_25`**: Automatically includes all 25 AP Top 25 ranked teams
+- **`AP_TOP_10`**: Automatically includes top 10 ranked teams  
+- **`AP_TOP_5`**: Automatically includes top 5 ranked teams
 
-## Display Features
+These patterns update automatically as rankings change throughout the season. You can mix them with specific teams:
 
-The plugin provides a professional scorebug display matching the quality of the original LEDMatrix football managers:
+```json
+"favorite_teams": ["AP_TOP_25", "UGA", "ALA"]
+```
 
-### Visual Elements
-- **Team Logos**: Professional team logos positioned on left and right sides
+This will show games for all AP Top 25 teams plus Georgia and Alabama (duplicates are automatically removed).
+
+## 📺 Display Modes
+
+The plugin supports three display modes that cycle automatically:
+
+1. **Live Games**: Currently active games with real-time updates
+2. **Recent Games**: Recently completed games with final scores
+3. **Upcoming Games**: Scheduled games with start times and odds
+
+## 🎨 Visual Features
+
+### Professional Scorebug Display
+- **Team Logos**: High-quality team logos positioned on left and right sides
 - **Scores**: Centered score display with outlined text for visibility
 - **Game Status**: Quarter/time display at top center
-- **Down & Distance**: Live game situation information
-- **Possession Indicator**: Football icon showing which team has possession
-- **Timeout Tracking**: Visual timeout bars in bottom corners
-- **Scoring Events**: Special highlighting for touchdowns, field goals, etc.
-- **Redzone Highlighting**: Color changes when teams are in the redzone
+- **Down & Distance**: Live game situation information (NFL only)
+- **Possession Indicator**: Visual indicators for ball possession
+- **Odds Display**: Spread and over/under betting lines
+- **Rankings**: AP Top 25 rankings for NCAA Football
 
 ### Color Coding
 - **Live Games**: Green text for active status
 - **Redzone**: Red highlighting when teams are in scoring position
 - **Final Games**: Gray text for completed games
 - **Upcoming Games**: Yellow text for scheduled games
-- **Scoring Events**: Gold for touchdowns, green for field goals, orange for PATs
+- **Odds**: Green text for betting information
 
-### Fallback Support
-- **Text Fallback**: If team logos are unavailable, displays text-based layout
-- **Error Handling**: Graceful degradation when data is missing
-
-## Team Abbreviations
+## 🏷️ Team Abbreviations
 
 ### NFL Teams
 Common abbreviations: TB, DAL, GB, KC, BUF, SF, PHI, NE, MIA, NYJ, LAC, DEN, LV, CIN, BAL, CLE, PIT, IND, HOU, TEN, JAX, ARI, LAR, SEA, WAS, NYG, MIN, DET, CHI, ATL, CAR, NO
 
 ### NCAA Football Teams
-Common abbreviations: UGA (Georgia), AUB (Auburn), BAMA (Alabama), CLEM (Clemson), OSU (Ohio State), MICH (Michigan), FSU (Florida State), LSU (LSU), OU (Oklahoma), TEX (Texas)
+Common abbreviations: UGA (Georgia), AUB (Auburn), BAMA (Alabama), CLEM (Clemson), OSU (Ohio State), MICH (Michigan), FSU (Florida State), LSU (LSU), OU (Oklahoma), TEX (Texas), ORE (Oregon), MISS (Mississippi), GT (Georgia Tech), VAN (Vanderbilt), BYU (BYU)
 
-## Background Service
+## 🔧 Technical Details
 
-The plugin uses background data fetching for efficient API calls:
+### Architecture
+This plugin reuses the proven code from the main LEDMatrix project:
+- **SportsCore**: Base class for all sports functionality
+- **Football**: Football-specific game detail extraction
+- **NFL Managers**: Live, Recent, and Upcoming managers for NFL
+- **NCAA FB Managers**: Live, Recent, and Upcoming managers for NCAA Football
+- **BaseOddsManager**: Production-ready odds fetching from ESPN API
+- **DynamicTeamResolver**: Automatic team resolution for rankings
 
-- Requests timeout after 30 seconds (configurable)
-- Up to 3 retries for failed requests
-- Priority level 2 (medium priority)
+### Data Sources
+- **ESPN API**: Primary data source for games, scores, and rankings
+- **Real-time Updates**: Live game data updates every 30 seconds
+- **Intelligent Caching**: 1-hour cache for rankings, 30-minute cache for odds
+- **Error Recovery**: Graceful handling of API failures
 
-## Data Source
+### Performance
+- **Background Processing**: Non-blocking data fetching
+- **Memory Optimized**: Efficient resource usage for Raspberry Pi
+- **Smart Caching**: Reduces API calls while maintaining data freshness
+- **Configurable Intervals**: Adjustable update frequencies per league
 
-Game data is fetched from ESPN's public API endpoints for both NFL and NCAA Football.
+## 📦 Installation
 
-## Dependencies
+### From Plugin Store (Recommended)
+1. Open LEDMatrix web interface
+2. Navigate to Plugin Store
+3. Search for "Football Scoreboard"
+4. Click Install
+5. Configure your favorite teams and preferences
 
-This is a standalone plugin that implements all football-specific functionality internally. It only requires the main LEDMatrix installation for the plugin system and display management.
+### Manual Installation
+1. Download the latest release from GitHub
+2. Extract to your `ledmatrix-plugins/plugins/` folder
+3. Ensure the plugin is enabled in your LEDMatrix configuration
+4. Configure your favorite teams and display preferences
+5. Restart LEDMatrix to load the new plugin
 
-## Installation
+## 🐛 Troubleshooting
 
-1. Copy this plugin directory to your `ledmatrix-plugins/plugins/` folder
-2. Ensure the plugin is enabled in your LEDMatrix configuration
-3. Configure your favorite teams and display preferences
-4. Restart LEDMatrix to load the new plugin
-
-## Troubleshooting
-
-- **No games showing**: Check if leagues are enabled and API endpoints are accessible
-- **Missing team logos**: Ensure team logo files exist in your assets/sports/ directory
-- **Slow updates**: Adjust the update interval in league configuration
+### Common Issues
+- **No games showing**: Check if leagues are enabled and favorite teams are configured
+- **Missing team logos**: Logos are automatically downloaded from ESPN API
+- **Slow updates**: Adjust the `live_update_interval` in league configuration
 - **API errors**: Check your internet connection and ESPN API availability
+- **Dynamic teams not working**: Ensure you're using exact patterns like `AP_TOP_25`
+
+### Debug Mode
+Enable debug logging to troubleshoot issues:
+```json
+{
+  "logging": {
+    "level": "DEBUG"
+  }
+}
+```
+
+## 📊 Version History
+
+### v2.0.5 (Current)
+- ✅ Production-ready with real ESPN API integration
+- ✅ Dynamic team resolution (AP_TOP_25, AP_TOP_10, AP_TOP_5)
+- ✅ Real-time odds display with spread and over/under
+- ✅ Nested configuration structure for better organization
+- ✅ Full compatibility with LEDMatrix web UI
+- ✅ Comprehensive error handling and caching
+- ✅ Memory-optimized for Raspberry Pi deployment
+
+### Previous Versions
+- v2.0.4: Initial refactoring to reuse LEDMatrix core code
+- v1.x: Original modular implementation
+
+## 🤝 Contributing
+
+This plugin is built on the proven LEDMatrix core codebase. For issues or feature requests, please use the GitHub issue tracker.
+
+## 📄 License
+
+This plugin follows the same license as the main LEDMatrix project.
