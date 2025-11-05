@@ -76,31 +76,68 @@ def download_missing_logo(sport_key: str, team_id: str, team_abbr: str, logo_pat
         True if logo was downloaded successfully, False otherwise
     """
     try:
-        # Create directory if it doesn't exist
-        logo_path.parent.mkdir(parents=True, exist_ok=True)
+        # Ensure directory exists and is writable
+        logo_dir = logo_path.parent
+        try:
+            logo_dir.mkdir(parents=True, exist_ok=True)
+            
+            # Check if we can write to the directory
+            test_file = logo_dir / '.write_test'
+            try:
+                test_file.touch()
+                test_file.unlink()
+            except PermissionError:
+                logger.error(f"Permission denied: Cannot write to directory {logo_dir}")
+                logger.error(f"Please run: sudo ./scripts/fix_perms/fix_assets_permissions.sh")
+                return False
+        except PermissionError as e:
+            logger.error(f"Permission denied: Cannot create directory {logo_dir}: {e}")
+            logger.error(f"Please run: sudo ./scripts/fix_perms/fix_assets_permissions.sh")
+            return False
+        except Exception as e:
+            logger.error(f"Failed to create logo directory {logo_dir}: {e}")
+            return False
         
         # If we have a logo URL, try to download it
         if logo_url:
-            response = requests.get(logo_url, timeout=30)
-            if response.status_code == 200:
-                with open(logo_path, 'wb') as f:
-                    f.write(response.content)
-                logger.info(f"Downloaded logo for {team_abbr} from {logo_url}")
-                return True
+            try:
+                response = requests.get(logo_url, timeout=30)
+                if response.status_code == 200:
+                    # Verify it's an image
+                    content_type = response.headers.get('content-type', '').lower()
+                    if any(img_type in content_type for img_type in ['image/png', 'image/jpeg', 'image/jpg', 'image/gif']):
+                        with open(logo_path, 'wb') as f:
+                            f.write(response.content)
+                        logger.info(f"Downloaded logo for {team_abbr} from {logo_url}")
+                        return True
+            except PermissionError as e:
+                logger.error(f"Permission denied downloading logo for {team_abbr}: {e}")
+                logger.error(f"Please run: sudo ./scripts/fix_perms/fix_assets_permissions.sh")
+                return False
+            except Exception as e:
+                logger.error(f"Failed to download logo for {team_abbr}: {e}")
         
         # If no URL or download failed, create a placeholder
-        create_placeholder_logo(team_abbr, logo_path)
-        return True
+        return create_placeholder_logo(team_abbr, logo_path)
         
+    except PermissionError as e:
+        logger.error(f"Permission denied for {team_abbr}: {e}")
+        logger.error(f"Please run: sudo ./scripts/fix_perms/fix_assets_permissions.sh")
+        return False
     except Exception as e:
         logger.error(f"Failed to download logo for {team_abbr}: {e}")
-        # Create placeholder as fallback
-        create_placeholder_logo(team_abbr, logo_path)
-        return False
+        # Try to create placeholder as fallback
+        try:
+            return create_placeholder_logo(team_abbr, logo_path)
+        except:
+            return False
 
-def create_placeholder_logo(team_abbr: str, logo_path: Path) -> None:
+def create_placeholder_logo(team_abbr: str, logo_path: Path) -> bool:
     """Create a simple placeholder logo."""
     try:
+        # Ensure directory exists
+        logo_path.parent.mkdir(parents=True, exist_ok=True)
+        
         # Create a simple text-based logo
         img = Image.new('RGBA', (64, 64), (0, 0, 0, 0))
         draw = ImageDraw.Draw(img)
@@ -128,6 +165,12 @@ def create_placeholder_logo(team_abbr: str, logo_path: Path) -> None:
         # Save the placeholder
         img.save(logo_path)
         logger.info(f"Created placeholder logo for {team_abbr}")
+        return True
         
+    except PermissionError as e:
+        logger.error(f"Permission denied creating placeholder logo for {team_abbr}: {e}")
+        logger.error(f"Please run: sudo ./scripts/fix_perms/fix_assets_permissions.sh")
+        return False
     except Exception as e:
         logger.error(f"Failed to create placeholder logo for {team_abbr}: {e}")
+        return False
