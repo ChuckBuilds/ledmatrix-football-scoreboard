@@ -263,10 +263,10 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
         except Exception as e:
             self.logger.error(f"Error updating managers: {e}")
 
-    def display(self, force_clear: bool = False) -> None:
+    def display(self, force_clear: bool = False) -> bool:
         """Display football games with mode cycling."""
         if not self.is_enabled:
-            return
+            return False
 
         try:
             current_time = time.time()
@@ -285,12 +285,14 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
             # Get current manager and display
             current_manager = self._get_current_manager()
             if current_manager:
-                current_manager.display(force_clear)
+                return current_manager.display(force_clear)
             else:
                 self.logger.warning("No manager available for current mode")
+                return False
 
         except Exception as e:
             self.logger.error(f"Error in display method: {e}")
+            return False
 
     def get_info(self) -> Dict[str, Any]:
         """Get plugin information."""
