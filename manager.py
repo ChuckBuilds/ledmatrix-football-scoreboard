@@ -156,6 +156,15 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
         filtering = league_config.get("filtering", {})
         display_modes = league_config.get("display_modes", {})
 
+        # Logo directory mapping - NCAA sports use ncaa_logos, not ncaa_fb_logos
+        LOGO_DIRECTORIES = {
+            'nfl': 'assets/sports/nfl_logos',
+            'ncaa_fb': 'assets/sports/ncaa_logos',  # Use ncaa_logos, not ncaa_fb_logos
+        }
+        
+        # Get logo directory from config or use mapping
+        default_logo_dir = LOGO_DIRECTORIES.get(league, f"assets/sports/{league}_logos")
+
         # Create manager config with expected structure
         manager_config = {
             f"{league}_scoreboard": {
@@ -165,9 +174,7 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
                 "filtering": filtering,
                 "recent_games_to_show": game_limits.get("recent_games_to_show", 5),
                 "upcoming_games_to_show": game_limits.get("upcoming_games_to_show", 10),
-                "logo_dir": league_config.get(
-                    "logo_dir", f"assets/sports/{league}_logos"
-                ),
+                "logo_dir": league_config.get("logo_dir", default_logo_dir),
                 "show_records": display_options.get("show_records", self.show_records),
                 "show_ranking": display_options.get("show_ranking", self.show_ranking),
                 "show_odds": display_options.get("show_odds", self.show_odds),
@@ -185,13 +192,26 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
             }
         }
 
-        # Add global config
+        # Add global config - get timezone from cache_manager's config_manager if available
+        timezone_str = self.config.get("timezone")
+        if not timezone_str and hasattr(self.cache_manager, 'config_manager'):
+            timezone_str = self.cache_manager.config_manager.get_timezone()
+        if not timezone_str:
+            timezone_str = "UTC"
+        
+        # Get display config from main config if available
+        display_config = self.config.get("display", {})
+        if not display_config and hasattr(self.cache_manager, 'config_manager'):
+            display_config = self.cache_manager.config_manager.get_display_config()
+        
         manager_config.update(
             {
-                "timezone": self.config.get("timezone", "UTC"),
-                "display": self.config.get("display", {}),
+                "timezone": timezone_str,
+                "display": display_config,
             }
         )
+        
+        self.logger.debug(f"Using timezone: {timezone_str} for {league} managers")
 
         return manager_config
 
