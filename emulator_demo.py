@@ -77,9 +77,6 @@ def create_test_config():
         "enabled": True,
         "display_duration": 5,  # Short duration for testing
         "game_display_duration": 3,
-        "show_records": True,
-        "show_ranking": True,
-        "show_odds": True,
         "timezone": "UTC",
         "nfl": {
             "enabled": True,
@@ -89,6 +86,7 @@ def create_test_config():
                 "show_recent": True,
                 "show_upcoming": True,
             },
+            "live_priority": True,
             "game_limits": {"recent_games_to_show": 3, "upcoming_games_to_show": 2},
             "display_options": {
                 "show_records": True,
@@ -106,6 +104,7 @@ def create_test_config():
                 "show_recent": True,
                 "show_upcoming": True,
             },
+            "live_priority": False,
             "game_limits": {"recent_games_to_show": 2, "upcoming_games_to_show": 1},
             "display_options": {
                 "show_records": False,

@@ -74,10 +74,11 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
         self.display_duration = float(config.get("display_duration", 30))
         self.game_display_duration = float(config.get("game_display_duration", 15))
 
-        # Additional settings
-        self.show_records = config.get("show_records", False)
-        self.show_ranking = config.get("show_ranking", False)
-        self.show_odds = config.get("show_odds", False)
+        # Live priority per league
+        self.nfl_live_priority = self.config.get("nfl", {}).get("live_priority", False)
+        self.ncaa_fb_live_priority = self.config.get("ncaa_fb", {}).get(
+            "live_priority", False
+        )
 
         # Initialize background service if available
         self.background_service = None
@@ -154,7 +155,16 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
         game_limits = league_config.get("game_limits", {})
         display_options = league_config.get("display_options", {})
         filtering = league_config.get("filtering", {})
-        display_modes = league_config.get("display_modes", {})
+        display_modes_config = league_config.get("display_modes", {})
+
+        manager_display_modes = {
+            f"{league}_live": display_modes_config.get("show_live", True),
+            f"{league}_recent": display_modes_config.get("show_recent", True),
+            f"{league}_upcoming": display_modes_config.get("show_upcoming", True),
+        }
+
+        show_favorites_only = filtering.get("show_favorite_teams_only", False)
+        show_all_live = filtering.get("show_all_live", False)
 
         # Logo directory mapping - NCAA sports use ncaa_logos, not ncaa_fb_logos
         LOGO_DIRECTORIES = {
@@ -170,20 +180,23 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
             f"{league}_scoreboard": {
                 "enabled": league_config.get("enabled", False),
                 "favorite_teams": league_config.get("favorite_teams", []),
-                "display_modes": display_modes,
-                "filtering": filtering,
+                "display_modes": manager_display_modes,
                 "recent_games_to_show": game_limits.get("recent_games_to_show", 5),
                 "upcoming_games_to_show": game_limits.get("upcoming_games_to_show", 10),
                 "logo_dir": league_config.get("logo_dir", default_logo_dir),
-                "show_records": display_options.get("show_records", self.show_records),
-                "show_ranking": display_options.get("show_ranking", self.show_ranking),
-                "show_odds": display_options.get("show_odds", self.show_odds),
+                "show_records": display_options.get("show_records", False),
+                "show_ranking": display_options.get("show_ranking", False),
+                "show_odds": display_options.get("show_odds", False),
                 "test_mode": league_config.get("test_mode", False),
                 "update_interval_seconds": league_config.get(
                     "update_interval_seconds", 300
                 ),
                 "live_update_interval": league_config.get("live_update_interval", 30),
                 "live_game_duration": league_config.get("live_game_duration", 20),
+                "live_priority": league_config.get("live_priority", False),
+                "show_favorite_teams_only": show_favorites_only,
+                "show_all_live": show_all_live,
+                "filtering": filtering,
                 "background_service": {
                     "request_timeout": 30,
                     "max_retries": 3,
@@ -219,11 +232,34 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
         """Get list of available display modes based on enabled leagues."""
         modes = []
 
+        def league_modes(league: str) -> Dict[str, bool]:
+            league_config = self.config.get(league, {})
+            display_modes = league_config.get("display_modes", {})
+            return {
+                "live": display_modes.get("show_live", True),
+                "recent": display_modes.get("show_recent", True),
+                "upcoming": display_modes.get("show_upcoming", True),
+            }
+
         if self.nfl_enabled:
-            modes.extend(["nfl_live", "nfl_recent", "nfl_upcoming"])
+            flags = league_modes("nfl")
+            prefix = "nfl"
+            if flags["live"]:
+                modes.append(f"{prefix}_live")
+            if flags["recent"]:
+                modes.append(f"{prefix}_recent")
+            if flags["upcoming"]:
+                modes.append(f"{prefix}_upcoming")
 
         if self.ncaa_fb_enabled:
-            modes.extend(["ncaa_fb_live", "ncaa_fb_recent", "ncaa_fb_upcoming"])
+            flags = league_modes("ncaa_fb")
+            prefix = "ncaa_fb"
+            if flags["live"]:
+                modes.append(f"{prefix}_live")
+            if flags["recent"]:
+                modes.append(f"{prefix}_recent")
+            if flags["upcoming"]:
+                modes.append(f"{prefix}_upcoming")
 
         # Default to NFL if no leagues enabled
         if not modes:
@@ -314,6 +350,53 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
             self.logger.error(f"Error in display method: {e}")
             return False
 
+    def has_live_priority(self) -> bool:
+        if not self.is_enabled:
+            return False
+        return (
+            (self.nfl_enabled and self.nfl_live_priority)
+            or (self.ncaa_fb_enabled and self.ncaa_fb_live_priority)
+        )
+
+    def has_live_content(self) -> bool:
+        if not self.is_enabled:
+            return False
+
+        nfl_live = (
+            self.nfl_enabled
+            and self.nfl_live_priority
+            and hasattr(self, "nfl_live")
+            and bool(getattr(self.nfl_live, "live_games", []))
+        )
+        ncaa_live = (
+            self.ncaa_fb_enabled
+            and self.ncaa_fb_live_priority
+            and hasattr(self, "ncaa_fb_live")
+            and bool(getattr(self.ncaa_fb_live, "live_games", []))
+        )
+        return nfl_live or ncaa_live
+
+    def get_live_modes(self) -> list:
+        if not self.is_enabled:
+            return []
+
+        prioritized_modes = []
+        if self.nfl_enabled and self.nfl_live_priority and "nfl_live" in self.modes:
+            prioritized_modes.append("nfl_live")
+
+        if (
+            self.ncaa_fb_enabled
+            and self.ncaa_fb_live_priority
+            and "ncaa_fb_live" in self.modes
+        ):
+            prioritized_modes.append("ncaa_fb_live")
+
+        if prioritized_modes:
+            return prioritized_modes
+
+        # Fallback: no prioritized league enabled; expose any live modes available
+        return [mode for mode in self.modes if mode.endswith("_live")]
+
     def get_info(self) -> Dict[str, Any]:
         """Get plugin information."""
         try:
@@ -332,9 +415,25 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
                 "available_modes": self.modes,
                 "display_duration": self.display_duration,
                 "game_display_duration": self.game_display_duration,
-                "show_records": self.show_records,
-                "show_ranking": self.show_ranking,
-                "show_odds": self.show_odds,
+                "live_priority": {
+                    "nfl": self.nfl_enabled and self.nfl_live_priority,
+                    "ncaa_fb": self.ncaa_fb_enabled and self.ncaa_fb_live_priority,
+                },
+                "show_records": getattr(current_manager, "mode_config", {}).get(
+                    "show_records"
+                )
+                if current_manager
+                else None,
+                "show_ranking": getattr(current_manager, "mode_config", {}).get(
+                    "show_ranking"
+                )
+                if current_manager
+                else None,
+                "show_odds": getattr(current_manager, "mode_config", {}).get(
+                    "show_odds"
+                )
+                if current_manager
+                else None,
                 "managers_initialized": {
                     "nfl_live": hasattr(self, "nfl_live"),
                     "nfl_recent": hasattr(self, "nfl_recent"),

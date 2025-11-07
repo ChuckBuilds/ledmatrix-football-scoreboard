@@ -36,9 +36,6 @@ A production-ready plugin for LEDMatrix that displays live, recent, and upcoming
   "enabled": true,
   "display_duration": 30,
   "game_display_duration": 15,
-  "show_records": false,
-  "show_ranking": false,
-  "show_odds": true,
   "timezone": "UTC"
 }
 ```
@@ -55,6 +52,7 @@ A production-ready plugin for LEDMatrix that displays live, recent, and upcoming
       "show_recent": true,
       "show_upcoming": true
     },
+    "live_priority": true,
     "game_limits": {
       "recent_games_to_show": 5,
       "upcoming_games_to_show": 2
@@ -86,6 +84,7 @@ A production-ready plugin for LEDMatrix that displays live, recent, and upcoming
       "show_recent": true,
       "show_upcoming": true
     },
+    "live_priority": false,
     "game_limits": {
       "recent_games_to_show": 3,
       "upcoming_games_to_show": 2

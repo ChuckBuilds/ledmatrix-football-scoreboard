@@ -30,21 +30,6 @@
       "default": true,
       "description": "Enable the football scoreboard plugin"
     },
-    "show_records": {
-      "type": "boolean",
-      "default": false,
-      "description": "Show team records (wins-losses) globally"
-    },
-    "show_ranking": {
-      "type": "boolean",
-      "default": false,
-      "description": "Show team rankings globally"
-    },
-    "show_odds": {
-      "type": "boolean",
-      "default": false,
-      "description": "Show betting odds globally"
-    },
     "test_mode": {
       "type": "boolean",
       "default": false,
@@ -151,6 +136,16 @@
               "description": "Show betting odds"
             }
           }
+        },
+        "show_favorite_teams_only": {
+          "type": "boolean",
+          "default": true,
+          "description": "Only show games from favorite teams (legacy top-level flag; mirrors filtering.show_favorite_teams_only)"
+        },
+        "show_all_live": {
+          "type": "boolean",
+          "default": false,
+          "description": "Show all live games, not just favorites (legacy top-level flag; mirrors filtering.show_all_live)"
         },
         "filtering": {
           "type": "object",
@@ -272,6 +267,16 @@
               "description": "Show betting odds"
             }
           }
+        },
+        "show_favorite_teams_only": {
+          "type": "boolean",
+          "default": true,
+          "description": "Only show games from favorite teams (legacy top-level flag; mirrors filtering.show_favorite_teams_only)"
+        },
+        "show_all_live": {
+          "type": "boolean",
+          "default": false,
+          "description": "Show all live games, not just favorites (legacy top-level flag; mirrors filtering.show_all_live)"
         },
         "filtering": {
           "type": "object",

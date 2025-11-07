@@ -65,10 +65,15 @@ class SportsCore(ABC):
         self.upcoming_games_to_show: int = self.mode_config.get(
             "upcoming_games_to_show", 10
         )  # Show next 10 games
+        filtering_config = self.mode_config.get("filtering", {})
         self.show_favorite_teams_only: bool = self.mode_config.get(
-            "show_favorite_teams_only", False
+            "show_favorite_teams_only",
+            filtering_config.get("show_favorite_teams_only", False),
         )
-        self.show_all_live: bool = self.mode_config.get("show_all_live", False)
+        self.show_all_live: bool = self.mode_config.get(
+            "show_all_live",
+            filtering_config.get("show_all_live", False),
+        )
 
         self.session = requests.Session()
         retry_strategy = Retry(
