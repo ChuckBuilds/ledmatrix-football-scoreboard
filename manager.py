@@ -163,8 +163,16 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
             f"{league}_upcoming": display_modes_config.get("show_upcoming", True),
         }
 
-        show_favorites_only = filtering.get("show_favorite_teams_only", False)
-        show_all_live = filtering.get("show_all_live", False)
+        show_favorites_only = league_config.get(
+            "show_favorite_teams_only",
+            league_config.get("favorite_teams_only"),
+        )
+        if show_favorites_only is None:
+            show_favorites_only = filtering.get("show_favorite_teams_only", False)
+
+        show_all_live = league_config.get("show_all_live")
+        if show_all_live is None:
+            show_all_live = filtering.get("show_all_live", False)
 
         # Logo directory mapping - NCAA sports use ncaa_logos, not ncaa_fb_logos
         LOGO_DIRECTORIES = {
