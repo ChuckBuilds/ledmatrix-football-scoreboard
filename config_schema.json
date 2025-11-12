@@ -30,6 +30,80 @@
       "default": true,
       "description": "Enable the football scoreboard plugin"
     },
+    "dynamic_duration": {
+      "type": "object",
+      "title": "Dynamic Duration Settings",
+      "description": "Control whether the plugin shows all games before moving to the next mode. Can be configured globally or per-league/per-mode for granular control.",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": false,
+          "description": "Global enable for dynamic duration. When enabled, the plugin will show each game once before moving to the next mode, overriding the normal display_duration setting. Can be overridden by per-league or per-mode settings."
+        },
+        "max_duration_seconds": {
+          "type": "number",
+          "default": 300,
+          "minimum": 60,
+          "maximum": 600,
+          "description": "Global maximum time in seconds to wait for all games to be displayed. Can be overridden by per-league settings."
+        },
+        "modes": {
+          "type": "object",
+          "title": "Per-Mode Settings",
+          "description": "Configure dynamic duration for specific modes (live, recent, upcoming). These override global settings.",
+          "properties": {
+            "live": {
+              "type": "object",
+              "properties": {
+                "enabled": {
+                  "type": "boolean",
+                  "default": false,
+                  "description": "Enable dynamic duration for live games"
+                },
+                "max_duration_seconds": {
+                  "type": "number",
+                  "minimum": 60,
+                  "maximum": 600,
+                  "description": "Max duration for live games (overrides global)"
+                }
+              }
+            },
+            "recent": {
+              "type": "object",
+              "properties": {
+                "enabled": {
+                  "type": "boolean",
+                  "default": false,
+                  "description": "Enable dynamic duration for recent games"
+                },
+                "max_duration_seconds": {
+                  "type": "number",
+                  "minimum": 60,
+                  "maximum": 600,
+                  "description": "Max duration for recent games (overrides global)"
+                }
+              }
+            },
+            "upcoming": {
+              "type": "object",
+              "properties": {
+                "enabled": {
+                  "type": "boolean",
+                  "default": false,
+                  "description": "Enable dynamic duration for upcoming games"
+                },
+                "max_duration_seconds": {
+                  "type": "number",
+                  "minimum": 60,
+                  "maximum": 600,
+                  "description": "Max duration for upcoming games (overrides global)"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "test_mode": {
       "type": "boolean",
       "default": false,
@@ -163,6 +237,79 @@
               "description": "Show all live games, not just favorites"
             }
           }
+        },
+        "dynamic_duration": {
+          "type": "object",
+          "title": "NFL Dynamic Duration Settings",
+          "description": "Override global dynamic duration settings for NFL games. If not set, uses global settings.",
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "default": false,
+              "description": "Enable dynamic duration for NFL games (overrides global setting)"
+            },
+            "max_duration_seconds": {
+              "type": "number",
+              "minimum": 60,
+              "maximum": 600,
+              "description": "Max duration for NFL games (overrides global setting)"
+            },
+            "modes": {
+              "type": "object",
+              "title": "Per-Mode Settings for NFL",
+              "description": "Configure dynamic duration for specific NFL modes",
+              "properties": {
+                "live": {
+                  "type": "object",
+                  "properties": {
+                    "enabled": {
+                      "type": "boolean",
+                      "default": false,
+                      "description": "Enable dynamic duration for NFL live games"
+                    },
+                    "max_duration_seconds": {
+                      "type": "number",
+                      "minimum": 60,
+                      "maximum": 600,
+                      "description": "Max duration for NFL live games"
+                    }
+                  }
+                },
+                "recent": {
+                  "type": "object",
+                  "properties": {
+                    "enabled": {
+                      "type": "boolean",
+                      "default": false,
+                      "description": "Enable dynamic duration for NFL recent games"
+                    },
+                    "max_duration_seconds": {
+                      "type": "number",
+                      "minimum": 60,
+                      "maximum": 600,
+                      "description": "Max duration for NFL recent games"
+                    }
+                  }
+                },
+                "upcoming": {
+                  "type": "object",
+                  "properties": {
+                    "enabled": {
+                      "type": "boolean",
+                      "default": false,
+                      "description": "Enable dynamic duration for NFL upcoming games"
+                    },
+                    "max_duration_seconds": {
+                      "type": "number",
+                      "minimum": 60,
+                      "maximum": 600,
+                      "description": "Max duration for NFL upcoming games"
+                    }
+                  }
+                }
+              }
+            }
+          }
         }
       }
     },
@@ -292,6 +439,79 @@
               "type": "boolean",
               "default": false,
               "description": "Show all live games, not just favorites"
+            }
+          }
+        },
+        "dynamic_duration": {
+          "type": "object",
+          "title": "NCAA FB Dynamic Duration Settings",
+          "description": "Override global dynamic duration settings for NCAA FB games. If not set, uses global settings.",
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "default": false,
+              "description": "Enable dynamic duration for NCAA FB games (overrides global setting)"
+            },
+            "max_duration_seconds": {
+              "type": "number",
+              "minimum": 60,
+              "maximum": 600,
+              "description": "Max duration for NCAA FB games (overrides global setting)"
+            },
+            "modes": {
+              "type": "object",
+              "title": "Per-Mode Settings for NCAA FB",
+              "description": "Configure dynamic duration for specific NCAA FB modes",
+              "properties": {
+                "live": {
+                  "type": "object",
+                  "properties": {
+                    "enabled": {
+                      "type": "boolean",
+                      "default": false,
+                      "description": "Enable dynamic duration for NCAA FB live games"
+                    },
+                    "max_duration_seconds": {
+                      "type": "number",
+                      "minimum": 60,
+                      "maximum": 600,
+                      "description": "Max duration for NCAA FB live games"
+                    }
+                  }
+                },
+                "recent": {
+                  "type": "object",
+                  "properties": {
+                    "enabled": {
+                      "type": "boolean",
+                      "default": false,
+                      "description": "Enable dynamic duration for NCAA FB recent games"
+                    },
+                    "max_duration_seconds": {
+                      "type": "number",
+                      "minimum": 60,
+                      "maximum": 600,
+                      "description": "Max duration for NCAA FB recent games"
+                    }
+                  }
+                },
+                "upcoming": {
+                  "type": "object",
+                  "properties": {
+                    "enabled": {
+                      "type": "boolean",
+                      "default": false,
+                      "description": "Enable dynamic duration for NCAA FB upcoming games"
+                    },
+                    "max_duration_seconds": {
+                      "type": "number",
+                      "minimum": 60,
+                      "maximum": 600,
+                      "description": "Max duration for NCAA FB upcoming games"
+                    }
+                  }
+                }
+              }
             }
           }
         }

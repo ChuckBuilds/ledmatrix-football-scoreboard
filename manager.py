@@ -7,7 +7,7 @@ the proven, working manager classes from the LEDMatrix core project.
 
 import logging
 import time
-from typing import Dict, Any, Set
+from typing import Dict, Any, Set, Optional
 
 from PIL import ImageFont
 
@@ -112,6 +112,10 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
         self._dynamic_manager_progress: Dict[str, Set[str]] = {}
         self._dynamic_managers_completed: Set[str] = set()
         self._dynamic_cycle_complete = False
+        
+        # Track current display context for granular dynamic duration
+        self._current_display_league: Optional[str] = None  # 'nfl' or 'ncaa_fb'
+        self._current_display_mode_type: Optional[str] = None  # 'live', 'recent', 'upcoming'
 
     def _initialize_managers(self):
         """Initialize all manager instances."""
@@ -392,6 +396,13 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
                 # Try each manager until one returns True (has content)
                 for current_manager in managers_to_try:
                     if current_manager:
+                        # Track which league we're displaying for granular dynamic duration
+                        if current_manager == self.nfl_live or current_manager == self.nfl_recent or current_manager == self.nfl_upcoming:
+                            self._current_display_league = 'nfl'
+                        elif current_manager == self.ncaa_fb_live or current_manager == self.ncaa_fb_recent or current_manager == self.ncaa_fb_upcoming:
+                            self._current_display_league = 'ncaa_fb'
+                        self._current_display_mode_type = mode_type
+                        
                         result = current_manager.display(force_clear)
                         # If display returned True, we have content to show
                         if result is True:
@@ -460,6 +471,16 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
             # Get current manager and display
             current_manager = self._get_current_manager()
             if current_manager:
+                # Track which league/mode we're displaying for granular dynamic duration
+                current_mode = self.modes[self.current_mode_index] if self.modes else None
+                if current_mode:
+                    if current_mode.startswith("nfl_"):
+                        self._current_display_league = 'nfl'
+                        self._current_display_mode_type = current_mode.split("_", 1)[1]
+                    elif current_mode.startswith("ncaa_fb_"):
+                        self._current_display_league = 'ncaa_fb'
+                        self._current_display_mode_type = current_mode.split("_", 2)[2]
+                
                 result = current_manager.display(force_clear)
                 if result is not False:
                     try:
@@ -611,7 +632,98 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
 
     def _dynamic_feature_enabled(self) -> bool:
         """Return True when dynamic duration should be active."""
-        return self.is_enabled and super().supports_dynamic_duration()
+        if not self.is_enabled:
+            return False
+        return self.supports_dynamic_duration()
+    
+    def supports_dynamic_duration(self) -> bool:
+        """
+        Check if dynamic duration is enabled for the current display context.
+        Checks granular settings: per-league/per-mode > per-mode > per-league > global.
+        """
+        if not self.is_enabled:
+            return False
+        
+        # If no current display context, check global setting
+        if not self._current_display_league or not self._current_display_mode_type:
+            return super().supports_dynamic_duration()
+        
+        league = self._current_display_league
+        mode_type = self._current_display_mode_type
+        
+        # Check per-league/per-mode setting first (most specific)
+        league_config = self.config.get(league, {})
+        league_dynamic = league_config.get("dynamic_duration", {})
+        league_modes = league_dynamic.get("modes", {})
+        mode_config = league_modes.get(mode_type, {})
+        if "enabled" in mode_config:
+            return bool(mode_config.get("enabled", False))
+        
+        # Check per-league setting
+        if "enabled" in league_dynamic:
+            return bool(league_dynamic.get("enabled", False))
+        
+        # Check global per-mode setting
+        global_dynamic = self.config.get("dynamic_duration", {})
+        global_modes = global_dynamic.get("modes", {})
+        global_mode_config = global_modes.get(mode_type, {})
+        if "enabled" in global_mode_config:
+            return bool(global_mode_config.get("enabled", False))
+        
+        # Fall back to global setting
+        return super().supports_dynamic_duration()
+    
+    def get_dynamic_duration_cap(self) -> Optional[float]:
+        """
+        Get dynamic duration cap for the current display context.
+        Checks granular settings: per-league/per-mode > per-mode > per-league > global.
+        """
+        if not self.is_enabled:
+            return None
+        
+        # If no current display context, check global setting
+        if not self._current_display_league or not self._current_display_mode_type:
+            return super().get_dynamic_duration_cap()
+        
+        league = self._current_display_league
+        mode_type = self._current_display_mode_type
+        
+        # Check per-league/per-mode setting first (most specific)
+        league_config = self.config.get(league, {})
+        league_dynamic = league_config.get("dynamic_duration", {})
+        league_modes = league_dynamic.get("modes", {})
+        mode_config = league_modes.get(mode_type, {})
+        if "max_duration_seconds" in mode_config:
+            try:
+                cap = float(mode_config.get("max_duration_seconds"))
+                if cap > 0:
+                    return cap
+            except (TypeError, ValueError):
+                pass
+        
+        # Check per-league setting
+        if "max_duration_seconds" in league_dynamic:
+            try:
+                cap = float(league_dynamic.get("max_duration_seconds"))
+                if cap > 0:
+                    return cap
+            except (TypeError, ValueError):
+                pass
+        
+        # Check global per-mode setting
+        global_dynamic = self.config.get("dynamic_duration", {})
+        global_modes = global_dynamic.get("modes", {})
+        global_mode_config = global_modes.get(mode_type, {})
+        if "max_duration_seconds" in global_mode_config:
+            try:
+                cap = float(global_mode_config.get("max_duration_seconds"))
+                if cap > 0:
+                    return cap
+            except (TypeError, ValueError):
+                pass
+        
+        # Fall back to global setting
+        return super().get_dynamic_duration_cap()
 
     def _get_manager_for_mode(self, mode_name: str):
         """Resolve manager instance for a given display mode."""
