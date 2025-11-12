@@ -7,7 +7,7 @@ the proven, working manager classes from the LEDMatrix core project.
 
 import logging
 import time
-from typing import Dict, Any
+from typing import Dict, Any, Set
 
 from PIL import ImageFont
 
@@ -105,6 +105,13 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
         self.logger.info(
             f"NFL enabled: {self.nfl_enabled}, NCAA FB enabled: {self.ncaa_fb_enabled}"
         )
+
+        # Dynamic duration tracking
+        self._dynamic_cycle_seen_modes: Set[str] = set()
+        self._dynamic_mode_to_manager_key: Dict[str, str] = {}
+        self._dynamic_manager_progress: Dict[str, Set[str]] = {}
+        self._dynamic_managers_completed: Set[str] = set()
+        self._dynamic_cycle_complete = False
 
     def _initialize_managers(self):
         """Initialize all manager instances."""
@@ -327,12 +334,97 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
         except Exception as e:
             self.logger.error(f"Error updating managers: {e}")
 
-    def display(self, force_clear: bool = False) -> bool:
-        """Display football games with mode cycling."""
+    def display(self, display_mode: str = None, force_clear: bool = False) -> bool:
+        """Display football games with mode cycling.
+        
+        Args:
+            display_mode: Optional mode name (e.g., 'football_live', 'football_recent', 'football_upcoming').
+                         If provided, displays that specific mode. If None, uses internal mode cycling.
+            force_clear: If True, clear display before rendering
+        """
         if not self.is_enabled:
             return False
 
         try:
+            # If display_mode is provided, use it to determine which manager to call
+            if display_mode:
+                self.logger.debug(f"Display called with mode: {display_mode}")
+                # Map external mode names to internal managers
+                # External modes: football_live, football_recent, football_upcoming
+                # Internal modes: nfl_live, nfl_recent, nfl_upcoming, ncaa_fb_live, etc.
+                
+                # Extract the mode type (live, recent, upcoming)
+                mode_type = None
+                if display_mode.endswith('_live'):
+                    mode_type = 'live'
+                elif display_mode.endswith('_recent'):
+                    mode_type = 'recent'
+                elif display_mode.endswith('_upcoming'):
+                    mode_type = 'upcoming'
+                
+                if not mode_type:
+                    self.logger.warning(f"Unknown display_mode: {display_mode}")
+                    return False
+                
+                self.logger.debug(f"Mode type: {mode_type}, NFL enabled: {self.nfl_enabled}, NCAA FB enabled: {self.ncaa_fb_enabled}")
+                
+                # Determine which manager to use based on enabled leagues
+                # Try NFL first if enabled, then NCAA FB if enabled
+                # Check both leagues and use the one with content, or NFL if both enabled
+                managers_to_try = []
+                
+                if self.nfl_enabled:
+                    if mode_type == 'live' and hasattr(self, 'nfl_live'):
+                        managers_to_try.append(self.nfl_live)
+                    elif mode_type == 'recent' and hasattr(self, 'nfl_recent'):
+                        managers_to_try.append(self.nfl_recent)
+                    elif mode_type == 'upcoming' and hasattr(self, 'nfl_upcoming'):
+                        managers_to_try.append(self.nfl_upcoming)
+                
+                if self.ncaa_fb_enabled:
+                    if mode_type == 'live' and hasattr(self, 'ncaa_fb_live'):
+                        managers_to_try.append(self.ncaa_fb_live)
+                    elif mode_type == 'recent' and hasattr(self, 'ncaa_fb_recent'):
+                        managers_to_try.append(self.ncaa_fb_recent)
+                    elif mode_type == 'upcoming' and hasattr(self, 'ncaa_fb_upcoming'):
+                        managers_to_try.append(self.ncaa_fb_upcoming)
+                
+                # Try each manager until one returns True (has content)
+                for current_manager in managers_to_try:
+                    if current_manager:
+                        result = current_manager.display(force_clear)
+                        # If display returned True, we have content to show
+                        if result is True:
+                            try:
+                                self._record_dynamic_progress(current_manager)
+                            except Exception as progress_err:  # pylint: disable=broad-except
+                                self.logger.debug(
+                                    "Dynamic progress tracking failed: %s", progress_err
+                                )
+                            self._evaluate_dynamic_cycle_completion()
+                            return result
+                        # If result is False, try next manager
+                        elif result is False:
+                            continue
+                        # If result is None or other, assume success
+                        else:
+                            try:
+                                self._record_dynamic_progress(current_manager)
+                            except Exception as progress_err:  # pylint: disable=broad-except
+                                self.logger.debug(
+                                    "Dynamic progress tracking failed: %s", progress_err
+                                )
+                            self._evaluate_dynamic_cycle_completion()
+                            return True
+                
+                # No manager had content
+                if not managers_to_try:
+                    self.logger.warning(f"No managers available for mode: {display_mode} (NFL enabled: {self.nfl_enabled}, NCAA FB enabled: {self.ncaa_fb_enabled})")
+                else:
+                    self.logger.debug(f"No content available for mode: {display_mode} after trying {len(managers_to_try)} manager(s)")
+                return False
+            
+            # Fall back to internal mode cycling if no display_mode provided
             current_time = time.time()
 
             # Check if we should stay on live mode
@@ -368,7 +460,16 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
             # Get current manager and display
             current_manager = self._get_current_manager()
             if current_manager:
-                return current_manager.display(force_clear)
+                result = current_manager.display(force_clear)
+                if result is not False:
+                    try:
+                        self._record_dynamic_progress(current_manager)
+                    except Exception as progress_err:  # pylint: disable=broad-except
+                        self.logger.debug(
+                            "Dynamic progress tracking failed: %s", progress_err
+                        )
+                self._evaluate_dynamic_cycle_completion()
+                return result
             else:
                 self.logger.warning("No manager available for current mode")
                 return False
@@ -488,6 +589,138 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
                 "name": "Football Scoreboard",
                 "error": str(e),
             }
+
+    # ------------------------------------------------------------------
+    # Dynamic duration hooks
+    # ------------------------------------------------------------------
+    def reset_cycle_state(self) -> None:
+        """Reset dynamic cycle tracking."""
+        super().reset_cycle_state()
+        self._dynamic_cycle_seen_modes.clear()
+        self._dynamic_mode_to_manager_key.clear()
+        self._dynamic_manager_progress.clear()
+        self._dynamic_managers_completed.clear()
+        self._dynamic_cycle_complete = False
+
+    def is_cycle_complete(self) -> bool:
+        """Report whether the plugin has shown a full cycle of content."""
+        if not self._dynamic_feature_enabled():
+            return True
+        self._evaluate_dynamic_cycle_completion()
+        return self._dynamic_cycle_complete
+
+    def _dynamic_feature_enabled(self) -> bool:
+        """Return True when dynamic duration should be active."""
+        return self.is_enabled and super().supports_dynamic_duration()
+
+    def _get_manager_for_mode(self, mode_name: str):
+        """Resolve manager instance for a given display mode."""
+        if mode_name.startswith("nfl_"):
+            if not self.nfl_enabled:
+                return None
+            suffix = mode_name.split("_", 1)[1]
+            if suffix == "live":
+                return getattr(self, "nfl_live", None)
+            if suffix == "recent":
+                return getattr(self, "nfl_recent", None)
+            if suffix == "upcoming":
+                return getattr(self, "nfl_upcoming", None)
+        elif mode_name.startswith("ncaa_fb_"):
+            if not self.ncaa_fb_enabled:
+                return None
+            suffix = mode_name[len("ncaa_fb_") :]
+            if suffix == "live":
+                return getattr(self, "ncaa_fb_live", None)
+            if suffix == "recent":
+                return getattr(self, "ncaa_fb_recent", None)
+            if suffix == "upcoming":
+                return getattr(self, "ncaa_fb_upcoming", None)
+        return None
+
+    def _record_dynamic_progress(self, current_manager) -> None:
+        """Track progress through managers/games for dynamic duration."""
+        if not self._dynamic_feature_enabled() or not self.modes:
+            self._dynamic_cycle_complete = True
+            return
+
+        current_mode = self.modes[self.current_mode_index]
+        self._dynamic_cycle_seen_modes.add(current_mode)
+
+        manager_key = self._build_manager_key(current_mode, current_manager)
+        self._dynamic_mode_to_manager_key[current_mode] = manager_key
+
+        total_games = self._get_total_games_for_manager(current_manager)
+        if total_games <= 1:
+            # Single (or no) game - treat as complete once visited
+            self._dynamic_managers_completed.add(manager_key)
+            return
+
+        current_index = getattr(current_manager, "current_game_index", None)
+        if current_index is None:
+            # Fall back to zero if the manager does not expose an index
+            current_index = 0
+        identifier = f"index-{current_index}"
+
+        progress_set = self._dynamic_manager_progress.setdefault(manager_key, set())
+        progress_set.add(identifier)
+
+        # Drop identifiers that no longer exist if game list shrinks
+        valid_identifiers = {f"index-{idx}" for idx in range(total_games)}
+        progress_set.intersection_update(valid_identifiers)
+
+        if len(progress_set) >= total_games:
+            self._dynamic_managers_completed.add(manager_key)
+
+    def _evaluate_dynamic_cycle_completion(self) -> None:
+        """Determine whether all enabled modes have completed their cycles."""
+        if not self._dynamic_feature_enabled():
+            self._dynamic_cycle_complete = True
+            return
+
+        if not self.modes:
+            self._dynamic_cycle_complete = True
+            return
+
+        required_modes = [mode for mode in self.modes if mode]
+        if not required_modes:
+            self._dynamic_cycle_complete = True
+            return
+
+        for mode_name in required_modes:
+            if mode_name not in self._dynamic_cycle_seen_modes:
+                self._dynamic_cycle_complete = False
+                return
+
+            manager_key = self._dynamic_mode_to_manager_key.get(mode_name)
+            if not manager_key:
+                self._dynamic_cycle_complete = False
+                return
+
+            if manager_key not in self._dynamic_managers_completed:
+                manager = self._get_manager_for_mode(mode_name)
+                total_games = self._get_total_games_for_manager(manager)
+                if total_games <= 1:
+                    self._dynamic_managers_completed.add(manager_key)
+                else:
+                    self._dynamic_cycle_complete = False
+                    return
+
+        self._dynamic_cycle_complete = True
+
+    @staticmethod
+    def _build_manager_key(mode_name: str, manager) -> str:
+        manager_name = manager.__class__.__name__ if manager else "None"
+        return f"{mode_name}:{manager_name}"
+
+    @staticmethod
+    def _get_total_games_for_manager(manager) -> int:
+        if manager is None:
+            return 0
+        for attr in ("live_games", "games_list", "recent_games", "upcoming_games"):
+            value = getattr(manager, attr, None)
+            if isinstance(value, list):
+                return len(value)
+        return 0
 
     def cleanup(self) -> None:
         """Clean up resources."""
