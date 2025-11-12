@@ -35,8 +35,15 @@ class SportsCore(ABC):
         # Initialize odds manager
         self.odds_manager = BaseOddsManager(self.cache_manager, self.config_manager)
         self.display_manager = display_manager
-        self.display_width = getattr(display_manager, "display_width", 128)
-        self.display_height = getattr(display_manager, "display_height", 32)
+        # Get display dimensions from matrix (same as base SportsCore class)
+        # This ensures proper scaling for different display sizes
+        if hasattr(display_manager, 'matrix') and hasattr(display_manager.matrix, 'width'):
+            self.display_width = display_manager.matrix.width
+            self.display_height = display_manager.matrix.height
+        else:
+            # Fallback to attributes if matrix not available
+            self.display_width = getattr(display_manager, "display_width", 128)
+            self.display_height = getattr(display_manager, "display_height", 32)
 
         self.sport_key = sport_key
         self.sport = None
