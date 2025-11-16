@@ -211,16 +211,6 @@
             }
           }
         },
-        "show_favorite_teams_only": {
-          "type": "boolean",
-          "default": true,
-          "description": "Only show games from favorite teams (legacy top-level flag; mirrors filtering.show_favorite_teams_only)"
-        },
-        "show_all_live": {
-          "type": "boolean",
-          "default": false,
-          "description": "Show all live games, not just favorites (legacy top-level flag; mirrors filtering.show_all_live)"
-        },
         "filtering": {
           "type": "object",
           "title": "Filtering Options",
@@ -414,16 +404,6 @@
               "description": "Show betting odds"
             }
           }
-        },
-        "show_favorite_teams_only": {
-          "type": "boolean",
-          "default": true,
-          "description": "Only show games from favorite teams (legacy top-level flag; mirrors filtering.show_favorite_teams_only)"
-        },
-        "show_all_live": {
-          "type": "boolean",
-          "default": false,
-          "description": "Show all live games, not just favorites (legacy top-level flag; mirrors filtering.show_all_live)"
         },
         "filtering": {
           "type": "object",
