@@ -161,6 +161,9 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
         Managers expect: nfl_scoreboard: {...}, ncaa_fb_scoreboard: {...}
         """
         league_config = self.config.get(league, {})
+        
+        # Debug: Log the entire league_config to see what we're actually getting
+        self.logger.debug(f"DEBUG: league_config for {league} = {league_config}")
 
         # Extract nested configurations
         game_limits = league_config.get("game_limits", {})
