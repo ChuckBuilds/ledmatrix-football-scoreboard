@@ -179,12 +179,13 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
 
         # Explicitly check if keys exist, not just if they're truthy
         # This handles False values correctly (False is a valid saved value)
-        if "show_favorite_teams_only" in league_config:
+        # Priority: filtering dict first (more reliable), then top-level, then default
+        if "show_favorite_teams_only" in filtering:
+            show_favorites_only = filtering["show_favorite_teams_only"]
+        elif "show_favorite_teams_only" in league_config:
             show_favorites_only = league_config["show_favorite_teams_only"]
         elif "favorite_teams_only" in league_config:
             show_favorites_only = league_config["favorite_teams_only"]
-        elif "show_favorite_teams_only" in filtering:
-            show_favorites_only = filtering["show_favorite_teams_only"]
         else:
             # Default to False if not specified (schema default is True, but we want False as default)
             show_favorites_only = False
@@ -198,10 +199,11 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
         )
 
         # Explicitly check if key exists for show_all_live
-        if "show_all_live" in league_config:
-            show_all_live = league_config["show_all_live"]
-        elif "show_all_live" in filtering:
+        # Priority: filtering dict first (more reliable), then top-level, then default
+        if "show_all_live" in filtering:
             show_all_live = filtering["show_all_live"]
+        elif "show_all_live" in league_config:
+            show_all_live = league_config["show_all_live"]
         else:
             # Default to False if not specified
             show_all_live = False
