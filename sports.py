@@ -701,6 +701,7 @@ class SportsCore(ABC):
             formatted_date = now.strftime("%Y%m%d")
             # Fetch todays games only
             url = f"https://site.api.espn.com/apis/site/v2/sports/{self.sport}/{self.league}/scoreboard"
+            self.logger.debug(f"Fetching today's games for {self.sport}/{self.league} on date {formatted_date}")
             response = self.session.get(
                 url,
                 params={"dates": formatted_date, "limit": 1000},
@@ -714,6 +715,19 @@ class SportsCore(ABC):
             self.logger.info(
                 f"Fetched {len(events)} todays games for {self.sport} - {self.league}"
             )
+            
+            # Log status of each game for debugging
+            if events:
+                for event in events:
+                    status = event.get("competitions", [{}])[0].get("status", {})
+                    status_type = status.get("type", {})
+                    state = status_type.get("state", "unknown")
+                    name = status_type.get("name", "unknown")
+                    self.logger.debug(
+                        f"Event {event.get('id', 'unknown')}: state={state}, name={name}, "
+                        f"shortDetail={status_type.get('shortDetail', 'N/A')}"
+                    )
+            
             return {"events": events}
         except requests.exceptions.RequestException as e:
             self.logger.error(
@@ -1738,26 +1752,64 @@ class SportsLive(SportsCore):
                 # Fetch live game data
                 data = self._fetch_data()
                 new_live_games = []
-                if data and "events" in data:
+                if not data:
+                    self.logger.debug(f"No data returned from _fetch_data() for {self.sport_key}")
+                elif "events" not in data:
+                    self.logger.debug(f"Data returned but no 'events' key for {self.sport_key}: {list(data.keys()) if isinstance(data, dict) else type(data)}")
+                elif data and "events" in data:
+                    total_events = len(data["events"])
+                    self.logger.debug(f"Fetched {total_events} total events from API for {self.sport_key}")
+                    
+                    live_or_halftime_count = 0
+                    filtered_out_count = 0
+                    
                     for game in data["events"]:
                         details = self._extract_game_details(game)
-                        if details and (details["is_live"] or details["is_halftime"]):
-                            # If show_favorite_teams_only is true, only add if it's a favorite.
-                            # Otherwise, add all games.
-                            if (
-                                self.show_all_live
-                                or not self.show_favorite_teams_only
-                                or (
-                                    self.show_favorite_teams_only
-                                    and (
-                                        details["home_abbr"] in self.favorite_teams
-                                        or details["away_abbr"] in self.favorite_teams
+                        if details:
+                            # Log game status for debugging
+                            status_state = game.get("competitions", [{}])[0].get("status", {}).get("type", {}).get("state", "unknown")
+                            self.logger.debug(
+                                f"Game {details.get('away_abbr', '?')}@{details.get('home_abbr', '?')}: "
+                                f"state={status_state}, is_live={details.get('is_live')}, "
+                                f"is_halftime={details.get('is_halftime')}, is_final={details.get('is_final')}"
+                            )
+                            
+                            if details["is_live"] or details["is_halftime"]:
+                                live_or_halftime_count += 1
+                                # If show_favorite_teams_only is true, only add if it's a favorite.
+                                # Otherwise, add all games.
+                                should_include = (
+                                    self.show_all_live
+                                    or not self.show_favorite_teams_only
+                                    or (
+                                        self.show_favorite_teams_only
+                                        and (
+                                            details["home_abbr"] in self.favorite_teams
+                                            or details["away_abbr"] in self.favorite_teams
+                                        )
                                     )
                                 )
-                            ):
-                                if self.show_odds:
-                                    self._fetch_odds(details)
-                                new_live_games.append(details)
+                                
+                                if not should_include:
+                                    filtered_out_count += 1
+                                    self.logger.debug(
+                                        f"Filtered out live game {details.get('away_abbr')}@{details.get('home_abbr')}: "
+                                        f"show_all_live={self.show_all_live}, "
+                                        f"show_favorite_teams_only={self.show_favorite_teams_only}, "
+                                        f"favorite_teams={self.favorite_teams}"
+                                    )
+                                
+                                if should_include:
+                                    if self.show_odds:
+                                        self._fetch_odds(details)
+                                    new_live_games.append(details)
+                    
+                    self.logger.debug(
+                        f"Live game filtering: {total_events} total events, "
+                        f"{live_or_halftime_count} live/halftime, "
+                        f"{filtered_out_count} filtered out, "
+                        f"{len(new_live_games)} included"
+                    )
                     # Log changes or periodically
                     current_time_for_log = (
                         time.time()
