@@ -180,10 +180,26 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
         )
         if show_favorites_only is None:
             show_favorites_only = filtering.get("show_favorite_teams_only", False)
+        
+        # Debug logging to diagnose config reading issues
+        self.logger.debug(
+            f"Config reading for {league}: "
+            f"league_config.show_favorite_teams_only={league_config.get('show_favorite_teams_only')}, "
+            f"filtering.show_favorite_teams_only={filtering.get('show_favorite_teams_only')}, "
+            f"final show_favorites_only={show_favorites_only}"
+        )
 
         show_all_live = league_config.get("show_all_live")
         if show_all_live is None:
             show_all_live = filtering.get("show_all_live", False)
+        
+        # Debug logging for show_all_live
+        self.logger.debug(
+            f"Config reading for {league}: "
+            f"league_config.show_all_live={league_config.get('show_all_live')}, "
+            f"filtering.show_all_live={filtering.get('show_all_live')}, "
+            f"final show_all_live={show_all_live}"
+        )
 
         # Logo directory mapping - NCAA sports use ncaa_logos, not ncaa_fb_logos
         LOGO_DIRECTORIES = {
