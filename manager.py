@@ -174,30 +174,40 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
             f"{league}_upcoming": display_modes_config.get("show_upcoming", True),
         }
 
-        show_favorites_only = league_config.get(
-            "show_favorite_teams_only",
-            league_config.get("favorite_teams_only"),
-        )
-        if show_favorites_only is None:
-            show_favorites_only = filtering.get("show_favorite_teams_only", False)
+        # Explicitly check if keys exist, not just if they're truthy
+        # This handles False values correctly (False is a valid saved value)
+        if "show_favorite_teams_only" in league_config:
+            show_favorites_only = league_config["show_favorite_teams_only"]
+        elif "favorite_teams_only" in league_config:
+            show_favorites_only = league_config["favorite_teams_only"]
+        elif "show_favorite_teams_only" in filtering:
+            show_favorites_only = filtering["show_favorite_teams_only"]
+        else:
+            # Default to False if not specified (schema default is True, but we want False as default)
+            show_favorites_only = False
         
         # Debug logging to diagnose config reading issues
         self.logger.debug(
             f"Config reading for {league}: "
-            f"league_config.show_favorite_teams_only={league_config.get('show_favorite_teams_only')}, "
-            f"filtering.show_favorite_teams_only={filtering.get('show_favorite_teams_only')}, "
+            f"league_config.show_favorite_teams_only={league_config.get('show_favorite_teams_only', 'NOT_SET')}, "
+            f"filtering.show_favorite_teams_only={filtering.get('show_favorite_teams_only', 'NOT_SET')}, "
             f"final show_favorites_only={show_favorites_only}"
         )
 
-        show_all_live = league_config.get("show_all_live")
-        if show_all_live is None:
-            show_all_live = filtering.get("show_all_live", False)
+        # Explicitly check if key exists for show_all_live
+        if "show_all_live" in league_config:
+            show_all_live = league_config["show_all_live"]
+        elif "show_all_live" in filtering:
+            show_all_live = filtering["show_all_live"]
+        else:
+            # Default to False if not specified
+            show_all_live = False
         
         # Debug logging for show_all_live
         self.logger.debug(
             f"Config reading for {league}: "
-            f"league_config.show_all_live={league_config.get('show_all_live')}, "
-            f"filtering.show_all_live={filtering.get('show_all_live')}, "
+            f"league_config.show_all_live={league_config.get('show_all_live', 'NOT_SET')}, "
+            f"filtering.show_all_live={filtering.get('show_all_live', 'NOT_SET')}, "
             f"final show_all_live={show_all_live}"
         )
 
