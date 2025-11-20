@@ -464,6 +464,14 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
                     self.logger.warning(f"No managers available for mode: {display_mode} (NFL enabled: {self.nfl_enabled}, NCAA FB enabled: {self.ncaa_fb_enabled})")
                 else:
                     self.logger.debug(f"No content available for mode: {display_mode} after trying {len(managers_to_try)} manager(s)")
+                
+                # Clear display when no content available (safety measure)
+                if force_clear:
+                    try:
+                        self.display_manager.clear()
+                        self.display_manager.update_display()
+                    except Exception as clear_err:
+                        self.logger.debug(f"Error clearing display when no content: {clear_err}")
                 return False
             
             # Fall back to internal mode cycling if no display_mode provided
@@ -520,6 +528,15 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
                         self.logger.debug(
                             "Dynamic progress tracking failed: %s", progress_err
                         )
+                else:
+                    # Manager returned False (no content) - ensure display is cleared
+                    # This is a safety measure in case the manager didn't clear it
+                    if force_clear:
+                        try:
+                            self.display_manager.clear()
+                            self.display_manager.update_display()
+                        except Exception as clear_err:
+                            self.logger.debug(f"Error clearing display when manager returned False: {clear_err}")
                 self._evaluate_dynamic_cycle_completion()
                 return result
             else:
