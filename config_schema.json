@@ -1,9 +1,14 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "title": "Football Scoreboard Plugin Configuration (Nested Example)",
-  "description": "Configuration schema for the Football Scoreboard plugin using nested structure for better organization",
+  "title": "Football Scoreboard Plugin Configuration",
+  "description": "Configuration schema for the Football Scoreboard plugin - displays live, recent, and upcoming NFL and NCAA Football games",
   "type": "object",
   "properties": {
+    "enabled": {
+      "type": "boolean",
+      "default": true,
+      "description": "Enable or disable the football scoreboard plugin"
+    },
     "display_duration": {
       "type": "number",
       "default": 30,
@@ -11,24 +16,54 @@
       "maximum": 300,
       "description": "Duration in seconds for the display controller to show this plugin mode before rotating to next plugin"
     },
+    "live_priority": {
+      "type": "boolean",
+      "default": false,
+      "description": "Enable live priority takeover when plugin has live content"
+    },
+    "high_performance_transitions": {
+      "type": "boolean",
+      "default": false,
+      "description": "Use high-performance transitions (120 FPS) instead of standard (30 FPS)"
+    },
+    "update_interval": {
+      "type": "integer",
+      "default": 3600,
+      "minimum": 30,
+      "maximum": 86400,
+      "description": "How often to fetch new data in seconds"
+    },
+    "transition": {
+      "type": "object",
+      "description": "Transition configuration for this plugin",
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": ["redraw", "fade", "slide", "wipe", "dissolve", "pixelate"],
+          "default": "redraw",
+          "description": "Type of transition to use"
+        },
+        "speed": {
+          "type": "integer",
+          "default": 2,
+          "minimum": 1,
+          "maximum": 10,
+          "description": "Transition speed (1=slow, 10=fast)"
+        },
+        "enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable or disable transitions"
+        }
+      },
+      "additionalProperties": false
+    },
     "game_display_duration": {
       "type": "number",
       "default": 15,
       "minimum": 3,
       "maximum": 60,
       "description": "Duration in seconds to show each individual game before rotating to the next game within the same mode"
-    },
-    "update_interval_seconds": {
-      "type": "integer",
-      "default": 3600,
-      "minimum": 30,
-      "maximum": 86400,
-      "description": "How often to fetch new data (seconds)"
-    },
-    "enabled": {
-      "type": "boolean",
-      "default": true,
-      "description": "Enable the football scoreboard plugin"
     },
     "dynamic_duration": {
       "type": "object",
@@ -499,6 +534,6 @@
     }
   },
   "additionalProperties": false,
-  "required": []
+  "required": ["enabled"]
 }
 
