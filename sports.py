@@ -37,13 +37,13 @@ class SportsCore(ABC):
         self.display_manager = display_manager
         # Get display dimensions from matrix (same as base SportsCore class)
         # This ensures proper scaling for different display sizes
-        if hasattr(display_manager, 'matrix') and hasattr(display_manager.matrix, 'width'):
+        if hasattr(display_manager, 'matrix') and display_manager.matrix is not None:
             self.display_width = display_manager.matrix.width
             self.display_height = display_manager.matrix.height
         else:
-            # Fallback to attributes if matrix not available
-            self.display_width = getattr(display_manager, "display_width", 128)
-            self.display_height = getattr(display_manager, "display_height", 32)
+            # Fallback to width/height properties (which also check matrix)
+            self.display_width = getattr(display_manager, "width", 128)
+            self.display_height = getattr(display_manager, "height", 32)
 
         self.sport_key = sport_key
         self.sport = None
@@ -992,11 +992,19 @@ class SportsUpcoming(SportsCore):
     def _draw_scorebug_layout(self, game: Dict, force_clear: bool = False) -> None:
         """Draw the layout for an upcoming NCAA FB game."""  # Updated docstring
         try:
+            # Clear the display first to ensure full coverage (like weather plugin does)
+            if force_clear:
+                self.display_manager.clear()
+            
+            # Use display_manager.matrix dimensions directly to ensure full display coverage
+            display_width = self.display_manager.matrix.width if hasattr(self.display_manager, 'matrix') and self.display_manager.matrix else self.display_width
+            display_height = self.display_manager.matrix.height if hasattr(self.display_manager, 'matrix') and self.display_manager.matrix else self.display_height
+            
             main_img = Image.new(
-                "RGBA", (self.display_width, self.display_height), (0, 0, 0, 255)
+                "RGBA", (display_width, display_height), (0, 0, 0, 255)
             )
             overlay = Image.new(
-                "RGBA", (self.display_width, self.display_height), (0, 0, 0, 0)
+                "RGBA", (display_width, display_height), (0, 0, 0, 0)
             )
             draw_overlay = ImageDraw.Draw(overlay)
 
@@ -1021,14 +1029,14 @@ class SportsUpcoming(SportsCore):
                 self._draw_text_with_outline(
                     draw_final, "Logo Error", (5, 5), self.fonts["status"]
                 )
-                self.display_manager.image.paste(main_img.convert("RGB"), (0, 0))
+                self.display_manager.image = main_img.convert("RGB")
                 self.display_manager.update_display()
                 return
 
-            center_y = self.display_height // 2
+            center_y = display_height // 2
 
             # MLB-style logo positions
-            home_x = self.display_width - home_logo.width + 2
+            home_x = display_width - home_logo.width + 2
             home_y = center_y - (home_logo.height // 2)
             main_img.paste(home_logo, (home_x, home_y), home_logo)
 
@@ -1044,11 +1052,11 @@ class SportsUpcoming(SportsCore):
 
             # "Next Game" at the top (use smaller status font)
             status_font = self.fonts["status"]
-            if self.display_width > 128:
+            if display_width > 128:
                 status_font = self.fonts["time"]
             status_text = "Next Game"
             status_width = draw_overlay.textlength(status_text, font=status_font)
-            status_x = (self.display_width - status_width) // 2
+            status_x = (display_width - status_width) // 2
             status_y = 1  # Changed from 2
             self._draw_text_with_outline(
                 draw_overlay, status_text, (status_x, status_y), status_font
@@ -1056,7 +1064,7 @@ class SportsUpcoming(SportsCore):
 
             # Date text (centered, below "Next Game")
             date_width = draw_overlay.textlength(game_date, font=self.fonts["time"])
-            date_x = (self.display_width - date_width) // 2
+            date_x = (display_width - date_width) // 2
             # Adjust Y position to stack date and time nicely
             date_y = center_y - 7  # Raise date slightly
             self._draw_text_with_outline(
@@ -1065,7 +1073,7 @@ class SportsUpcoming(SportsCore):
 
             # Time text (centered, below Date)
             time_width = draw_overlay.textlength(game_time, font=self.fonts["time"])
-            time_x = (self.display_width - time_width) // 2
+            time_x = (display_width - time_width) // 2
             time_y = date_y + 9  # Place time below date
             self._draw_text_with_outline(
                 draw_overlay, game_time, (time_x, time_y), self.fonts["time"]
@@ -1074,7 +1082,7 @@ class SportsUpcoming(SportsCore):
             # Draw odds if available
             if "odds" in game and game["odds"]:
                 self._draw_dynamic_odds(
-                    draw_overlay, game["odds"], self.display_width, self.display_height
+                    draw_overlay, game["odds"], display_width, display_height
                 )
 
             # Draw records or rankings if enabled
@@ -1440,11 +1448,19 @@ class SportsRecent(SportsCore):
     def _draw_scorebug_layout(self, game: Dict, force_clear: bool = False) -> None:
         """Draw the layout for a recently completed NCAA FB game."""  # Updated docstring
         try:
+            # Clear the display first to ensure full coverage (like weather plugin does)
+            if force_clear:
+                self.display_manager.clear()
+            
+            # Use display_manager.matrix dimensions directly to ensure full display coverage
+            display_width = self.display_manager.matrix.width if hasattr(self.display_manager, 'matrix') and self.display_manager.matrix else self.display_width
+            display_height = self.display_manager.matrix.height if hasattr(self.display_manager, 'matrix') and self.display_manager.matrix else self.display_height
+            
             main_img = Image.new(
-                "RGBA", (self.display_width, self.display_height), (0, 0, 0, 255)
+                "RGBA", (display_width, display_height), (0, 0, 0, 255)
             )
             overlay = Image.new(
-                "RGBA", (self.display_width, self.display_height), (0, 0, 0, 0)
+                "RGBA", (display_width, display_height), (0, 0, 0, 0)
             )
             draw_overlay = ImageDraw.Draw(overlay)
 
@@ -1470,14 +1486,14 @@ class SportsRecent(SportsCore):
                 self._draw_text_with_outline(
                     draw_final, "Logo Error", (5, 5), self.fonts["status"]
                 )
-                self.display_manager.image.paste(main_img.convert("RGB"), (0, 0))
+                self.display_manager.image = main_img.convert("RGB")
                 self.display_manager.update_display()
                 return
 
-            center_y = self.display_height // 2
+            center_y = display_height // 2
 
             # MLB-style logo positioning (closer to edges)
-            home_x = self.display_width - home_logo.width + 2
+            home_x = display_width - home_logo.width + 2
             home_y = center_y - (home_logo.height // 2)
             main_img.paste(home_logo, (home_x, home_y), home_logo)
 
@@ -1493,8 +1509,8 @@ class SportsRecent(SportsCore):
             away_score = str(game.get("away_score", "0"))
             score_text = f"{away_score}-{home_score}"
             score_width = draw_overlay.textlength(score_text, font=self.fonts["score"])
-            score_x = (self.display_width - score_width) // 2
-            score_y = self.display_height - 14
+            score_x = (display_width - score_width) // 2
+            score_y = display_height - 14
             self._draw_text_with_outline(
                 draw_overlay, score_text, (score_x, score_y), self.fonts["score"]
             )
@@ -1504,7 +1520,7 @@ class SportsRecent(SportsCore):
                 "period_text", "Final"
             )  # Use formatted period text (e.g., "Final/OT") or default "Final"
             status_width = draw_overlay.textlength(status_text, font=self.fonts["time"])
-            status_x = (self.display_width - status_width) // 2
+            status_x = (display_width - status_width) // 2
             status_y = 1
             self._draw_text_with_outline(
                 draw_overlay, status_text, (status_x, status_y), self.fonts["time"]
@@ -1513,7 +1529,7 @@ class SportsRecent(SportsCore):
             # Draw odds if available
             if "odds" in game and game["odds"]:
                 self._draw_dynamic_odds(
-                    draw_overlay, game["odds"], self.display_width, self.display_height
+                    draw_overlay, game["odds"], display_width, display_height
                 )
 
             # Draw records or rankings if enabled
@@ -1601,7 +1617,7 @@ class SportsRecent(SportsCore):
                             (0, 0), home_text, font=record_font
                         )
                         home_record_width = home_record_bbox[2] - home_record_bbox[0]
-                        home_record_x = self.display_width - home_record_width
+                        home_record_x = display_width - home_record_width
                         self.logger.debug(
                             f"Drawing home ranking '{home_text}' at ({home_record_x}, {record_y}) with font size {record_font.size if hasattr(record_font, 'size') else 'unknown'}"
                         )
@@ -1616,7 +1632,8 @@ class SportsRecent(SportsCore):
             # Composite and display
             main_img = Image.alpha_composite(main_img, overlay)
             main_img = main_img.convert("RGB")
-            self.display_manager.image.paste(main_img, (0, 0))
+            # Assign directly like weather plugin does for full display coverage
+            self.display_manager.image = main_img
             self.display_manager.update_display()  # Update display here
 
         except Exception as e:
