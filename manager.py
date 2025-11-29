@@ -63,8 +63,13 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
 
         # Basic configuration
         self.is_enabled = config.get("enabled", True)
-        self.display_width = getattr(display_manager, "display_width", 128)
-        self.display_height = getattr(display_manager, "display_height", 32)
+        # Get display dimensions from display_manager properties
+        if hasattr(display_manager, 'matrix') and display_manager.matrix is not None:
+            self.display_width = display_manager.matrix.width
+            self.display_height = display_manager.matrix.height
+        else:
+            self.display_width = getattr(display_manager, "width", 128)
+            self.display_height = getattr(display_manager, "height", 32)
 
         # League configurations
         self.nfl_enabled = config.get("nfl", {}).get("enabled", False)
@@ -559,18 +564,50 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
         if not self.is_enabled:
             return False
 
-        nfl_live = (
+        # Check NFL live content
+        nfl_live = False
+        if (
             self.nfl_enabled
             and self.nfl_live_priority
             and hasattr(self, "nfl_live")
-            and bool(getattr(self.nfl_live, "live_games", []))
-        )
-        ncaa_live = (
+        ):
+            live_games = getattr(self.nfl_live, "live_games", [])
+            if live_games:
+                # If favorite teams are configured, only return True if there are live games for favorite teams
+                favorite_teams = getattr(self.nfl_live, "favorite_teams", [])
+                if favorite_teams:
+                    # Check if any live game involves a favorite team
+                    nfl_live = any(
+                        game.get("home_abbr") in favorite_teams
+                        or game.get("away_abbr") in favorite_teams
+                        for game in live_games
+                    )
+                else:
+                    # No favorite teams configured, return True if any live games exist
+                    nfl_live = True
+
+        # Check NCAA FB live content
+        ncaa_live = False
+        if (
             self.ncaa_fb_enabled
             and self.ncaa_fb_live_priority
             and hasattr(self, "ncaa_fb_live")
-            and bool(getattr(self.ncaa_fb_live, "live_games", []))
-        )
+        ):
+            live_games = getattr(self.ncaa_fb_live, "live_games", [])
+            if live_games:
+                # If favorite teams are configured, only return True if there are live games for favorite teams
+                favorite_teams = getattr(self.ncaa_fb_live, "favorite_teams", [])
+                if favorite_teams:
+                    # Check if any live game involves a favorite team
+                    ncaa_live = any(
+                        game.get("home_abbr") in favorite_teams
+                        or game.get("away_abbr") in favorite_teams
+                        for game in live_games
+                    )
+                else:
+                    # No favorite teams configured, return True if any live games exist
+                    ncaa_live = True
+
         return nfl_live or ncaa_live
 
     def get_live_modes(self) -> list:
