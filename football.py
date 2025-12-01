@@ -162,8 +162,16 @@ class FootballLive(Football, SportsLive):
     def _draw_scorebug_layout(self, game: Dict, force_clear: bool = False) -> None:
         """Draw the detailed scorebug layout for a live NCAA FB game.""" # Updated docstring
         try:
-            main_img = Image.new('RGBA', (self.display_width, self.display_height), (0, 0, 0, 255))
-            overlay = Image.new('RGBA', (self.display_width, self.display_height), (0, 0, 0, 0))
+            # Clear the display first to ensure full coverage (like weather plugin does)
+            if force_clear:
+                self.display_manager.clear()
+            
+            # Use display_manager.matrix dimensions directly to ensure full display coverage
+            display_width = self.display_manager.matrix.width if hasattr(self.display_manager, 'matrix') and self.display_manager.matrix else self.display_width
+            display_height = self.display_manager.matrix.height if hasattr(self.display_manager, 'matrix') and self.display_manager.matrix else self.display_height
+            
+            main_img = Image.new('RGBA', (display_width, display_height), (0, 0, 0, 255))
+            overlay = Image.new('RGBA', (display_width, display_height), (0, 0, 0, 0))
             draw_overlay = ImageDraw.Draw(overlay) # Draw text elements on overlay first
 
             home_logo = self._load_and_resize_logo(game["home_id"], game["home_abbr"], game["home_logo_path"], game.get("home_logo_url"))
@@ -178,10 +186,10 @@ class FootballLive(Football, SportsLive):
                 self.display_manager.update_display()
                 return
 
-            center_y = self.display_height // 2
+            center_y = display_height // 2
 
             # Draw logos (shifted slightly more inward than NHL perhaps)
-            home_x = self.display_width - home_logo.width + 10 #adjusted from 18 # Adjust position as needed
+            home_x = display_width - home_logo.width + 10 #adjusted from 18 # Adjust position as needed
             home_y = center_y - (home_logo.height // 2)
             main_img.paste(home_logo, (home_x, home_y), home_logo)
 
@@ -197,8 +205,8 @@ class FootballLive(Football, SportsLive):
             away_score = str(game.get("away_score", "0"))
             score_text = f"{away_score}-{home_score}"
             score_width = draw_overlay.textlength(score_text, font=self.fonts['score'])
-            score_x = (self.display_width - score_width) // 2
-            score_y = (self.display_height // 2) - 3 #centered #from 14 # Position score higher
+            score_x = (display_width - score_width) // 2
+            score_y = (display_height // 2) - 3 #centered #from 14 # Position score higher
             self._draw_text_with_outline(draw_overlay, score_text, (score_x, score_y), self.fonts['score'])
 
             # Period/Quarter and Clock (Top center)
@@ -209,22 +217,22 @@ class FootballLive(Football, SportsLive):
                 period_clock_text = game.get("status_text", "Period Break")
 
             status_width = draw_overlay.textlength(period_clock_text, font=self.fonts['time'])
-            status_x = (self.display_width - status_width) // 2
+            status_x = (display_width - status_width) // 2
             status_y = 1 # Position at top
             self._draw_text_with_outline(draw_overlay, period_clock_text, (status_x, status_y), self.fonts['time'])
 
             # Down & Distance or Scoring Event (Below Period/Clock)
             scoring_event = game.get("scoring_event", "")
             down_distance = game.get("down_distance_text", "")
-            if self.display_width > 128:
+            if display_width > 128:
                 down_distance = game.get("down_distance_text_long", "")
             
             # Show scoring event if detected, otherwise show down & distance
             if scoring_event and game.get("is_live"):
                 # Display scoring event with special formatting
                 event_width = draw_overlay.textlength(scoring_event, font=self.fonts['detail'])
-                event_x = (self.display_width - event_width) // 2
-                event_y = (self.display_height) - 7
+                event_x = (display_width - event_width) // 2
+                event_y = (display_height) - 7
                 
                 # Color coding for different scoring events
                 if scoring_event == "TOUCHDOWN":
@@ -239,8 +247,8 @@ class FootballLive(Football, SportsLive):
                 self._draw_text_with_outline(draw_overlay, scoring_event, (event_x, event_y), self.fonts['detail'], fill=event_color)
             elif down_distance and game.get("is_live"): # Only show if live and available
                 dd_width = draw_overlay.textlength(down_distance, font=self.fonts['detail'])
-                dd_x = (self.display_width - dd_width) // 2
-                dd_y = (self.display_height)- 7 # Top of D&D text
+                dd_x = (display_width - dd_width) // 2
+                dd_y = (display_height)- 7 # Top of D&D text
                 down_color = (200, 200, 0) if not game.get("is_redzone", False) else (255,0,0) # Yellowish text
                 self._draw_text_with_outline(draw_overlay, down_distance, (dd_x, dd_y), self.fonts['detail'], fill=down_color)
 
@@ -284,7 +292,7 @@ class FootballLive(Football, SportsLive):
             timeout_bar_width = 4
             timeout_bar_height = 2
             timeout_spacing = 1
-            timeout_y = self.display_height - timeout_bar_height - 1 # Bottom edge
+            timeout_y = display_height - timeout_bar_height - 1 # Bottom edge
 
             # Away Timeouts (Bottom Left)
             away_timeouts_remaining = game.get("away_timeouts", 0)
@@ -296,13 +304,13 @@ class FootballLive(Football, SportsLive):
              # Home Timeouts (Bottom Right)
             home_timeouts_remaining = game.get("home_timeouts", 0)
             for i in range(3):
-                to_x = self.display_width - 2 - timeout_bar_width - (2-i) * (timeout_bar_width + timeout_spacing)
+                to_x = display_width - 2 - timeout_bar_width - (2-i) * (timeout_bar_width + timeout_spacing)
                 color = (255, 255, 255) if i < home_timeouts_remaining else (80, 80, 80) # White if available, gray if used
                 draw_overlay.rectangle([to_x, timeout_y, to_x + timeout_bar_width, timeout_y + timeout_bar_height], fill=color, outline=(0,0,0))
 
             # Draw odds if available
             if 'odds' in game and game['odds']:
-                self._draw_dynamic_odds(draw_overlay, game['odds'], self.display_width, self.display_height)
+                self._draw_dynamic_odds(draw_overlay, game['odds'], display_width, display_height)
 
             # Draw records or rankings if enabled
             if self.show_records or self.show_ranking:
@@ -319,8 +327,8 @@ class FootballLive(Football, SportsLive):
                 
                 record_bbox = draw_overlay.textbbox((0,0), "0-0", font=record_font)
                 record_height = record_bbox[3] - record_bbox[1]
-                record_y = self.display_height - record_height - 4
-                self.logger.debug(f"Record positioning: height={record_height}, record_y={record_y}, display_height={self.display_height}")
+                record_y = display_height - record_height - 4
+                self.logger.debug(f"Record positioning: height={record_height}, record_y={record_y}, display_height={display_height}")
 
                 # Display away team info
                 if away_abbr:
@@ -376,7 +384,7 @@ class FootballLive(Football, SportsLive):
                     if home_text:
                         home_record_bbox = draw_overlay.textbbox((0,0), home_text, font=record_font)
                         home_record_width = home_record_bbox[2] - home_record_bbox[0]
-                        home_record_x = self.display_width - home_record_width - 3
+                        home_record_x = display_width - home_record_width - 3
                         self.logger.debug(f"Drawing home ranking '{home_text}' at ({home_record_x}, {record_y}) with font size {record_font.size if hasattr(record_font, 'size') else 'unknown'}")
                         self._draw_text_with_outline(draw_overlay, home_text, (home_record_x, record_y), record_font)
 
@@ -384,8 +392,8 @@ class FootballLive(Football, SportsLive):
             main_img = Image.alpha_composite(main_img, overlay)
             main_img = main_img.convert('RGB') # Convert for display
 
-            # Display the final image
-            self.display_manager.image.paste(main_img, (0, 0))
+            # Display the final image - assign directly like weather plugin does for full display coverage
+            self.display_manager.image = main_img
             self.display_manager.update_display() # Update display here for live
 
         except Exception as e:
