@@ -71,9 +71,15 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
             self.display_width = getattr(display_manager, "width", 128)
             self.display_height = getattr(display_manager, "height", 32)
 
-        # League configurations
+        # League configurations (defaults come from schema via plugin_manager merge)
+        # Debug: Log what config we received
+        self.logger.debug(f"Football plugin received config keys: {list(config.keys())}")
+        self.logger.debug(f"NFL config: {config.get('nfl', {})}")
+        
         self.nfl_enabled = config.get("nfl", {}).get("enabled", False)
         self.ncaa_fb_enabled = config.get("ncaa_fb", {}).get("enabled", False)
+        
+        self.logger.info(f"League enabled states - NFL: {self.nfl_enabled}, NCAA FB: {self.ncaa_fb_enabled}")
 
         # Global settings
         self.display_duration = float(config.get("display_duration", 30))
