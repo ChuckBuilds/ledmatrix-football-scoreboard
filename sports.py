@@ -1748,10 +1748,69 @@ class SportsLive(SportsCore):
         self.log_interval = 300
         self.last_count_log_time = 0  # Track when we last logged count data
         self.count_log_interval = 5  # Only log count data every 5 seconds
+        # Track game update timestamps for stale data detection
+        self.game_update_timestamps = {}  # {game_id: {"clock": timestamp, "score": timestamp, "last_seen": timestamp}}
+        self.stale_game_timeout = self.mode_config.get("stale_game_timeout", 300)  # 5 minutes default
 
     @abstractmethod
     def _test_mode_update(self) -> None:
         return
+
+    def _is_game_really_over(self, game: Dict) -> bool:
+        """Check if a game appears to be over even if API says it's live."""
+        # Check if period_text indicates final
+        period_text = game.get("period_text", "").lower()
+        if "final" in period_text:
+            return True
+        
+        # Check if clock is 0:00 in Q4 or OT
+        clock = game.get("clock", "0:00")
+        period = game.get("period", 0)
+        # Handle various clock formats: "0:00", ":00", "0", ":40" (stuck at :40)
+        clock_normalized = clock.replace(":", "").strip()
+        if period >= 4:
+            # In Q4 or OT, if clock is 0:00 or appears stuck (like :40), consider it over
+            if clock_normalized == "000" or clock_normalized == "00" or clock == "0:00" or clock == ":00":
+                return True
+            # Also check if clock appears stuck (e.g., ":40" with no minutes)
+            if clock.startswith(":") and len(clock) <= 3:
+                # Clock like ":40" or ":00" - likely stuck
+                return True
+        
+        return False
+
+    def _detect_stale_games(self, games: List[Dict]) -> None:
+        """Remove games that appear stale or haven't updated."""
+        current_time = time.time()
+        
+        for game in games[:]:  # Copy list to iterate safely
+            game_id = game.get("id")
+            if not game_id:
+                continue
+            
+            # Check if game data is stale
+            timestamps = self.game_update_timestamps.get(game_id, {})
+            last_seen = timestamps.get("last_seen", 0)
+            
+            if last_seen > 0 and current_time - last_seen > self.stale_game_timeout:
+                self.logger.warning(
+                    f"Removing stale game {game.get('away_abbr')}@{game.get('home_abbr')} "
+                    f"(last seen {int(current_time - last_seen)}s ago)"
+                )
+                games.remove(game)
+                if game_id in self.game_update_timestamps:
+                    del self.game_update_timestamps[game_id]
+                continue
+            
+            # Also check if game appears to be over
+            if self._is_game_really_over(game):
+                self.logger.debug(
+                    f"Removing game that appears over: {game.get('away_abbr')}@{game.get('home_abbr')} "
+                    f"(clock={game.get('clock')}, period={game.get('period')}, period_text={game.get('period_text')})"
+                )
+                games.remove(game)
+                if game_id in self.game_update_timestamps:
+                    del self.game_update_timestamps[game_id]
 
     def update(self):
         """Update live game data and handle game switching."""
@@ -1819,8 +1878,45 @@ class SportsLive(SportsCore):
                                 f"is_halftime={details.get('is_halftime')}, is_final={details.get('is_final')}"
                             )
                             
+                            # Filter out final games and games that appear to be over
+                            if details.get("is_final", False):
+                                self.logger.debug(
+                                    f"Filtered out final game: {details.get('away_abbr')}@{details.get('home_abbr')} "
+                                    f"(is_final={details.get('is_final')}, clock={details.get('clock')}, period={details.get('period')})"
+                                )
+                                continue
+                            
+                            # Additional validation: check if game appears to be over
+                            if self._is_game_really_over(details):
+                                self.logger.debug(
+                                    f"Skipping game that appears final: {details.get('away_abbr')}@{details.get('home_abbr')} "
+                                    f"(clock={details.get('clock')}, period={details.get('period')}, period_text={details.get('period_text')})"
+                                )
+                                continue
+                            
                             if details["is_live"] or details["is_halftime"]:
                                 live_or_halftime_count += 1
+                                
+                                # Track game timestamps for stale detection
+                                game_id = details.get("id")
+                                if game_id:
+                                    current_clock = details.get("clock", "")
+                                    current_score = f"{details.get('away_score', '0')}-{details.get('home_score', '0')}"
+                                    
+                                    if game_id not in self.game_update_timestamps:
+                                        self.game_update_timestamps[game_id] = {}
+                                    
+                                    timestamps = self.game_update_timestamps[game_id]
+                                    timestamps["last_seen"] = time.time()
+                                    
+                                    # Track if clock/score changed
+                                    if timestamps.get("last_clock") != current_clock:
+                                        timestamps["last_clock"] = current_clock
+                                        timestamps["clock_changed_at"] = time.time()
+                                    if timestamps.get("last_score") != current_score:
+                                        timestamps["last_score"] = current_score
+                                        timestamps["score_changed_at"] = time.time()
+                                
                                 # If show_favorite_teams_only is true, only add if it's a favorite.
                                 # Otherwise, add all games.
                                 should_include = (
@@ -1855,6 +1951,10 @@ class SportsLive(SportsCore):
                         f"{filtered_out_count} filtered out, "
                         f"{len(new_live_games)} included"
                     )
+                    
+                    # Detect and remove stale games
+                    self._detect_stale_games(new_live_games)
+                    
                     # Log changes or periodically
                     current_time_for_log = (
                         time.time()

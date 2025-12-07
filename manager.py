@@ -579,18 +579,25 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
         ):
             live_games = getattr(self.nfl_live, "live_games", [])
             if live_games:
-                # If favorite teams are configured, only return True if there are live games for favorite teams
-                favorite_teams = getattr(self.nfl_live, "favorite_teams", [])
-                if favorite_teams:
-                    # Check if any live game involves a favorite team
-                    nfl_live = any(
-                        game.get("home_abbr") in favorite_teams
-                        or game.get("away_abbr") in favorite_teams
-                        for game in live_games
-                    )
-                else:
-                    # No favorite teams configured, return True if any live games exist
-                    nfl_live = True
+                # Filter out any games that are final or appear over
+                live_games = [g for g in live_games if not g.get("is_final", False)]
+                # Additional validation using helper method if available
+                if hasattr(self.nfl_live, "_is_game_really_over"):
+                    live_games = [g for g in live_games if not self.nfl_live._is_game_really_over(g)]
+                
+                if live_games:
+                    # If favorite teams are configured, only return True if there are live games for favorite teams
+                    favorite_teams = getattr(self.nfl_live, "favorite_teams", [])
+                    if favorite_teams:
+                        # Check if any live game involves a favorite team
+                        nfl_live = any(
+                            game.get("home_abbr") in favorite_teams
+                            or game.get("away_abbr") in favorite_teams
+                            for game in live_games
+                        )
+                    else:
+                        # No favorite teams configured, return True if any live games exist
+                        nfl_live = True
 
         # Check NCAA FB live content
         ncaa_live = False
@@ -601,18 +608,25 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
         ):
             live_games = getattr(self.ncaa_fb_live, "live_games", [])
             if live_games:
-                # If favorite teams are configured, only return True if there are live games for favorite teams
-                favorite_teams = getattr(self.ncaa_fb_live, "favorite_teams", [])
-                if favorite_teams:
-                    # Check if any live game involves a favorite team
-                    ncaa_live = any(
-                        game.get("home_abbr") in favorite_teams
-                        or game.get("away_abbr") in favorite_teams
-                        for game in live_games
-                    )
-                else:
-                    # No favorite teams configured, return True if any live games exist
-                    ncaa_live = True
+                # Filter out any games that are final or appear over
+                live_games = [g for g in live_games if not g.get("is_final", False)]
+                # Additional validation using helper method if available
+                if hasattr(self.ncaa_fb_live, "_is_game_really_over"):
+                    live_games = [g for g in live_games if not self.ncaa_fb_live._is_game_really_over(g)]
+                
+                if live_games:
+                    # If favorite teams are configured, only return True if there are live games for favorite teams
+                    favorite_teams = getattr(self.ncaa_fb_live, "favorite_teams", [])
+                    if favorite_teams:
+                        # Check if any live game involves a favorite team
+                        ncaa_live = any(
+                            game.get("home_abbr") in favorite_teams
+                            or game.get("away_abbr") in favorite_teams
+                            for game in live_games
+                        )
+                    else:
+                        # No favorite teams configured, return True if any live games exist
+                        ncaa_live = True
 
         return nfl_live or ncaa_live
 
