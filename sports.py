@@ -444,7 +444,7 @@ class SportsCore(ABC):
             return None
 
     def _fetch_odds(self, game: Dict) -> None:
-        """Fetch odds for a specific game using the new architecture."""
+        """Fetch odds for a specific game using async threading to prevent blocking."""
         try:
             if not self.show_odds:
                 return
@@ -457,21 +457,49 @@ class SportsCore(ABC):
                 else self.mode_config.get("odds_update_interval", 3600)
             )
 
-            # Fetch odds using OddsManager
-            odds_data = self.odds_manager.get_odds(
-                sport=self.sport,
-                league=self.league,
-                event_id=game["id"],
-                update_interval_seconds=update_interval,
-            )
-
-            if odds_data:
-                game["odds"] = odds_data
-                self.logger.debug(
-                    f"Successfully fetched and attached odds for game {game['id']}"
-                )
-            else:
-                self.logger.debug(f"No odds data returned for game {game['id']}")
+            # For upcoming games, use async fetch with short timeout to avoid blocking
+            # For live games, we want odds more urgently, but still use async to prevent blocking
+            import threading
+            import queue
+            
+            result_queue = queue.Queue()
+            
+            def fetch_odds():
+                try:
+                    odds_result = self.odds_manager.get_odds(
+                        sport=self.sport,
+                        league=self.league,
+                        event_id=game["id"],
+                        update_interval_seconds=update_interval,
+                    )
+                    result_queue.put(('success', odds_result))
+                except Exception as e:
+                    result_queue.put(('error', e))
+            
+            # Start odds fetch in a separate thread
+            odds_thread = threading.Thread(target=fetch_odds)
+            odds_thread.daemon = True
+            odds_thread.start()
+            
+            # Wait for result with timeout (shorter for upcoming games)
+            timeout = 2.0 if is_live else 1.5  # Live games get slightly longer timeout
+            try:
+                result_type, result_data = result_queue.get(timeout=timeout)
+                if result_type == 'success':
+                    odds_data = result_data
+                    if odds_data:
+                        game["odds"] = odds_data
+                        self.logger.debug(
+                            f"Successfully fetched and attached odds for game {game['id']}"
+                        )
+                    else:
+                        self.logger.debug(f"No odds data returned for game {game['id']}")
+                else:
+                    self.logger.debug(f"Odds fetch failed for game {game['id']}: {result_data}")
+            except queue.Empty:
+                # Timeout - odds will be fetched on next update if needed
+                # This prevents blocking the entire update() method
+                self.logger.debug(f"Odds fetch timed out for game {game['id']} (non-blocking)")
 
         except Exception as e:
             self.logger.error(
