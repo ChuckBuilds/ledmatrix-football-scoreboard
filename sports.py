@@ -58,10 +58,10 @@ class SportsCore(ABC):
         )  # Changed config key
         self.is_enabled: bool = self.mode_config.get("enabled", False)
         self.show_odds: bool = self.mode_config.get("show_odds", False)
-        self.test_mode: bool = self.mode_config.get("test_mode", False)
-        self.logo_dir = Path(
-            self.mode_config.get("logo_dir", "assets/sports/ncaa_logos")
-        )  # Changed logo dir
+        # Use LogoDownloader to get the correct default logo directory for this sport
+        from src.logo_downloader import LogoDownloader
+        default_logo_dir = Path(LogoDownloader().get_logo_directory(sport_key))
+        self.logo_dir = default_logo_dir
         self.update_interval: int = self.mode_config.get("update_interval_seconds", 60)
         self.show_records: bool = self.mode_config.get("show_records", False)
         self.show_ranking: bool = self.mode_config.get("show_ranking", False)
@@ -1347,11 +1347,62 @@ class SportsRecent(SportsCore):
             processed_games = []
             for event in events:
                 game = self._extract_game_details(event)
-                # Filter criteria: must be final AND within recent date range
-                if game and game["is_final"]:
+                if not game:
+                    continue
+                
+                # Check if game appears finished even if not marked as "post" yet
+                # This handles cases where API hasn't updated status yet
+                appears_finished = False
+                if not game.get("is_final", False):
+                    # Check if game appears to be over based on clock/period
+                    clock = game.get("clock", "")
+                    period = game.get("period", 0)
+                    period_text = game.get("status_text", "").lower()
+                    
+                    # Game appears finished if:
+                    # 1. Clock is 0:00 in Q4 or later
+                    # 2. Period text contains "final"
+                    # 3. Period is 4+ and clock is empty or 0:00
+                    if period >= 4:
+                        clock_normalized = clock.replace(":", "").strip()
+                        if (clock_normalized in ["000", "00", ""] or 
+                            clock == "0:00" or clock == ":00" or
+                            "final" in period_text):
+                            appears_finished = True
+                            self.logger.debug(
+                                f"Game {game.get('away_abbr')}@{game.get('home_abbr')} "
+                                f"appears finished (period={period}, clock={clock}, status={period_text}) "
+                                f"but not marked as final - including anyway"
+                            )
+                
+                # Filter criteria: must be final OR appear finished, AND within recent date range
+                is_eligible = game.get("is_final", False) or appears_finished
+                if is_eligible:
                     game_time = game.get("start_time_utc")
                     if game_time and game_time >= recent_cutoff:
                         processed_games.append(game)
+                        # Log when adding games, especially if they appear finished but aren't marked final
+                        final_status = "final" if game.get("is_final") else "appears finished"
+                        self.logger.info(
+                            f"Added {final_status} game to recent list: "
+                            f"{game.get('away_abbr')}@{game.get('home_abbr')} "
+                            f"({game.get('away_score')}-{game.get('home_score')}) "
+                            f"at {game_time.strftime('%Y-%m-%d %H:%M:%S UTC') if game_time else 'unknown time'}"
+                        )
+                    elif game_time:
+                        self.logger.debug(
+                            f"Game {game.get('away_abbr')}@{game.get('home_abbr')} "
+                            f"is final but outside date range (game_time={game_time}, cutoff={recent_cutoff})"
+                        )
+                else:
+                    # Log why game was filtered out (only for favorite teams to reduce noise)
+                    if game.get("home_abbr") in self.favorite_teams or game.get("away_abbr") in self.favorite_teams:
+                        self.logger.debug(
+                            f"Game {game.get('away_abbr')}@{game.get('home_abbr')} "
+                            f"not included: is_final={game.get('is_final')}, "
+                            f"period={game.get('period')}, clock={game.get('clock')}, "
+                            f"status={game.get('status_text')}"
+                        )
             # Filter for favorite teams
             if self.favorite_teams:
                 # Get all games involving favorite teams
@@ -1752,10 +1803,6 @@ class SportsLive(SportsCore):
         self.game_update_timestamps = {}  # {game_id: {"clock": timestamp, "score": timestamp, "last_seen": timestamp}}
         self.stale_game_timeout = self.mode_config.get("stale_game_timeout", 300)  # 5 minutes default
 
-    @abstractmethod
-    def _test_mode_update(self) -> None:
-        return
-
     def _is_game_really_over(self, game: Dict) -> bool:
         """Check if a game appears to be over even if API says it's live."""
         # Check if period_text indicates final
@@ -1849,11 +1896,7 @@ class SportsLive(SportsCore):
             if self.show_ranking:
                 self._fetch_team_rankings()
 
-            if self.test_mode:
-                # Simulate clock running down in test mode
-                self._test_mode_update()
-            else:
-                # Fetch live game data
+            # Fetch live game data
                 data = self._fetch_data()
                 new_live_games = []
                 if not data:
@@ -2075,7 +2118,7 @@ class SportsLive(SportsCore):
 
             # Handle game switching (outside test mode check)
             if (
-                not self.test_mode
+True
                 and len(self.live_games) > 1
                 and (current_time - self.last_game_switch) >= self.game_display_duration
             ):
