@@ -348,6 +348,25 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
 
         return None
 
+    def _ensure_manager_updated(self, manager) -> None:
+        """Trigger an update when the delegated manager is stale."""
+        last_update = getattr(manager, "last_update", None)
+        update_interval = getattr(manager, "update_interval", None)
+        if last_update is None or update_interval is None:
+            return
+
+        interval = update_interval
+        no_data_interval = getattr(manager, "no_data_interval", None)
+        live_games = getattr(manager, "live_games", None)
+        if no_data_interval and not live_games:
+            interval = no_data_interval
+
+        try:
+            if interval and time.time() - last_update >= interval:
+                manager.update()
+        except Exception as exc:
+            self.logger.debug(f"Auto-refresh failed for manager {manager}: {exc}")
+
     def update(self) -> None:
         """Update football game data."""
         if not self.is_enabled:
@@ -502,6 +521,9 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
                         elif current_manager == self.ncaa_fb_live or current_manager == self.ncaa_fb_recent or current_manager == self.ncaa_fb_upcoming:
                             self._current_display_league = 'ncaa_fb'
                         self._current_display_mode_type = mode_type
+                        
+                        # Ensure manager is updated before displaying
+                        self._ensure_manager_updated(current_manager)
                         
                         result = current_manager.display(force_clear)
                         # If display returned True, we have content to show
