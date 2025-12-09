@@ -1878,9 +1878,9 @@ class SportsLive(SportsCore):
         # Uses getattr for robustness, assuming attributes for live_games, test_mode,
         # no_data_interval, and update_interval are available on self.
         _live_games_attr = self.live_games
-        _test_mode_attr = (
-            self.test_mode
-        )  # test_mode is often from a base class or config
+        _test_mode_attr = getattr(
+            self, 'test_mode', False
+        )  # test_mode is often from a base class or config - use getattr for safety
         _no_data_interval_attr = (
             self.no_data_interval
         )  # Default similar to NFLLiveManager
