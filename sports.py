@@ -1805,6 +1805,8 @@ class SportsLive(SportsCore):
         self.log_interval = 300
         self.last_count_log_time = 0  # Track when we last logged count data
         self.count_log_interval = 5  # Only log count data every 5 seconds
+        # Initialize test_mode - defaults to False (live mode)
+        self.test_mode = self.mode_config.get("test_mode", False)
         # Track game update timestamps for stale data detection
         self.game_update_timestamps = {}  # {game_id: {"clock": timestamp, "score": timestamp, "last_seen": timestamp}}
         self.stale_game_timeout = self.mode_config.get("stale_game_timeout", 300)  # 5 minutes default
