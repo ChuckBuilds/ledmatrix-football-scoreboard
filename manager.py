@@ -162,7 +162,7 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
                 self.logger.info("NCAA FB managers initialized")
 
         except Exception as e:
-            self.logger.error(f"Error initializing managers: {e}")
+            self.logger.error(f"Error initializing managers: {e}", exc_info=True)
 
     def _adapt_config_for_manager(self, league: str) -> Dict[str, Any]:
         """
@@ -475,7 +475,7 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
                         if self.nfl_enabled and hasattr(self, 'nfl_live'):
                             managers_to_try.append(self.nfl_live)
                             self.logger.debug("No live content found, falling back to NFL live manager")
-                        elif self.ncaa_fb_enabled and hasattr(self, 'ncaa_fb_live'):
+                        if self.ncaa_fb_enabled and hasattr(self, 'ncaa_fb_live'):
                             managers_to_try.append(self.ncaa_fb_live)
                             self.logger.debug("No live content found, falling back to NCAA FB live manager")
                 else:
@@ -530,7 +530,14 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
                 
                 # No manager had content
                 if not managers_to_try:
-                    self.logger.warning(f"No managers available for mode: {display_mode} (NFL enabled: {self.nfl_enabled}, NCAA FB enabled: {self.ncaa_fb_enabled})")
+                    # Enhanced diagnostic logging
+                    nfl_has_manager = hasattr(self, 'nfl_live') if mode_type == 'live' else (hasattr(self, 'nfl_recent') if mode_type == 'recent' else hasattr(self, 'nfl_upcoming'))
+                    ncaa_fb_has_manager = hasattr(self, 'ncaa_fb_live') if mode_type == 'live' else (hasattr(self, 'ncaa_fb_recent') if mode_type == 'recent' else hasattr(self, 'ncaa_fb_upcoming'))
+                    self.logger.warning(
+                        f"No managers available for mode: {display_mode} "
+                        f"(NFL enabled: {self.nfl_enabled}, has manager: {nfl_has_manager}; "
+                        f"NCAA FB enabled: {self.ncaa_fb_enabled}, has manager: {ncaa_fb_has_manager})"
+                    )
                 else:
                     self.logger.debug(f"No content available for mode: {display_mode} after trying {len(managers_to_try)} manager(s)")
                 
