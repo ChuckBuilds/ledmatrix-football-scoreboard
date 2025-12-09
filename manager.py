@@ -243,6 +243,14 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
                 ),
                 "live_update_interval": league_config.get("live_update_interval", 30),
                 "live_game_duration": league_config.get("live_game_duration", 20),
+                "recent_game_duration": league_config.get(
+                    "recent_game_duration",
+                    self.config.get("game_display_duration", 15)
+                ),
+                "upcoming_game_duration": league_config.get(
+                    "upcoming_game_duration",
+                    self.config.get("game_display_duration", 15)
+                ),
                 "live_priority": league_config.get("live_priority", False),
                 "show_favorite_teams_only": show_favorites_only,
                 "show_all_live": show_all_live,

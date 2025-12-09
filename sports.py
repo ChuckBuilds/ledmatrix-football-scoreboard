@@ -823,7 +823,7 @@ class SportsUpcoming(SportsCore):
         self.last_warning_time = 0
         self.warning_cooldown = 300
         self.last_game_switch = 0
-        self.game_display_duration = 15  # Display each upcoming game for 15 seconds
+        self.game_display_duration = self.mode_config.get("upcoming_game_duration", 15)
 
     def update(self):
         """Update upcoming games data."""
@@ -1305,7 +1305,7 @@ class SportsRecent(SportsCore):
             "recent_update_interval", 3600
         )  # Check for recent games every hour
         self.last_game_switch = 0
-        self.game_display_duration = 15  # Display each recent game for 15 seconds
+        self.game_display_duration = self.mode_config.get("recent_game_duration", 15)
 
     def update(self):
         """Update recent games data."""
