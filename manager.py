@@ -404,25 +404,94 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
                 self.logger.debug(f"Mode type: {mode_type}, NFL enabled: {self.nfl_enabled}, NCAA FB enabled: {self.ncaa_fb_enabled}")
                 
                 # Determine which manager to use based on enabled leagues
-                # Try NFL first if enabled, then NCAA FB if enabled
-                # Check both leagues and use the one with content, or NFL if both enabled
+                # For live mode, prioritize leagues with live content and live_priority enabled
                 managers_to_try = []
                 
-                if self.nfl_enabled:
-                    if mode_type == 'live' and hasattr(self, 'nfl_live'):
-                        managers_to_try.append(self.nfl_live)
-                    elif mode_type == 'recent' and hasattr(self, 'nfl_recent'):
-                        managers_to_try.append(self.nfl_recent)
-                    elif mode_type == 'upcoming' and hasattr(self, 'nfl_upcoming'):
-                        managers_to_try.append(self.nfl_upcoming)
-                
-                if self.ncaa_fb_enabled:
-                    if mode_type == 'live' and hasattr(self, 'ncaa_fb_live'):
-                        managers_to_try.append(self.ncaa_fb_live)
-                    elif mode_type == 'recent' and hasattr(self, 'ncaa_fb_recent'):
-                        managers_to_try.append(self.ncaa_fb_recent)
-                    elif mode_type == 'upcoming' and hasattr(self, 'ncaa_fb_upcoming'):
-                        managers_to_try.append(self.ncaa_fb_upcoming)
+                if mode_type == 'live':
+                    # Ensure managers are updated before checking for live games
+                    if self.nfl_enabled and hasattr(self, 'nfl_live'):
+                        try:
+                            self.nfl_live.update()
+                        except Exception as e:
+                            self.logger.debug(f"Error updating NFL live manager: {e}")
+                    
+                    if self.ncaa_fb_enabled and hasattr(self, 'ncaa_fb_live'):
+                        try:
+                            self.ncaa_fb_live.update()
+                        except Exception as e:
+                            self.logger.debug(f"Error updating NCAA FB live manager: {e}")
+                    
+                    # Check NFL first (highest priority) - use same logic as has_live_content()
+                    if (self.nfl_enabled and self.nfl_live_priority and 
+                        hasattr(self, 'nfl_live')):
+                        live_games = getattr(self.nfl_live, 'live_games', [])
+                        if live_games:
+                            # Filter out any games that are final or appear over
+                            live_games = [g for g in live_games if not g.get('is_final', False)]
+                            # Additional validation using helper method if available
+                            if hasattr(self.nfl_live, '_is_game_really_over'):
+                                live_games = [g for g in live_games 
+                                             if not self.nfl_live._is_game_really_over(g)]
+                            
+                            if live_games:
+                                # If favorite teams are configured, only show if there are live games for favorite teams
+                                favorite_teams = getattr(self.nfl_live, 'favorite_teams', [])
+                                if favorite_teams:
+                                    has_favorite_live = any(
+                                        game.get('home_abbr') in favorite_teams
+                                        or game.get('away_abbr') in favorite_teams
+                                        for game in live_games
+                                    )
+                                    if has_favorite_live:
+                                        managers_to_try.append(self.nfl_live)
+                                        self.logger.debug("NFL has live games with favorite teams - prioritizing NFL")
+                                else:
+                                    # No favorite teams configured, any live game counts
+                                    managers_to_try.append(self.nfl_live)
+                                    self.logger.debug("NFL has live games - prioritizing NFL")
+                    
+                    # Check NCAA FB - use same logic as has_live_content()
+                    if (self.ncaa_fb_enabled and self.ncaa_fb_live_priority and 
+                        hasattr(self, 'ncaa_fb_live')):
+                        live_games = getattr(self.ncaa_fb_live, 'live_games', [])
+                        if live_games:
+                            favorite_teams = getattr(self.ncaa_fb_live, 'favorite_teams', [])
+                            if favorite_teams:
+                                has_favorite_live = any(
+                                    game.get('home_abbr') in favorite_teams
+                                    or game.get('away_abbr') in favorite_teams
+                                    for game in live_games
+                                )
+                                if has_favorite_live:
+                                    managers_to_try.append(self.ncaa_fb_live)
+                                    self.logger.debug("NCAA FB has live games with favorite teams")
+                            else:
+                                # No favorite teams configured, any live game counts
+                                managers_to_try.append(self.ncaa_fb_live)
+                                self.logger.debug("NCAA FB has live games")
+                    
+                    # Fallback: if no live content found, show any enabled live manager (NFL first)
+                    if not managers_to_try:
+                        if self.nfl_enabled and hasattr(self, 'nfl_live'):
+                            managers_to_try.append(self.nfl_live)
+                            self.logger.debug("No live content found, falling back to NFL live manager")
+                        elif self.ncaa_fb_enabled and hasattr(self, 'ncaa_fb_live'):
+                            managers_to_try.append(self.ncaa_fb_live)
+                            self.logger.debug("No live content found, falling back to NCAA FB live manager")
+                else:
+                    # For recent and upcoming modes, use standard priority order
+                    # NFL > NCAA FB
+                    if self.nfl_enabled:
+                        if mode_type == 'recent' and hasattr(self, 'nfl_recent'):
+                            managers_to_try.append(self.nfl_recent)
+                        elif mode_type == 'upcoming' and hasattr(self, 'nfl_upcoming'):
+                            managers_to_try.append(self.nfl_upcoming)
+                    
+                    if self.ncaa_fb_enabled:
+                        if mode_type == 'recent' and hasattr(self, 'ncaa_fb_recent'):
+                            managers_to_try.append(self.ncaa_fb_recent)
+                        elif mode_type == 'upcoming' and hasattr(self, 'ncaa_fb_upcoming'):
+                            managers_to_try.append(self.ncaa_fb_upcoming)
                 
                 # Try each manager until one returns True (has content)
                 for current_manager in managers_to_try:
@@ -620,25 +689,24 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
         return nfl_live or ncaa_live
 
     def get_live_modes(self) -> list:
+        """
+        Return the registered plugin mode name(s) that have live content.
+        
+        This should return the mode names as registered in manifest.json, not internal
+        mode names. The plugin is registered with "football_live", "football_recent", "football_upcoming".
+        """
         if not self.is_enabled:
             return []
 
-        prioritized_modes = []
-        if self.nfl_enabled and self.nfl_live_priority and "nfl_live" in self.modes:
-            prioritized_modes.append("nfl_live")
-
-        if (
-            self.ncaa_fb_enabled
-            and self.ncaa_fb_live_priority
-            and "ncaa_fb_live" in self.modes
-        ):
-            prioritized_modes.append("ncaa_fb_live")
-
-        if prioritized_modes:
-            return prioritized_modes
-
-        # Fallback: no prioritized league enabled; expose any live modes available
-        return [mode for mode in self.modes if mode.endswith("_live")]
+        # Check if any league has live content
+        has_any_live = self.has_live_content()
+        
+        if has_any_live:
+            # Return the registered plugin mode name, not internal mode names
+            # The plugin is registered with "football_live" in manifest.json
+            return ["football_live"]
+        
+        return []
 
     def get_info(self) -> Dict[str, Any]:
         """Get plugin information."""
