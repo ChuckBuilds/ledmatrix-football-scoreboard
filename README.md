@@ -4,8 +4,13 @@ A production-ready plugin for LEDMatrix that displays live, recent, and upcoming
 
 ## 🏈 Features
 
-<img width="192" height="48" alt="led_matrix_1764889978847" src="https://github.com/user-attachments/assets/3561386b-1327-415d-92bc-f17f7e446984" />
-<img width="192" height="48" alt="led_matrix_1764889931266" src="https://github.com/user-attachments/assets/a5361ddf-5472-4724-9665-1783db4eb3d1" />
+Upcoming Game (NCAA FB):
+
+<img width="768" height="192" alt="led_matrix_1764889978847" src="https://github.com/user-attachments/assets/3561386b-1327-415d-92bc-f17f7e446984" />
+
+Recent Game (NCAA FB):
+
+<img width="768" height="192" alt="led_matrix_1764889931266" src="https://github.com/user-attachments/assets/a5361ddf-5472-4724-9665-1783db4eb3d1" />
 
 
 
