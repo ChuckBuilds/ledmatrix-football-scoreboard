@@ -4,6 +4,11 @@ A production-ready plugin for LEDMatrix that displays live, recent, and upcoming
 
 ## 🏈 Features
 
+<img width="192" height="48" alt="led_matrix_1764889978847" src="https://github.com/user-attachments/assets/3561386b-1327-415d-92bc-f17f7e446984" />
+<img width="192" height="48" alt="led_matrix_1764889931266" src="https://github.com/user-attachments/assets/a5361ddf-5472-4724-9665-1783db4eb3d1" />
+
+
+
 ### Core Functionality
 - **Multiple League Support**: NFL and NCAA Football with independent configuration
 - **Live Game Tracking**: Real-time scores, quarters, time remaining, down & distance
@@ -26,83 +31,6 @@ A production-ready plugin for LEDMatrix that displays live, recent, and upcoming
 - **Mode Cycling**: Automatic rotation between live, recent, and upcoming games
 - **Error Recovery**: Graceful handling of API failures and missing data
 - **Memory Optimized**: Efficient resource usage for Raspberry Pi deployment
-
-## ⚙️ Configuration
-
-### Global Settings
-
-```json
-{
-  "enabled": true,
-  "display_duration": 30,
-  "game_display_duration": 15,
-  "timezone": "UTC"
-}
-```
-
-### NFL Configuration
-
-```json
-{
-  "nfl": {
-    "enabled": true,
-    "favorite_teams": ["TB", "DAL", "GB"],
-    "display_modes": {
-      "show_live": true,
-      "show_recent": true,
-      "show_upcoming": true
-    },
-    "live_priority": true,
-    "game_limits": {
-      "recent_games_to_show": 5,
-      "upcoming_games_to_show": 2
-    },
-    "display_options": {
-      "show_records": true,
-      "show_ranking": false,
-      "show_odds": true
-    },
-    "filtering": {
-      "show_favorite_teams_only": true,
-      "show_all_live": false
-    },
-    "live_update_interval": 30,
-    "live_game_duration": 20
-  }
-}
-```
-
-### NCAA Football Configuration
-
-```json
-{
-  "ncaa_fb": {
-    "enabled": true,
-    "favorite_teams": ["AP_TOP_25", "UGA", "ALA"],
-    "display_modes": {
-      "show_live": true,
-      "show_recent": true,
-      "show_upcoming": true
-    },
-    "live_priority": false,
-    "game_limits": {
-      "recent_games_to_show": 3,
-      "upcoming_games_to_show": 2
-    },
-    "display_options": {
-      "show_records": false,
-      "show_ranking": true,
-      "show_odds": true
-    },
-    "filtering": {
-      "show_favorite_teams_only": true,
-      "show_all_live": false
-    },
-    "live_update_interval": 30,
-    "live_game_duration": 20
-  }
-}
-```
 
 ## 🎯 Dynamic Team Resolution
 
@@ -186,12 +114,6 @@ This plugin reuses the proven code from the main LEDMatrix project:
 4. Click Install
 5. Configure your favorite teams and preferences
 
-### Manual Installation
-1. Download the latest release from GitHub
-2. Extract to your `ledmatrix-plugins/plugins/` folder
-3. Ensure the plugin is enabled in your LEDMatrix configuration
-4. Configure your favorite teams and display preferences
-5. Restart LEDMatrix to load the new plugin
 
 ## 🐛 Troubleshooting
 
@@ -202,15 +124,6 @@ This plugin reuses the proven code from the main LEDMatrix project:
 - **API errors**: Check your internet connection and ESPN API availability
 - **Dynamic teams not working**: Ensure you're using exact patterns like `AP_TOP_25`
 
-### Debug Mode
-Enable debug logging to troubleshoot issues:
-```json
-{
-  "logging": {
-    "level": "DEBUG"
-  }
-}
-```
 
 ## 📊 Version History
 
