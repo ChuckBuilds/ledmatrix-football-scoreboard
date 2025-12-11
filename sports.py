@@ -1798,7 +1798,7 @@ class SportsLive(SportsCore):
         self.last_update = 0
         self.live_games = []
         self.current_game_index = 0
-        self.last_game_switch = 0
+        self.last_game_switch = 0  # Will be set to current_time when games are first loaded
         self.game_display_duration = self.mode_config.get("live_game_duration", 20)
         self.last_display_update = 0
         self.last_log_time = 0
@@ -2093,6 +2093,9 @@ class SportsLive(SportsCore):
                                     self.current_game = self.live_games[
                                         self.current_game_index
                                     ]  # Update current_game with fresh data
+                                    # Fix: Set last_game_switch if it's still 0 (initialized) to prevent immediate switching
+                                    if self.last_game_switch == 0:
+                                        self.last_game_switch = current_time
                                 except (
                                     StopIteration
                                 ):  # Should not happen if check above passed, but safety first
@@ -2110,6 +2113,10 @@ class SportsLive(SportsCore):
                                 self.current_game = temp_game_dict.get(
                                     self.current_game["id"], self.current_game
                                 )
+                            # Fix: Set last_game_switch if it's still 0 (initialized) to prevent immediate switching
+                            # This handles the case where games were loaded previously but last_game_switch was never set
+                            if self.last_game_switch == 0:
+                                self.last_game_switch = current_time
 
                         # Display update handled by main loop based on interval
 
@@ -2136,9 +2143,12 @@ class SportsLive(SportsCore):
                         self.current_game = None  # Clear current game if fetch fails and no games were active
 
             # Handle game switching (outside test mode check)
+            # Fix: Don't check for switching if last_game_switch is still 0 (games haven't been loaded yet)
+            # This prevents immediate switching when the system has been running for a while before games load
             if (
-True
+                not self.test_mode
                 and len(self.live_games) > 1
+                and self.last_game_switch > 0
                 and (current_time - self.last_game_switch) >= self.game_display_duration
             ):
                 self.current_game_index = (self.current_game_index + 1) % len(
