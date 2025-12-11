@@ -123,6 +123,8 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
         self._dynamic_manager_progress: Dict[str, Set[str]] = {}
         self._dynamic_managers_completed: Set[str] = set()
         self._dynamic_cycle_complete = False
+        # Track when single-game managers were first seen to ensure full duration
+        self._single_game_manager_start_times: Dict[str, float] = {}
         
         # Track current display context for granular dynamic duration
         self._current_display_league: Optional[str] = None  # 'nfl' or 'ncaa_fb'
@@ -821,6 +823,7 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
         self._dynamic_manager_progress.clear()
         self._dynamic_managers_completed.clear()
         self._dynamic_cycle_complete = False
+        self._single_game_manager_start_times.clear()
 
     def is_cycle_complete(self) -> bool:
         """Report whether the plugin has shown a full cycle of content."""
@@ -943,8 +946,23 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
 
         total_games = self._get_total_games_for_manager(current_manager)
         if total_games <= 1:
-            # Single (or no) game - treat as complete once visited
-            self._dynamic_managers_completed.add(manager_key)
+            # Single (or no) game - wait for full game display duration before marking complete
+            if manager_key not in self._single_game_manager_start_times:
+                # First time seeing this single-game manager - record start time
+                self._single_game_manager_start_times[manager_key] = time.time()
+                # Get game display duration from manager config
+                game_duration = getattr(current_manager, 'game_display_duration', 15)
+                self.logger.debug(f"Single-game manager {manager_key} first seen, will complete after {game_duration}s")
+            else:
+                # Check if enough time has passed
+                start_time = self._single_game_manager_start_times[manager_key]
+                game_duration = getattr(current_manager, 'game_display_duration', 15)
+                elapsed = time.time() - start_time
+                if elapsed >= game_duration:
+                    # Enough time has passed - mark as complete
+                    self._dynamic_managers_completed.add(manager_key)
+                    self.logger.debug(f"Single-game manager {manager_key} completed after {elapsed:.2f}s (required: {game_duration}s)")
+                # Otherwise, keep waiting
             return
 
         current_index = getattr(current_manager, "current_game_index", None)
@@ -992,7 +1010,21 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
                 manager = self._get_manager_for_mode(mode_name)
                 total_games = self._get_total_games_for_manager(manager)
                 if total_games <= 1:
-                    self._dynamic_managers_completed.add(manager_key)
+                    # For single-game managers, check if enough time has passed
+                    if manager_key in self._single_game_manager_start_times:
+                        start_time = self._single_game_manager_start_times[manager_key]
+                        game_duration = getattr(manager, 'game_display_duration', 15) if manager else 15
+                        elapsed = time.time() - start_time
+                        if elapsed >= game_duration:
+                            self._dynamic_managers_completed.add(manager_key)
+                        else:
+                            # Not enough time yet
+                            self._dynamic_cycle_complete = False
+                            return
+                    else:
+                        # Haven't seen this manager yet in _record_dynamic_progress
+                        self._dynamic_cycle_complete = False
+                        return
                 else:
                     self._dynamic_cycle_complete = False
                     return
