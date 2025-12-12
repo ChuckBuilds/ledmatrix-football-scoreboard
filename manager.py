@@ -134,6 +134,10 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
         # Track current display context for granular dynamic duration
         self._current_display_league: Optional[str] = None  # 'nfl' or 'ncaa_fb'
         self._current_display_mode_type: Optional[str] = None  # 'live', 'recent', 'upcoming'
+        
+        # Throttle logging for has_live_content() when returning False
+        self._last_live_content_false_log: float = 0.0  # Timestamp of last False log
+        self._live_content_log_interval: float = 60.0  # Log False results every 60 seconds
 
     def _initialize_managers(self):
         """Initialize all manager instances."""
@@ -777,7 +781,21 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
                     self.logger.info(f"has_live_content: NCAA FB live_games={len(live_games)}, filtered_live_games={len(live_games)}, ncaa_live={ncaa_live}")
 
         result = nfl_live or ncaa_live
-        self.logger.info(f"has_live_content() returning {result}: nfl_live={nfl_live}, ncaa_live={ncaa_live}")
+        
+        # Throttle logging when returning False to reduce log noise
+        # Always log True immediately (important), but only log False every 60 seconds
+        current_time = time.time()
+        should_log = result or (current_time - self._last_live_content_false_log >= self._live_content_log_interval)
+        
+        if should_log:
+            if result:
+                # Always log True results immediately
+                self.logger.info(f"has_live_content() returning {result}: nfl_live={nfl_live}, ncaa_live={ncaa_live}")
+            else:
+                # Log False results only every 60 seconds
+                self.logger.info(f"has_live_content() returning {result}: nfl_live={nfl_live}, ncaa_live={ncaa_live}")
+                self._last_live_content_false_log = current_time
+        
         return result
 
     def get_live_modes(self) -> list:
