@@ -550,16 +550,20 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
                 # Check if we already have a sticky manager for this mode
                 sticky_manager = self._sticky_manager_per_mode.get(display_mode)
                 
+                self.logger.info(f"Sticky manager check for {display_mode}: sticky={sticky_manager.__class__.__name__ if sticky_manager else None}, available_managers={[m.__class__.__name__ for m in managers_to_try if m]}")
+                
                 # If we have a sticky manager, try it first and only switch if it's done
                 if sticky_manager and sticky_manager in managers_to_try:
-                    self.logger.debug(f"Using sticky manager {sticky_manager.__class__.__name__} for {display_mode}")
+                    self.logger.info(f"Using sticky manager {sticky_manager.__class__.__name__} for {display_mode} - RESTRICTING to this manager only")
                     managers_to_try = [sticky_manager]  # Only try the sticky manager
                 else:
                     # No sticky manager yet, or it's not in the list anymore - will select a new one
                     if sticky_manager:
-                        self.logger.info(f"Sticky manager no longer available for {display_mode}, selecting new one")
+                        self.logger.info(f"Sticky manager {sticky_manager.__class__.__name__} no longer available for {display_mode}, selecting new one from {len(managers_to_try)} options")
                         self._sticky_manager_per_mode.pop(display_mode, None)
                         self._sticky_manager_start_time.pop(display_mode, None)
+                    else:
+                        self.logger.info(f"No sticky manager yet for {display_mode}, will select from {len(managers_to_try)} available managers")
                 
                 # Try each manager until one returns True (has content)
                 for current_manager in managers_to_try:
