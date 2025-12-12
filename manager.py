@@ -541,7 +541,9 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
                         # If display returned True, we have content to show
                         if result is True:
                             try:
-                                self._record_dynamic_progress(current_manager)
+                                # Build the actual mode name from league and mode_type for accurate tracking
+                                actual_mode = f"{self._current_display_league}_{mode_type}" if self._current_display_league and mode_type else display_mode
+                                self._record_dynamic_progress(current_manager, actual_mode=actual_mode)
                             except Exception as progress_err:  # pylint: disable=broad-except
                                 self.logger.debug(
                                     "Dynamic progress tracking failed: %s", progress_err
@@ -554,7 +556,9 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
                         # If result is None or other, assume success
                         else:
                             try:
-                                self._record_dynamic_progress(current_manager)
+                                # Build the actual mode name from league and mode_type for accurate tracking
+                                actual_mode = f"{self._current_display_league}_{mode_type}" if self._current_display_league and mode_type else display_mode
+                                self._record_dynamic_progress(current_manager, actual_mode=actual_mode)
                             except Exception as progress_err:  # pylint: disable=broad-except
                                 self.logger.debug(
                                     "Dynamic progress tracking failed: %s", progress_err
@@ -633,7 +637,9 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
                 result = current_manager.display(force_clear)
                 if result is not False:
                     try:
-                        self._record_dynamic_progress(current_manager)
+                        # Build the actual mode name from league and mode_type for accurate tracking
+                        current_mode = self.modes[self.current_mode_index] if self.modes else None
+                        self._record_dynamic_progress(current_manager, actual_mode=current_mode)
                     except Exception as progress_err:  # pylint: disable=broad-except
                         self.logger.debug(
                             "Dynamic progress tracking failed: %s", progress_err
@@ -935,17 +941,25 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
                 return getattr(self, "ncaa_fb_upcoming", None)
         return None
 
-    def _record_dynamic_progress(self, current_manager) -> None:
+    def _record_dynamic_progress(self, current_manager, actual_mode: str = None) -> None:
         """Track progress through managers/games for dynamic duration."""
         if not self._dynamic_feature_enabled() or not self.modes:
             self._dynamic_cycle_complete = True
             return
 
-        current_mode = self.modes[self.current_mode_index]
+        # Use actual_mode if provided (when display_mode is specified), otherwise use internal mode cycling
+        if actual_mode:
+            current_mode = actual_mode
+        else:
+            current_mode = self.modes[self.current_mode_index]
+        
         self._dynamic_cycle_seen_modes.add(current_mode)
 
         manager_key = self._build_manager_key(current_mode, current_manager)
         self._dynamic_mode_to_manager_key[current_mode] = manager_key
+        
+        # Log for debugging
+        self.logger.debug(f"_record_dynamic_progress: current_mode={current_mode}, manager={current_manager.__class__.__name__}, manager_key={manager_key}")
 
         total_games = self._get_total_games_for_manager(current_manager)
         if total_games <= 1:
