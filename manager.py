@@ -636,6 +636,7 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
                         self.display_manager.update_display()
                     except Exception as clear_err:
                         self.logger.debug(f"Error clearing display when no content: {clear_err}")
+                self.logger.info(f"Plugin display() returning False for {display_mode} - no content from any manager")
                 return False
             
             # Fall back to internal mode cycling if no display_mode provided
