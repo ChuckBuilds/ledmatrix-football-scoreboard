@@ -943,8 +943,11 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
             self.logger.info(f"get_cycle_duration: found {total_games} total games for {display_mode}")
             
             if total_games == 0:
-                self.logger.info(f"get_cycle_duration: {display_mode} has no games, returning None")
-                return None
+                # If no games found yet (managers still fetching data), return a default duration
+                # This allows the display to start while data is loading
+                default_duration = 45.0  # 3 games × 15s per game (reasonable default)
+                self.logger.info(f"get_cycle_duration: {display_mode} has no games yet, returning default {default_duration}s")
+                return default_duration
             
             # Calculate total duration: num_games × per_game_duration
             total_duration = total_games * per_game_duration
