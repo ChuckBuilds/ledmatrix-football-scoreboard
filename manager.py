@@ -143,6 +143,10 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
         self._last_display_mode: Optional[str] = None  # Track previous display mode
         self._last_display_mode_time: float = 0.0  # When we last saw this mode
         self._current_active_display_mode: Optional[str] = None  # Currently active external display mode
+        
+        # Sticky manager tracking - ensures we complete all games from one league before switching
+        self._sticky_manager_per_mode: Dict[str, Any] = {}  # {display_mode: manager_instance}
+        self._sticky_manager_start_time: Dict[str, float] = {}  # {display_mode: timestamp}
 
     def _initialize_managers(self):
         """Initialize all manager instances."""
@@ -542,6 +546,21 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
                 # Track which managers were actually used (had content) for this display mode
                 used_managers = []
                 
+                # STICKY MANAGER LOGIC: Complete all games from one league before switching
+                # Check if we already have a sticky manager for this mode
+                sticky_manager = self._sticky_manager_per_mode.get(display_mode)
+                
+                # If we have a sticky manager, try it first and only switch if it's done
+                if sticky_manager and sticky_manager in managers_to_try:
+                    self.logger.debug(f"Using sticky manager {sticky_manager.__class__.__name__} for {display_mode}")
+                    managers_to_try = [sticky_manager]  # Only try the sticky manager
+                else:
+                    # No sticky manager yet, or it's not in the list anymore - will select a new one
+                    if sticky_manager:
+                        self.logger.info(f"Sticky manager no longer available for {display_mode}, selecting new one")
+                        self._sticky_manager_per_mode.pop(display_mode, None)
+                        self._sticky_manager_start_time.pop(display_mode, None)
+                
                 # Try each manager until one returns True (has content)
                 for current_manager in managers_to_try:
                     if current_manager:
@@ -564,6 +583,12 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
                         
                         # If display returned True, we have content to show
                         if result is True:
+                            # Set as sticky manager if not already set
+                            if display_mode not in self._sticky_manager_per_mode:
+                                self._sticky_manager_per_mode[display_mode] = current_manager
+                                self._sticky_manager_start_time[display_mode] = time.time()
+                                self.logger.info(f"Set sticky manager {current_manager.__class__.__name__} for {display_mode}")
+                            
                             # Build the actual mode name from league and mode_type for accurate tracking
                             actual_mode = f"{self._current_display_league}_{mode_type}" if self._current_display_league and mode_type else display_mode
                             manager_key = self._build_manager_key(actual_mode, current_manager)
@@ -583,7 +608,24 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
                             self._evaluate_dynamic_cycle_completion(display_mode=display_mode)
                             self.logger.info(f"Plugin display() returning {result} for {display_mode}")
                             return result
-                        # If result is False, try next manager
+                        # If result is False from sticky manager, check if it completed its games
+                        elif result is False and current_manager == sticky_manager:
+                            # Check if this manager has completed all its games
+                            actual_mode = f"{self._current_display_league}_{mode_type}" if self._current_display_league and mode_type else display_mode
+                            manager_key = self._build_manager_key(actual_mode, current_manager)
+                            
+                            # If this manager is marked as completed, move to next manager
+                            if manager_key in self._dynamic_managers_completed:
+                                self.logger.info(f"Sticky manager {current_manager.__class__.__name__} completed all games, switching to next manager")
+                                self._sticky_manager_per_mode.pop(display_mode, None)
+                                self._sticky_manager_start_time.pop(display_mode, None)
+                                # Don't continue - fall through to try next manager
+                                break
+                            else:
+                                # Manager not done yet, just returning False temporarily (between game switches)
+                                self.logger.debug(f"Sticky manager {current_manager.__class__.__name__} returned False (between games), continuing")
+                                continue
+                        # If result is False from non-sticky manager, try next
                         elif result is False:
                             continue
                         # If result is None or other, assume success
