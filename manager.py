@@ -800,6 +800,118 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
         
         return []
 
+    def get_cycle_duration(self, display_mode: str = None) -> Optional[float]:
+        """
+        Calculate the expected cycle duration for a display mode based on the number of games.
+        
+        This implements dynamic duration scaling where:
+        - Total duration = num_games × per_game_duration
+        - Each game is shown for the user-configured duration
+        - Supports per-league and per-mode duration configuration
+        
+        Args:
+            display_mode: The display mode to calculate duration for (e.g., 'football_live', 'football_recent')
+        
+        Returns:
+            Total expected duration in seconds, or None if not applicable
+        """
+        if not self.is_enabled or not display_mode:
+            return None
+        
+        try:
+            # Extract the mode type (live, recent, upcoming)
+            mode_type = None
+            if display_mode.endswith('_live'):
+                mode_type = 'live'
+            elif display_mode.endswith('_recent'):
+                mode_type = 'recent'
+            elif display_mode.endswith('_upcoming'):
+                mode_type = 'upcoming'
+            
+            if not mode_type:
+                return None
+            
+            total_games = 0
+            per_game_duration = self.game_display_duration  # Default fallback
+            
+            # Collect all managers for this mode and count their games
+            managers_to_check = []
+            
+            if mode_type == 'live':
+                if self.nfl_enabled and hasattr(self, 'nfl_live'):
+                    managers_to_check.append(('nfl', self.nfl_live))
+                if self.ncaa_fb_enabled and hasattr(self, 'ncaa_fb_live'):
+                    managers_to_check.append(('ncaa_fb', self.ncaa_fb_live))
+            elif mode_type == 'recent':
+                if self.nfl_enabled and hasattr(self, 'nfl_recent'):
+                    managers_to_check.append(('nfl', self.nfl_recent))
+                if self.ncaa_fb_enabled and hasattr(self, 'ncaa_fb_recent'):
+                    managers_to_check.append(('ncaa_fb', self.ncaa_fb_recent))
+            elif mode_type == 'upcoming':
+                if self.nfl_enabled and hasattr(self, 'nfl_upcoming'):
+                    managers_to_check.append(('nfl', self.nfl_upcoming))
+                if self.ncaa_fb_enabled and hasattr(self, 'ncaa_fb_upcoming'):
+                    managers_to_check.append(('ncaa_fb', self.ncaa_fb_upcoming))
+            
+            # Count games from all applicable managers
+            for league_name, manager in managers_to_check:
+                if not manager:
+                    continue
+                
+                # Get the appropriate game list based on mode type
+                games = []
+                if mode_type == 'live':
+                    games = getattr(manager, 'live_games', [])
+                    # Get league-specific live_game_duration if configured
+                    league_config = self.config.get(league_name, {})
+                    per_game_duration = league_config.get('live_game_duration', 
+                                                         self.game_display_duration)
+                elif mode_type == 'recent':
+                    games = getattr(manager, 'recent_games', [])
+                    # Get league-specific recent_game_duration if configured
+                    league_config = self.config.get(league_name, {})
+                    per_game_duration = league_config.get('recent_game_duration', 
+                                                         self.game_display_duration)
+                elif mode_type == 'upcoming':
+                    games = getattr(manager, 'upcoming_games', [])
+                    # Get league-specific upcoming_game_duration if configured
+                    league_config = self.config.get(league_name, {})
+                    per_game_duration = league_config.get('upcoming_game_duration', 
+                                                         self.game_display_duration)
+                
+                # Filter out invalid games
+                if games:
+                    # For live games, filter out final games
+                    if mode_type == 'live':
+                        games = [g for g in games if not g.get('is_final', False)]
+                        if hasattr(manager, '_is_game_really_over'):
+                            games = [g for g in games if not manager._is_game_really_over(g)]
+                    
+                    game_count = len(games)
+                    total_games += game_count
+                    
+                    self.logger.debug(
+                        f"get_cycle_duration: {league_name} {mode_type} has {game_count} games, "
+                        f"per_game_duration={per_game_duration}s"
+                    )
+            
+            if total_games == 0:
+                self.logger.debug(f"get_cycle_duration: {display_mode} has no games, returning None")
+                return None
+            
+            # Calculate total duration: num_games × per_game_duration
+            total_duration = total_games * per_game_duration
+            
+            self.logger.info(
+                f"get_cycle_duration: {display_mode} = {total_games} games × {per_game_duration}s = {total_duration}s"
+            )
+            
+            return total_duration
+            
+        except Exception as e:
+            self.logger.error(f"Error calculating cycle duration for {display_mode}: {e}")
+            return None
+
     def get_info(self) -> Dict[str, Any]:
         """Get plugin information."""
         try:
