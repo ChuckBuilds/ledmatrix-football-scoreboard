@@ -142,6 +142,7 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
         # Track last display mode to detect when we return after being away
         self._last_display_mode: Optional[str] = None  # Track previous display mode
         self._last_display_mode_time: float = 0.0  # When we last saw this mode
+        self._current_active_display_mode: Optional[str] = None  # Currently active external display mode
 
     def _initialize_managers(self):
         """Initialize all manager instances."""
@@ -423,6 +424,9 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
             return False
 
         try:
+            # Track the current active display mode for use in is_cycle_complete()
+            if display_mode:
+                self._current_active_display_mode = display_mode
             # If display_mode is provided, use it to determine which manager to call
             if display_mode:
                 self.logger.debug(f"Display called with mode: {display_mode}")
@@ -1026,7 +1030,8 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
         """Report whether the plugin has shown a full cycle of content."""
         if not self._dynamic_feature_enabled():
             return True
-        self._evaluate_dynamic_cycle_completion()
+        # Pass the current active display mode to evaluate completion for the right mode
+        self._evaluate_dynamic_cycle_completion(display_mode=self._current_active_display_mode)
         return self._dynamic_cycle_complete
 
     def _dynamic_feature_enabled(self) -> bool:
