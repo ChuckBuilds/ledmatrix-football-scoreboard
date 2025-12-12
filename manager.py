@@ -852,17 +852,23 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
     # Dynamic duration hooks
     # ------------------------------------------------------------------
     def reset_cycle_state(self) -> None:
-        """Reset dynamic cycle tracking."""
+        """Reset dynamic cycle tracking.
+        
+        Note: We do NOT clear start times (_single_game_manager_start_times and _game_id_start_times)
+        because these need to persist across mode switches until the full game display duration
+        has elapsed. Only clear completion flags and progress tracking.
+        """
         super().reset_cycle_state()
         self._dynamic_cycle_seen_modes.clear()
         self._dynamic_mode_to_manager_key.clear()
         self._dynamic_manager_progress.clear()
         self._dynamic_managers_completed.clear()
         self._dynamic_cycle_complete = False
-        self._single_game_manager_start_times.clear()
-        self._game_id_start_times.clear()
+        # DO NOT clear start times - they need to persist until full duration elapsed
+        # self._single_game_manager_start_times.clear()  # Keep for duration tracking
+        # self._game_id_start_times.clear()  # Keep for duration tracking
         self._display_mode_to_managers.clear()
-        self.logger.debug("Dynamic cycle state reset - all tracking dictionaries cleared")
+        self.logger.debug("Dynamic cycle state reset - completion flags cleared, start times preserved")
 
     def is_cycle_complete(self) -> bool:
         """Report whether the plugin has shown a full cycle of content."""
@@ -1021,6 +1027,9 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
                     if manager_key not in self._dynamic_managers_completed:
                         self._dynamic_managers_completed.add(manager_key)
                         self.logger.info(f"Single-game manager {manager_key} completed after {elapsed:.2f}s (required: {game_duration}s)")
+                        # Clean up start time now that manager has completed
+                        if manager_key in self._single_game_manager_start_times:
+                            del self._single_game_manager_start_times[manager_key]
                 else:
                     # Still waiting
                     self.logger.debug(f"Single-game manager {manager_key} waiting: {elapsed:.2f}s/{game_duration}s (start_time={start_time:.2f}, current_time={current_time:.2f})")
@@ -1155,6 +1164,9 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
                                         self._dynamic_managers_completed.add(manager_key)
                                         incomplete_managers.remove(manager_key)
                                         self.logger.info(f"Manager {manager_key} marked complete in completion check: {elapsed:.2f}s >= {game_duration}s")
+                                        # Clean up start time now that manager has completed
+                                        if manager_key in self._single_game_manager_start_times:
+                                            del self._single_game_manager_start_times[manager_key]
                                     else:
                                         self.logger.debug(f"Manager {manager_key} waiting in completion check: {elapsed:.2f}s/{game_duration}s (start_time={start_time:.2f}, current_time={current_time:.2f})")
                                 else:
