@@ -583,12 +583,6 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
                         
                         # If display returned True, we have content to show
                         if result is True:
-                            # Set as sticky manager if not already set
-                            if display_mode not in self._sticky_manager_per_mode:
-                                self._sticky_manager_per_mode[display_mode] = current_manager
-                                self._sticky_manager_start_time[display_mode] = time.time()
-                                self.logger.info(f"Set sticky manager {current_manager.__class__.__name__} for {display_mode}")
-                            
                             # Build the actual mode name from league and mode_type for accurate tracking
                             actual_mode = f"{self._current_display_league}_{mode_type}" if self._current_display_league and mode_type else display_mode
                             manager_key = self._build_manager_key(actual_mode, current_manager)
@@ -600,6 +594,12 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
                                 self.logger.debug(
                                     "Dynamic progress tracking failed: %s", progress_err
                                 )
+                            
+                            # Set as sticky manager AFTER progress tracking (which may clear it on new cycle)
+                            if display_mode not in self._sticky_manager_per_mode:
+                                self._sticky_manager_per_mode[display_mode] = current_manager
+                                self._sticky_manager_start_time[display_mode] = time.time()
+                                self.logger.info(f"Set sticky manager {current_manager.__class__.__name__} for {display_mode}")
                             
                             # Track which managers were used for this display mode
                             if display_mode:
