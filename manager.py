@@ -1004,17 +1004,18 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
         total_games = self._get_total_games_for_manager(current_manager)
         if total_games <= 1:
             # Single (or no) game - wait for full game display duration before marking complete
+            current_time = time.time()
             if manager_key not in self._single_game_manager_start_times:
                 # First time seeing this single-game manager - record start time
-                self._single_game_manager_start_times[manager_key] = time.time()
+                self._single_game_manager_start_times[manager_key] = current_time
                 # Get game display duration from manager config
                 game_duration = getattr(current_manager, 'game_display_duration', 15)
-                self.logger.info(f"Single-game manager {manager_key} first seen, will complete after {game_duration}s")
+                self.logger.info(f"Single-game manager {manager_key} first seen at {current_time:.2f}, will complete after {game_duration}s")
             else:
                 # Check if enough time has passed
                 start_time = self._single_game_manager_start_times[manager_key]
                 game_duration = getattr(current_manager, 'game_display_duration', 15)
-                elapsed = time.time() - start_time
+                elapsed = current_time - start_time
                 if elapsed >= game_duration:
                     # Enough time has passed - mark as complete
                     if manager_key not in self._dynamic_managers_completed:
@@ -1022,7 +1023,7 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
                         self.logger.info(f"Single-game manager {manager_key} completed after {elapsed:.2f}s (required: {game_duration}s)")
                 else:
                     # Still waiting
-                    self.logger.debug(f"Single-game manager {manager_key} waiting: {elapsed:.2f}s/{game_duration}s")
+                    self.logger.debug(f"Single-game manager {manager_key} waiting: {elapsed:.2f}s/{game_duration}s (start_time={start_time:.2f}, current_time={current_time:.2f})")
             return
 
         # Get current game to extract its ID for tracking
@@ -1125,8 +1126,9 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
         if display_mode and display_mode in self._display_mode_to_managers:
             used_manager_keys = self._display_mode_to_managers[display_mode]
             if not used_manager_keys:
-                # No managers were used for this display mode yet
+                # No managers were used for this display mode yet - cycle not complete
                 self._dynamic_cycle_complete = False
+                self.logger.debug(f"Display mode {display_mode} has no managers tracked yet - cycle incomplete")
                 return
             
             # Check if all managers used for this display mode have completed
@@ -1147,14 +1149,20 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
                                 if manager_key in self._single_game_manager_start_times:
                                     start_time = self._single_game_manager_start_times[manager_key]
                                     game_duration = getattr(manager, 'game_display_duration', 15)
-                                    elapsed = time.time() - start_time
+                                    current_time = time.time()
+                                    elapsed = current_time - start_time
                                     if elapsed >= game_duration:
                                         self._dynamic_managers_completed.add(manager_key)
                                         incomplete_managers.remove(manager_key)
+                                        self.logger.info(f"Manager {manager_key} marked complete in completion check: {elapsed:.2f}s >= {game_duration}s")
                                     else:
-                                        self.logger.debug(f"Manager {manager_key} waiting: {elapsed:.2f}s/{game_duration}s")
+                                        self.logger.debug(f"Manager {manager_key} waiting in completion check: {elapsed:.2f}s/{game_duration}s (start_time={start_time:.2f}, current_time={current_time:.2f})")
                                 else:
-                                    self.logger.debug(f"Manager {manager_key} not yet seen")
+                                    # Manager not yet seen - keep it incomplete
+                                    # This means _record_dynamic_progress hasn't been called yet for this manager
+                                    # or the state was reset, so we can't determine completion
+                                    self.logger.debug(f"Manager {manager_key} not yet seen in completion check (not in start_times) - keeping incomplete")
+                                    # Don't remove from incomplete_managers - it stays incomplete
                             else:
                                 # Multi-game manager - check if all current games have been shown for full duration
                                 progress_set = self._dynamic_manager_progress.get(manager_key, set())
@@ -1169,8 +1177,22 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
                                     self.logger.debug(f"Manager {manager_key} progress: {len(progress_set)}/{len(current_game_ids)} games completed, missing: {len(missing_games)}")
             
             if not incomplete_managers:
-                self._dynamic_cycle_complete = True
-                self.logger.info(f"Display mode {display_mode} cycle complete - all {len(used_manager_keys)} manager(s) completed")
+                # All managers have completed - verify they were actually tracked
+                # This is a safety check to prevent premature completion
+                all_tracked = all(
+                    manager_key in self._single_game_manager_start_times or 
+                    manager_key in self._dynamic_managers_completed or
+                    manager_key in self._dynamic_manager_progress
+                    for manager_key in used_manager_keys
+                )
+                if all_tracked:
+                    self._dynamic_cycle_complete = True
+                    self.logger.info(f"Display mode {display_mode} cycle complete - all {len(used_manager_keys)} manager(s) completed")
+                else:
+                    # Some managers weren't properly tracked - keep cycle incomplete
+                    self._dynamic_cycle_complete = False
+                    untracked = [mk for mk in used_manager_keys if mk not in self._single_game_manager_start_times and mk not in self._dynamic_managers_completed and mk not in self._dynamic_manager_progress]
+                    self.logger.warning(f"Display mode {display_mode} cycle incomplete - {len(untracked)} manager(s) not properly tracked: {untracked}")
             else:
                 self._dynamic_cycle_complete = False
                 self.logger.debug(f"Display mode {display_mode} cycle incomplete - {len(incomplete_managers)} manager(s) still in progress: {incomplete_managers}")
