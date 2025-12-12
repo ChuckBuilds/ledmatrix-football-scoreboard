@@ -1157,26 +1157,29 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
         
         # Check if this is a new cycle for this display mode BEFORE adding to tracking
         # A "new cycle" means we're returning to a mode after having been away (different mode)
-        # We detect this by checking if the display_mode changed from the last call AND there's been time gap
+        # Only track external display_mode (from display controller), not internal mode cycling
         is_new_cycle = False
         current_time = time.time()
-        if display_mode:
-            # Check if we've switched away and come back
-            # New cycle if: different mode from last time OR same mode but hasn't been tracked yet for this cycle
+        
+        # Only track mode changes for external calls (where display_mode differs from actual_mode)
+        # This prevents internal mode cycling from triggering new cycle detection
+        is_external_call = (display_mode and actual_mode and display_mode != actual_mode)
+        
+        if is_external_call:
+            # External call from display controller - check for mode switches
             if display_mode != self._last_display_mode:
-                # Definitely switched modes - this is a new cycle
+                # Switched to a different external mode - this is a new cycle
                 is_new_cycle = True
                 time_since_last = current_time - self._last_display_mode_time if self._last_display_mode_time > 0 else 999
                 self.logger.info(f"New cycle detected for {display_mode}: switched from {self._last_display_mode} (last seen {time_since_last:.1f}s ago)")
             elif manager_key not in self._display_mode_to_managers.get(display_mode, set()):
-                # Same mode but manager not tracked yet - this shouldn't happen often but handle it
-                self.logger.info(f"Manager {manager_key} not yet tracked for current mode {display_mode} - resetting state")
-                is_new_cycle = True
+                # Same external mode but manager not tracked yet - could be multi-league setup
+                self.logger.debug(f"Manager {manager_key} not yet tracked for current mode {display_mode}")
             else:
                 # Same mode and manager already tracked - continue within current cycle
                 self.logger.debug(f"Continuing cycle for {display_mode}: manager {manager_key} already tracked")
             
-            # Update last display mode tracking
+            # Update last display mode tracking (only for external calls)
             self._last_display_mode = display_mode
             self._last_display_mode_time = current_time
             
