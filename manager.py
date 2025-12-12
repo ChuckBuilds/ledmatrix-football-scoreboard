@@ -581,6 +581,7 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
                                 self._display_mode_to_managers.setdefault(display_mode, set()).add(manager_key)
                             
                             self._evaluate_dynamic_cycle_completion(display_mode=display_mode)
+                            self.logger.info(f"Plugin display() returning {result} for {display_mode}")
                             return result
                         # If result is False, try next manager
                         elif result is False:
