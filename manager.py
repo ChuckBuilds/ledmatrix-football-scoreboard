@@ -1015,14 +1015,18 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
             
             # Check if this is a new cycle for this display mode
             # If display_mode is provided and this manager_key is not yet tracked for this display_mode,
-            # it means we're starting a new cycle, so reset any existing start time
+            # it means we're starting a new cycle, so reset any existing start time and completion status
             if display_mode:
                 if display_mode not in self._display_mode_to_managers or manager_key not in self._display_mode_to_managers[display_mode]:
-                    # New cycle starting - reset start time if it exists
+                    # New cycle starting - reset start time and completion status if they exist
                     if manager_key in self._single_game_manager_start_times:
                         old_start = self._single_game_manager_start_times[manager_key]
                         self.logger.debug(f"New cycle for {display_mode}: resetting start time for {manager_key} (old: {old_start:.2f})")
                         del self._single_game_manager_start_times[manager_key]
+                    # Also remove from completed set so it can be tracked fresh in this cycle
+                    if manager_key in self._dynamic_managers_completed:
+                        self.logger.debug(f"New cycle for {display_mode}: removing {manager_key} from completed set")
+                        self._dynamic_managers_completed.discard(manager_key)
             
             if manager_key not in self._single_game_manager_start_times:
                 # First time seeing this single-game manager (in this cycle) - record start time
