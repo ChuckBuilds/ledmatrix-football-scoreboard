@@ -955,7 +955,7 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
                 self._single_game_manager_start_times[manager_key] = time.time()
                 # Get game display duration from manager config
                 game_duration = getattr(current_manager, 'game_display_duration', 15)
-                self.logger.debug(f"Single-game manager {manager_key} first seen, will complete after {game_duration}s")
+                self.logger.info(f"Single-game manager {manager_key} first seen, will complete after {game_duration}s")
             else:
                 # Check if enough time has passed
                 start_time = self._single_game_manager_start_times[manager_key]
@@ -963,9 +963,12 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
                 elapsed = time.time() - start_time
                 if elapsed >= game_duration:
                     # Enough time has passed - mark as complete
-                    self._dynamic_managers_completed.add(manager_key)
-                    self.logger.debug(f"Single-game manager {manager_key} completed after {elapsed:.2f}s (required: {game_duration}s)")
-                # Otherwise, keep waiting
+                    if manager_key not in self._dynamic_managers_completed:
+                        self._dynamic_managers_completed.add(manager_key)
+                        self.logger.info(f"Single-game manager {manager_key} completed after {elapsed:.2f}s (required: {game_duration}s)")
+                else:
+                    # Still waiting
+                    self.logger.debug(f"Single-game manager {manager_key} waiting: {elapsed:.2f}s/{game_duration}s")
             return
 
         current_index = getattr(current_manager, "current_game_index", None)
@@ -982,7 +985,7 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
             # First time seeing this game - record start time
             game_times[identifier] = time.time()
             game_duration = getattr(current_manager, 'game_display_duration', 15)
-            self.logger.debug(f"Game {identifier} in manager {manager_key} first seen, will complete after {game_duration}s")
+            self.logger.info(f"Game {identifier} in manager {manager_key} first seen, will complete after {game_duration}s")
         
         # Check if this game has been shown for full duration
         start_time = game_times[identifier]
@@ -991,9 +994,12 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
         
         if elapsed >= game_duration:
             # This game has been shown for full duration - add to progress set
-            progress_set.add(identifier)
-            self.logger.debug(f"Game {identifier} in manager {manager_key} completed after {elapsed:.2f}s (required: {game_duration}s)")
-        # Otherwise, keep waiting for this game to complete its duration
+            if identifier not in progress_set:
+                progress_set.add(identifier)
+                self.logger.info(f"Game {identifier} in manager {manager_key} completed after {elapsed:.2f}s (required: {game_duration}s)")
+        else:
+            # Still waiting for this game to complete its duration
+            self.logger.debug(f"Game {identifier} in manager {manager_key} waiting: {elapsed:.2f}s/{game_duration}s")
 
         # Drop identifiers that no longer exist if game list shrinks
         valid_identifiers = {f"index-{idx}" for idx in range(total_games)}
@@ -1004,8 +1010,9 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
 
         # Only mark manager complete when all games have been shown for their full duration
         if len(progress_set) >= total_games:
-            self._dynamic_managers_completed.add(manager_key)
-            self.logger.debug(f"Manager {manager_key} completed - all {total_games} games shown for full duration")
+            if manager_key not in self._dynamic_managers_completed:
+                self._dynamic_managers_completed.add(manager_key)
+                self.logger.info(f"Manager {manager_key} completed - all {total_games} games shown for full duration (progress: {len(progress_set)}/{total_games})")
 
     def _evaluate_dynamic_cycle_completion(self) -> None:
         """Determine whether all enabled modes have completed their cycles."""
