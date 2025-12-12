@@ -892,6 +892,12 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
                 if self.ncaa_fb_enabled and hasattr(self, 'ncaa_fb_upcoming'):
                     managers_to_check.append(('ncaa_fb', self.ncaa_fb_upcoming))
             
+            # CRITICAL: Update managers BEFORE checking game counts!
+            self.logger.info(f"get_cycle_duration: updating {len(managers_to_check)} manager(s) before counting games")
+            for league_name, manager in managers_to_check:
+                if manager:
+                    self._ensure_manager_updated(manager)
+            
             # Count games from all applicable managers
             for league_name, manager in managers_to_check:
                 if not manager:
