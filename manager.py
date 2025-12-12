@@ -1018,15 +1018,23 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
             # it means we're starting a new cycle, so reset any existing start time and completion status
             if display_mode:
                 if display_mode not in self._display_mode_to_managers or manager_key not in self._display_mode_to_managers[display_mode]:
-                    # New cycle starting - reset start time and completion status if they exist
+                    # New cycle starting - reset ALL state for this manager to start completely fresh
                     if manager_key in self._single_game_manager_start_times:
                         old_start = self._single_game_manager_start_times[manager_key]
-                        self.logger.debug(f"New cycle for {display_mode}: resetting start time for {manager_key} (old: {old_start:.2f})")
+                        self.logger.info(f"New cycle for {display_mode}: resetting start time for {manager_key} (old: {old_start:.2f})")
                         del self._single_game_manager_start_times[manager_key]
                     # Also remove from completed set so it can be tracked fresh in this cycle
                     if manager_key in self._dynamic_managers_completed:
-                        self.logger.debug(f"New cycle for {display_mode}: removing {manager_key} from completed set")
+                        self.logger.info(f"New cycle for {display_mode}: removing {manager_key} from completed set")
                         self._dynamic_managers_completed.discard(manager_key)
+                    # Also clear any game ID start times for this manager
+                    if manager_key in self._game_id_start_times:
+                        self.logger.debug(f"New cycle for {display_mode}: clearing game ID start times for {manager_key}")
+                        del self._game_id_start_times[manager_key]
+                    # Clear progress tracking for this manager
+                    if manager_key in self._dynamic_manager_progress:
+                        self.logger.debug(f"New cycle for {display_mode}: clearing progress for {manager_key}")
+                        self._dynamic_manager_progress[manager_key].clear()
             
             if manager_key not in self._single_game_manager_start_times:
                 # First time seeing this single-game manager (in this cycle) - record start time
