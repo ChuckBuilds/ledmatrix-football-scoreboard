@@ -1173,11 +1173,21 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
         
         if is_external_call:
             # External call from display controller - check for mode switches
+            # Only treat as "new cycle" if we've been away for a while (> 10s)
+            # This allows cycling through recent→upcoming→live→recent without clearing state
+            NEW_CYCLE_THRESHOLD = 10.0  # seconds
+            
             if display_mode != self._last_display_mode:
-                # Switched to a different external mode - this is a new cycle
-                is_new_cycle = True
+                # Switched to a different external mode
                 time_since_last = current_time - self._last_display_mode_time if self._last_display_mode_time > 0 else 999
-                self.logger.info(f"New cycle detected for {display_mode}: switched from {self._last_display_mode} (last seen {time_since_last:.1f}s ago)")
+                
+                # Only treat as new cycle if we've been away for a while OR this is the first time
+                if time_since_last >= NEW_CYCLE_THRESHOLD:
+                    is_new_cycle = True
+                    self.logger.info(f"New cycle detected for {display_mode}: switched from {self._last_display_mode} (last seen {time_since_last:.1f}s ago)")
+                else:
+                    # Quick mode switch within same overall cycle - don't reset
+                    self.logger.debug(f"Quick mode switch to {display_mode} from {self._last_display_mode} ({time_since_last:.1f}s ago) - continuing cycle")
             elif manager_key not in self._display_mode_to_managers.get(display_mode, set()):
                 # Same external mode but manager not tracked yet - could be multi-league setup
                 self.logger.debug(f"Manager {manager_key} not yet tracked for current mode {display_mode}")
@@ -1189,23 +1199,25 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
             self._last_display_mode = display_mode
             self._last_display_mode_time = current_time
             
-            # New cycle starting - reset ALL state for this manager to start completely fresh
-            if manager_key in self._single_game_manager_start_times:
-                old_start = self._single_game_manager_start_times[manager_key]
-                self.logger.info(f"New cycle for {display_mode}: resetting start time for {manager_key} (old: {old_start:.2f})")
-                del self._single_game_manager_start_times[manager_key]
-            # Also remove from completed set so it can be tracked fresh in this cycle
-            if manager_key in self._dynamic_managers_completed:
-                self.logger.info(f"New cycle for {display_mode}: removing {manager_key} from completed set")
-                self._dynamic_managers_completed.discard(manager_key)
-            # Also clear any game ID start times for this manager
-            if manager_key in self._game_id_start_times:
-                self.logger.info(f"New cycle for {display_mode}: clearing game ID start times for {manager_key}")
-                del self._game_id_start_times[manager_key]
-            # Clear progress tracking for this manager
-            if manager_key in self._dynamic_manager_progress:
-                self.logger.info(f"New cycle for {display_mode}: clearing progress for {manager_key}")
-                self._dynamic_manager_progress[manager_key].clear()
+            # ONLY reset state if this is truly a new cycle (after threshold)
+            if is_new_cycle:
+                # New cycle starting - reset ALL state for this manager to start completely fresh
+                if manager_key in self._single_game_manager_start_times:
+                    old_start = self._single_game_manager_start_times[manager_key]
+                    self.logger.info(f"New cycle for {display_mode}: resetting start time for {manager_key} (old: {old_start:.2f})")
+                    del self._single_game_manager_start_times[manager_key]
+                # Also remove from completed set so it can be tracked fresh in this cycle
+                if manager_key in self._dynamic_managers_completed:
+                    self.logger.info(f"New cycle for {display_mode}: removing {manager_key} from completed set")
+                    self._dynamic_managers_completed.discard(manager_key)
+                # Also clear any game ID start times for this manager
+                if manager_key in self._game_id_start_times:
+                    self.logger.info(f"New cycle for {display_mode}: clearing game ID start times for {manager_key}")
+                    del self._game_id_start_times[manager_key]
+                # Clear progress tracking for this manager
+                if manager_key in self._dynamic_manager_progress:
+                    self.logger.info(f"New cycle for {display_mode}: clearing progress for {manager_key}")
+                    self._dynamic_manager_progress[manager_key].clear()
         
         # Now add to tracking AFTER checking for new cycle
         if display_mode and display_mode != current_mode:
