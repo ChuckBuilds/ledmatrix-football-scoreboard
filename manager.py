@@ -138,6 +138,10 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
         # Throttle logging for has_live_content() when returning False
         self._last_live_content_false_log: float = 0.0  # Timestamp of last False log
         self._live_content_log_interval: float = 60.0  # Log False results every 60 seconds
+        
+        # Track last display mode to detect when we return after being away
+        self._last_display_mode: Optional[str] = None  # Track previous display mode
+        self._last_display_mode_time: float = 0.0  # When we last saw this mode
 
     def _initialize_managers(self):
         """Initialize all manager instances."""
@@ -1152,12 +1156,25 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
         total_games = self._get_total_games_for_manager(current_manager)
         
         # Check if this is a new cycle for this display mode BEFORE adding to tracking
-        # If display_mode is provided and this manager_key is not yet tracked for this display_mode,
-        # it means we're starting a new cycle, so reset any existing start time and completion status
+        # A "new cycle" means we're returning to a mode after having been away (different mode)
+        # We detect this by checking if the display_mode changed from the last call AND there's been time gap
         is_new_cycle = False
-        if display_mode and (display_mode not in self._display_mode_to_managers or manager_key not in self._display_mode_to_managers.get(display_mode, set())):
-            is_new_cycle = True
-            self.logger.info(f"New cycle detected for {display_mode}: manager {manager_key} not in tracking")
+        current_time = time.time()
+        if display_mode:
+            # Check if we've switched away and come back
+            # New cycle if: different mode from last time OR same mode but hasn't been tracked yet for this cycle
+            if display_mode != self._last_display_mode:
+                # Definitely switched modes - this is a new cycle
+                is_new_cycle = True
+                time_since_last = current_time - self._last_display_mode_time if self._last_display_mode_time > 0 else 999
+                self.logger.info(f"New cycle detected for {display_mode}: switched from {self._last_display_mode} (last seen {time_since_last:.1f}s ago)")
+            elif manager_key not in self._display_mode_to_managers.get(display_mode, set()):
+                # Same mode but manager not tracked yet - this shouldn't happen often but handle it
+                self.logger.debug(f"Manager {manager_key} not yet tracked for current mode {display_mode}")
+            
+            # Update last display mode tracking
+            self._last_display_mode = display_mode
+            self._last_display_mode_time = current_time
             
             # New cycle starting - reset ALL state for this manager to start completely fresh
             if manager_key in self._single_game_manager_start_times:
