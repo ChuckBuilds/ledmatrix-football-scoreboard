@@ -703,10 +703,12 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
     def has_live_priority(self) -> bool:
         if not self.is_enabled:
             return False
-        return (
+        result = (
             (self.nfl_enabled and self.nfl_live_priority)
             or (self.ncaa_fb_enabled and self.ncaa_fb_live_priority)
         )
+        self.logger.debug(f"has_live_priority() called: nfl_enabled={self.nfl_enabled}, nfl_live_priority={self.nfl_live_priority}, ncaa_fb_enabled={self.ncaa_fb_enabled}, ncaa_fb_live_priority={self.ncaa_fb_live_priority}, result={result}")
+        return result
 
     def has_live_content(self) -> bool:
         if not self.is_enabled:
@@ -740,6 +742,8 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
                     else:
                         # No favorite teams configured, return True if any live games exist
                         nfl_live = True
+                    
+                    self.logger.info(f"has_live_content: NFL live_games={len(live_games)}, filtered_live_games={len(live_games)}, nfl_live={nfl_live}")
 
         # Check NCAA FB live content
         ncaa_live = False
@@ -769,8 +773,12 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
                     else:
                         # No favorite teams configured, return True if any live games exist
                         ncaa_live = True
+                    
+                    self.logger.info(f"has_live_content: NCAA FB live_games={len(live_games)}, filtered_live_games={len(live_games)}, ncaa_live={ncaa_live}")
 
-        return nfl_live or ncaa_live
+        result = nfl_live or ncaa_live
+        self.logger.info(f"has_live_content() returning {result}: nfl_live={nfl_live}, ncaa_live={ncaa_live}")
+        return result
 
     def get_live_modes(self) -> list:
         """
