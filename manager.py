@@ -1288,6 +1288,12 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
                 if manager_key in self._dynamic_manager_progress:
                     self.logger.info(f"New cycle for {display_mode}: clearing progress for {manager_key}")
                     self._dynamic_manager_progress[manager_key].clear()
+                
+                # Clear sticky manager for this mode since we're starting fresh
+                if display_mode in self._sticky_manager_per_mode:
+                    self.logger.info(f"New cycle for {display_mode}: clearing sticky manager")
+                    self._sticky_manager_per_mode.pop(display_mode, None)
+                    self._sticky_manager_start_time.pop(display_mode, None)
         
         # Now add to tracking AFTER checking for new cycle
         if display_mode and display_mode != current_mode:
