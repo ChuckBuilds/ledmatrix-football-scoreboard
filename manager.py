@@ -556,6 +556,12 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
                         self._ensure_manager_updated(current_manager)
                         
                         result = current_manager.display(force_clear)
+                        
+                        # Debug logging
+                        manager_class_name = current_manager.__class__.__name__
+                        has_current_game = hasattr(current_manager, 'current_game') and current_manager.current_game is not None
+                        self.logger.info(f"Manager {manager_class_name} display() returned {result}, has_current_game={has_current_game}")
+                        
                         # If display returned True, we have content to show
                         if result is True:
                             # Build the actual mode name from league and mode_type for accurate tracking
