@@ -849,7 +849,9 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
         Returns:
             Total expected duration in seconds, or None if not applicable
         """
+        self.logger.info(f"get_cycle_duration() called with display_mode={display_mode}, is_enabled={self.is_enabled}")
         if not self.is_enabled or not display_mode:
+            self.logger.info(f"get_cycle_duration() returning None: is_enabled={self.is_enabled}, display_mode={display_mode}")
             return None
         
         try:
