@@ -588,18 +588,41 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
                             self._evaluate_dynamic_cycle_completion(display_mode=display_mode)
                             return True
                 
-                # No manager had content
+                # No manager had content - log why
                 if not managers_to_try:
                     # Enhanced diagnostic logging
                     nfl_has_manager = hasattr(self, 'nfl_live') if mode_type == 'live' else (hasattr(self, 'nfl_recent') if mode_type == 'recent' else hasattr(self, 'nfl_upcoming'))
                     ncaa_fb_has_manager = hasattr(self, 'ncaa_fb_live') if mode_type == 'live' else (hasattr(self, 'ncaa_fb_recent') if mode_type == 'recent' else hasattr(self, 'ncaa_fb_upcoming'))
+                    self.logger.warning(f"No managers to try for {display_mode}: nfl_enabled={self.nfl_enabled}, nfl_has_manager={nfl_has_manager}, ncaa_fb_enabled={self.ncaa_fb_enabled}, ncaa_fb_has_manager={ncaa_fb_has_manager}")
+                else:
+                    # Managers were tried but all returned False - log details
+                    if mode_type == 'live':
+                        if hasattr(self, 'nfl_live'):
+                            nfl_live_games = getattr(self.nfl_live, 'live_games', [])
+                            self.logger.warning(f"football_live: All managers returned False. NFL live_games count: {len(nfl_live_games) if nfl_live_games else 0}")
+                        if hasattr(self, 'ncaa_fb_live'):
+                            ncaa_live_games = getattr(self.ncaa_fb_live, 'live_games', [])
+                            self.logger.warning(f"football_live: All managers returned False. NCAA FB live_games count: {len(ncaa_live_games) if ncaa_live_games else 0}")
                     self.logger.warning(
                         f"No managers available for mode: {display_mode} "
                         f"(NFL enabled: {self.nfl_enabled}, has manager: {nfl_has_manager}; "
                         f"NCAA FB enabled: {self.ncaa_fb_enabled}, has manager: {ncaa_fb_has_manager})"
                     )
                 else:
-                    self.logger.debug(f"No content available for mode: {display_mode} after trying {len(managers_to_try)} manager(s)")
+                    # Managers were tried but all returned False - log details for live mode
+                    if mode_type == 'live':
+                        if hasattr(self, 'nfl_live'):
+                            nfl_live_games = getattr(self.nfl_live, 'live_games', [])
+                            self.logger.warning(f"football_live: All managers returned False. NFL live_games count: {len(nfl_live_games) if nfl_live_games else 0}")
+                            if nfl_live_games:
+                                self.logger.warning(f"football_live: NFL has {len(nfl_live_games)} live game(s) but display() returned False")
+                        if hasattr(self, 'ncaa_fb_live'):
+                            ncaa_live_games = getattr(self.ncaa_fb_live, 'live_games', [])
+                            self.logger.warning(f"football_live: All managers returned False. NCAA FB live_games count: {len(ncaa_live_games) if ncaa_live_games else 0}")
+                            if ncaa_live_games:
+                                self.logger.warning(f"football_live: NCAA FB has {len(ncaa_live_games)} live game(s) but display() returned False")
+                    else:
+                        self.logger.debug(f"No content available for mode: {display_mode} after trying {len(managers_to_try)} manager(s)")
                 
                 # Clear display when no content available (safety measure)
                 if force_clear:
