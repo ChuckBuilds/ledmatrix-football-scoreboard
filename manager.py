@@ -1009,22 +1009,23 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
     def reset_cycle_state(self) -> None:
         """Reset dynamic cycle tracking.
         
-        Note: We do NOT clear start times (_single_game_manager_start_times and _game_id_start_times)
-        because these need to persist across mode switches until the full game display duration
-        has elapsed. Only clear completion flags and progress tracking.
+        Note: We do NOT clear start times, progress, or display_mode_to_managers
+        because these need to persist across quick mode switches within the same plugin.
+        The 10-second threshold in _record_dynamic_progress handles true new cycles.
         """
         super().reset_cycle_state()
         self._dynamic_cycle_seen_modes.clear()
         self._dynamic_mode_to_manager_key.clear()
-        self._dynamic_manager_progress.clear()
-        self._dynamic_managers_completed.clear()
+        # DO NOT clear these - let the 10-second threshold in _record_dynamic_progress handle it
+        # self._dynamic_manager_progress.clear()
+        # self._dynamic_managers_completed.clear()
         self._dynamic_cycle_complete = False
         # DO NOT clear start times - they need to persist until full duration elapsed
         # self._single_game_manager_start_times.clear()  # Keep for duration tracking
         # self._game_id_start_times.clear()  # Keep for duration tracking
-        # DO clear display_mode_to_managers so we track fresh managers for each cycle
-        self._display_mode_to_managers.clear()
-        self.logger.debug("Dynamic cycle state reset - completion flags and manager mappings cleared, start times preserved")
+        # DO NOT clear display_mode_to_managers - the 10s threshold handles new cycles
+        # self._display_mode_to_managers.clear()
+        self.logger.debug("Dynamic cycle state reset - flags cleared, tracking preserved for multi-mode plugin cycle")
 
     def is_cycle_complete(self) -> bool:
         """Report whether the plugin has shown a full cycle of content."""
