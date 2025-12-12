@@ -934,8 +934,10 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
                         f"per_game_duration={per_game_duration}s"
                     )
             
+            self.logger.info(f"get_cycle_duration: found {total_games} total games for {display_mode}")
+            
             if total_games == 0:
-                self.logger.debug(f"get_cycle_duration: {display_mode} has no games, returning None")
+                self.logger.info(f"get_cycle_duration: {display_mode} has no games, returning None")
                 return None
             
             # Calculate total duration: num_games × per_game_duration
