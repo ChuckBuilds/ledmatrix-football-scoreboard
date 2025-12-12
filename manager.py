@@ -125,8 +125,11 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
         self._dynamic_cycle_complete = False
         # Track when single-game managers were first seen to ensure full duration
         self._single_game_manager_start_times: Dict[str, float] = {}
-        # Track when each game index was first seen to ensure full per-game duration
-        self._game_index_start_times: Dict[str, Dict[str, float]] = {}  # {manager_key: {identifier: start_time}}
+        # Track when each game ID was first seen to ensure full per-game duration
+        # Using game IDs instead of indices prevents start time resets when game order changes
+        self._game_id_start_times: Dict[str, Dict[str, float]] = {}  # {manager_key: {game_id: start_time}}
+        # Track which managers were actually used for each display mode
+        self._display_mode_to_managers: Dict[str, Set[str]] = {}  # {display_mode: {manager_key, ...}}
         
         # Track current display context for granular dynamic duration
         self._current_display_league: Optional[str] = None  # 'nfl' or 'ncaa_fb'
@@ -524,6 +527,9 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
                         elif mode_type == 'upcoming' and hasattr(self, 'ncaa_fb_upcoming'):
                             managers_to_try.append(self.ncaa_fb_upcoming)
                 
+                # Track which managers were actually used (had content) for this display mode
+                used_managers = []
+                
                 # Try each manager until one returns True (has content)
                 for current_manager in managers_to_try:
                     if current_manager:
@@ -540,30 +546,46 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
                         result = current_manager.display(force_clear)
                         # If display returned True, we have content to show
                         if result is True:
+                            # Build the actual mode name from league and mode_type for accurate tracking
+                            actual_mode = f"{self._current_display_league}_{mode_type}" if self._current_display_league and mode_type else display_mode
+                            manager_key = self._build_manager_key(actual_mode, current_manager)
+                            used_managers.append(manager_key)
+                            
                             try:
-                                # Build the actual mode name from league and mode_type for accurate tracking
-                                actual_mode = f"{self._current_display_league}_{mode_type}" if self._current_display_league and mode_type else display_mode
-                                self._record_dynamic_progress(current_manager, actual_mode=actual_mode)
+                                self._record_dynamic_progress(current_manager, actual_mode=actual_mode, display_mode=display_mode)
                             except Exception as progress_err:  # pylint: disable=broad-except
                                 self.logger.debug(
                                     "Dynamic progress tracking failed: %s", progress_err
                                 )
-                            self._evaluate_dynamic_cycle_completion()
+                            
+                            # Track which managers were used for this display mode
+                            if display_mode:
+                                self._display_mode_to_managers.setdefault(display_mode, set()).add(manager_key)
+                            
+                            self._evaluate_dynamic_cycle_completion(display_mode=display_mode)
                             return result
                         # If result is False, try next manager
                         elif result is False:
                             continue
                         # If result is None or other, assume success
                         else:
+                            # Build the actual mode name from league and mode_type for accurate tracking
+                            actual_mode = f"{self._current_display_league}_{mode_type}" if self._current_display_league and mode_type else display_mode
+                            manager_key = self._build_manager_key(actual_mode, current_manager)
+                            used_managers.append(manager_key)
+                            
                             try:
-                                # Build the actual mode name from league and mode_type for accurate tracking
-                                actual_mode = f"{self._current_display_league}_{mode_type}" if self._current_display_league and mode_type else display_mode
-                                self._record_dynamic_progress(current_manager, actual_mode=actual_mode)
+                                self._record_dynamic_progress(current_manager, actual_mode=actual_mode, display_mode=display_mode)
                             except Exception as progress_err:  # pylint: disable=broad-except
                                 self.logger.debug(
                                     "Dynamic progress tracking failed: %s", progress_err
                                 )
-                            self._evaluate_dynamic_cycle_completion()
+                            
+                            # Track which managers were used for this display mode
+                            if display_mode:
+                                self._display_mode_to_managers.setdefault(display_mode, set()).add(manager_key)
+                            
+                            self._evaluate_dynamic_cycle_completion(display_mode=display_mode)
                             return True
                 
                 # No manager had content
@@ -639,7 +661,12 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
                     try:
                         # Build the actual mode name from league and mode_type for accurate tracking
                         current_mode = self.modes[self.current_mode_index] if self.modes else None
-                        self._record_dynamic_progress(current_manager, actual_mode=current_mode)
+                        if current_mode:
+                            manager_key = self._build_manager_key(current_mode, current_manager)
+                            # Track which managers were used for internal mode cycling
+                            # For internal cycling, the mode itself is the display_mode
+                            self._display_mode_to_managers.setdefault(current_mode, set()).add(manager_key)
+                        self._record_dynamic_progress(current_manager, actual_mode=current_mode, display_mode=current_mode)
                     except Exception as progress_err:  # pylint: disable=broad-except
                         self.logger.debug(
                             "Dynamic progress tracking failed: %s", progress_err
@@ -653,7 +680,8 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
                             self.display_manager.update_display()
                         except Exception as clear_err:
                             self.logger.debug(f"Error clearing display when manager returned False: {clear_err}")
-                self._evaluate_dynamic_cycle_completion()
+                current_mode = self.modes[self.current_mode_index] if self.modes else None
+                self._evaluate_dynamic_cycle_completion(display_mode=current_mode)
                 return result
             else:
                 self.logger.warning("No manager available for current mode")
@@ -832,7 +860,9 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
         self._dynamic_managers_completed.clear()
         self._dynamic_cycle_complete = False
         self._single_game_manager_start_times.clear()
-        self._game_index_start_times.clear()
+        self._game_id_start_times.clear()
+        self._display_mode_to_managers.clear()
+        self.logger.debug("Dynamic cycle state reset - all tracking dictionaries cleared")
 
     def is_cycle_complete(self) -> bool:
         """Report whether the plugin has shown a full cycle of content."""
@@ -941,7 +971,7 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
                 return getattr(self, "ncaa_fb_upcoming", None)
         return None
 
-    def _record_dynamic_progress(self, current_manager, actual_mode: str = None) -> None:
+    def _record_dynamic_progress(self, current_manager, actual_mode: str = None, display_mode: str = None) -> None:
         """Track progress through managers/games for dynamic duration."""
         if not self._dynamic_feature_enabled() or not self.modes:
             self._dynamic_cycle_complete = True
@@ -953,13 +983,23 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
         else:
             current_mode = self.modes[self.current_mode_index]
         
+        # Track both the internal mode and the external display mode if provided
         self._dynamic_cycle_seen_modes.add(current_mode)
+        if display_mode and display_mode != current_mode:
+            # Also track the external display mode for proper completion checking
+            self._dynamic_cycle_seen_modes.add(display_mode)
 
         manager_key = self._build_manager_key(current_mode, current_manager)
         self._dynamic_mode_to_manager_key[current_mode] = manager_key
+        # Also map display_mode to this manager if different
+        if display_mode and display_mode != current_mode:
+            # Store mapping from display_mode to manager_key for completion checking
+            if display_mode not in self._dynamic_mode_to_manager_key:
+                # Create a composite key for display_mode that tracks all its managers
+                self._display_mode_to_managers.setdefault(display_mode, set()).add(manager_key)
         
         # Log for debugging
-        self.logger.debug(f"_record_dynamic_progress: current_mode={current_mode}, manager={current_manager.__class__.__name__}, manager_key={manager_key}")
+        self.logger.debug(f"_record_dynamic_progress: current_mode={current_mode}, display_mode={display_mode}, manager={current_manager.__class__.__name__}, manager_key={manager_key}")
 
         total_games = self._get_total_games_for_manager(current_manager)
         if total_games <= 1:
@@ -985,50 +1025,93 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
                     self.logger.debug(f"Single-game manager {manager_key} waiting: {elapsed:.2f}s/{game_duration}s")
             return
 
-        current_index = getattr(current_manager, "current_game_index", None)
-        if current_index is None:
-            # Fall back to zero if the manager does not expose an index
-            current_index = 0
-        identifier = f"index-{current_index}"
-
+        # Get current game to extract its ID for tracking
+        current_game = getattr(current_manager, "current_game", None)
+        if not current_game:
+            # No current game - can't track progress, but this is valid (empty game list)
+            self.logger.debug(f"No current_game in manager {manager_key}, skipping progress tracking")
+            # Still mark the mode as seen even if no content
+            return
+        
+        # Use game ID for tracking instead of index to persist across game order changes
+        game_id = current_game.get('id')
+        if not game_id:
+            # Fallback to index if game ID not available (shouldn't happen, but safety first)
+            current_index = getattr(current_manager, "current_game_index", 0)
+            # Also try to get a unique identifier from game data
+            away_abbr = current_game.get('away_abbr', '')
+            home_abbr = current_game.get('home_abbr', '')
+            if away_abbr and home_abbr:
+                game_id = f"{away_abbr}@{home_abbr}-{current_index}"
+            else:
+                game_id = f"index-{current_index}"
+            self.logger.warning(f"Game ID not found for manager {manager_key}, using fallback: {game_id}")
+        
+        # Ensure game_id is a string for consistent tracking
+        game_id = str(game_id)
+        
         progress_set = self._dynamic_manager_progress.setdefault(manager_key, set())
         
-        # Track when this game index was first seen
-        game_times = self._game_index_start_times.setdefault(manager_key, {})
-        if identifier not in game_times:
+        # Track when this game ID was first seen
+        game_times = self._game_id_start_times.setdefault(manager_key, {})
+        if game_id not in game_times:
             # First time seeing this game - record start time
-            game_times[identifier] = time.time()
+            game_times[game_id] = time.time()
             game_duration = getattr(current_manager, 'game_display_duration', 15)
-            self.logger.info(f"Game {identifier} in manager {manager_key} first seen, will complete after {game_duration}s")
+            game_display = f"{current_game.get('away_abbr', '?')}@{current_game.get('home_abbr', '?')}"
+            self.logger.info(f"Game {game_display} (ID: {game_id}) in manager {manager_key} first seen, will complete after {game_duration}s")
         
         # Check if this game has been shown for full duration
-        start_time = game_times[identifier]
+        start_time = game_times[game_id]
         game_duration = getattr(current_manager, 'game_display_duration', 15)
         elapsed = time.time() - start_time
         
         if elapsed >= game_duration:
             # This game has been shown for full duration - add to progress set
-            if identifier not in progress_set:
-                progress_set.add(identifier)
-                self.logger.info(f"Game {identifier} in manager {manager_key} completed after {elapsed:.2f}s (required: {game_duration}s)")
+            if game_id not in progress_set:
+                progress_set.add(game_id)
+                game_display = f"{current_game.get('away_abbr', '?')}@{current_game.get('home_abbr', '?')}"
+                self.logger.info(f"Game {game_display} (ID: {game_id}) in manager {manager_key} completed after {elapsed:.2f}s (required: {game_duration}s)")
         else:
             # Still waiting for this game to complete its duration
-            self.logger.debug(f"Game {identifier} in manager {manager_key} waiting: {elapsed:.2f}s/{game_duration}s")
+            self.logger.debug(f"Game ID {game_id} in manager {manager_key} waiting: {elapsed:.2f}s/{game_duration}s")
 
-        # Drop identifiers that no longer exist if game list shrinks
-        valid_identifiers = {f"index-{idx}" for idx in range(total_games)}
-        progress_set.intersection_update(valid_identifiers)
-        # Also clean up start times for games that no longer exist
-        game_times = {k: v for k, v in game_times.items() if k in valid_identifiers}
-        self._game_index_start_times[manager_key] = game_times
+        # Get all valid game IDs from current game list to clean up stale entries
+        valid_game_ids = self._get_all_game_ids_for_manager(current_manager)
+        
+        # Clean up progress set and start times for games that no longer exist
+        if valid_game_ids:
+            # Remove game IDs from progress set that are no longer in the game list
+            progress_set.intersection_update(valid_game_ids)
+            # Also clean up start times for games that no longer exist
+            game_times = {k: v for k, v in game_times.items() if k in valid_game_ids}
+            self._game_id_start_times[manager_key] = game_times
+        elif total_games == 0:
+            # No games in list - clear all tracking for this manager
+            progress_set.clear()
+            game_times.clear()
+            self._game_id_start_times[manager_key] = {}
 
-        # Only mark manager complete when all games have been shown for their full duration
-        if len(progress_set) >= total_games:
+        # Only mark manager complete when all current games have been shown for their full duration
+        # Use the actual current game IDs, not just the count, to handle dynamic game lists
+        current_game_ids = self._get_all_game_ids_for_manager(current_manager)
+        
+        if current_game_ids:
+            # Check if all current games have been shown for full duration
+            if current_game_ids.issubset(progress_set):
+                if manager_key not in self._dynamic_managers_completed:
+                    self._dynamic_managers_completed.add(manager_key)
+                    self.logger.info(f"Manager {manager_key} completed - all {len(current_game_ids)} games shown for full duration (progress: {len(progress_set)} game IDs)")
+            else:
+                missing_count = len(current_game_ids - progress_set)
+                self.logger.debug(f"Manager {manager_key} incomplete - {missing_count} of {len(current_game_ids)} games not yet shown for full duration")
+        elif total_games == 0:
+            # Empty game list - mark as complete immediately
             if manager_key not in self._dynamic_managers_completed:
                 self._dynamic_managers_completed.add(manager_key)
-                self.logger.info(f"Manager {manager_key} completed - all {total_games} games shown for full duration (progress: {len(progress_set)}/{total_games})")
+                self.logger.debug(f"Manager {manager_key} completed - no games to display")
 
-    def _evaluate_dynamic_cycle_completion(self) -> None:
+    def _evaluate_dynamic_cycle_completion(self, display_mode: str = None) -> None:
         """Determine whether all enabled modes have completed their cycles."""
         if not self._dynamic_feature_enabled():
             self._dynamic_cycle_complete = True
@@ -1038,6 +1121,62 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
             self._dynamic_cycle_complete = True
             return
 
+        # If display_mode is provided, check all managers used for that display mode
+        if display_mode and display_mode in self._display_mode_to_managers:
+            used_manager_keys = self._display_mode_to_managers[display_mode]
+            if not used_manager_keys:
+                # No managers were used for this display mode yet
+                self._dynamic_cycle_complete = False
+                return
+            
+            # Check if all managers used for this display mode have completed
+            incomplete_managers = []
+            for manager_key in used_manager_keys:
+                if manager_key not in self._dynamic_managers_completed:
+                    incomplete_managers.append(manager_key)
+                    # Get the manager to check its state for logging and potential completion
+                    # Extract mode and manager class from manager_key (format: "mode:ManagerClass")
+                    parts = manager_key.split(':', 1)
+                    if len(parts) == 2:
+                        mode_name, manager_class_name = parts
+                        manager = self._get_manager_for_mode(mode_name)
+                        if manager and manager.__class__.__name__ == manager_class_name:
+                            total_games = self._get_total_games_for_manager(manager)
+                            if total_games <= 1:
+                                # Single-game manager - check time
+                                if manager_key in self._single_game_manager_start_times:
+                                    start_time = self._single_game_manager_start_times[manager_key]
+                                    game_duration = getattr(manager, 'game_display_duration', 15)
+                                    elapsed = time.time() - start_time
+                                    if elapsed >= game_duration:
+                                        self._dynamic_managers_completed.add(manager_key)
+                                        incomplete_managers.remove(manager_key)
+                                    else:
+                                        self.logger.debug(f"Manager {manager_key} waiting: {elapsed:.2f}s/{game_duration}s")
+                                else:
+                                    self.logger.debug(f"Manager {manager_key} not yet seen")
+                            else:
+                                # Multi-game manager - check if all current games have been shown for full duration
+                                progress_set = self._dynamic_manager_progress.get(manager_key, set())
+                                current_game_ids = self._get_all_game_ids_for_manager(manager)
+                                
+                                # Check if all current games are in the progress set (shown for full duration)
+                                if current_game_ids and current_game_ids.issubset(progress_set):
+                                    self._dynamic_managers_completed.add(manager_key)
+                                    incomplete_managers.remove(manager_key)
+                                else:
+                                    missing_games = current_game_ids - progress_set
+                                    self.logger.debug(f"Manager {manager_key} progress: {len(progress_set)}/{len(current_game_ids)} games completed, missing: {len(missing_games)}")
+            
+            if not incomplete_managers:
+                self._dynamic_cycle_complete = True
+                self.logger.info(f"Display mode {display_mode} cycle complete - all {len(used_manager_keys)} manager(s) completed")
+            else:
+                self._dynamic_cycle_complete = False
+                self.logger.debug(f"Display mode {display_mode} cycle incomplete - {len(incomplete_managers)} manager(s) still in progress: {incomplete_managers}")
+            return
+
+        # Standard mode checking (for internal mode cycling)
         required_modes = [mode for mode in self.modes if mode]
         if not required_modes:
             self._dynamic_cycle_complete = True
@@ -1073,10 +1212,19 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
                         self._dynamic_cycle_complete = False
                         return
                 else:
-                    # Multi-game manager - check if all games have been shown for full duration
-                    # This is already tracked in _record_dynamic_progress, so just check completion status
-                    self._dynamic_cycle_complete = False
-                    return
+                    # Multi-game manager - check if all current games have been shown for full duration
+                    progress_set = self._dynamic_manager_progress.get(manager_key, set())
+                    current_game_ids = self._get_all_game_ids_for_manager(manager)
+                    
+                    # Check if all current games are in the progress set (shown for full duration)
+                    if current_game_ids and current_game_ids.issubset(progress_set):
+                        self._dynamic_managers_completed.add(manager_key)
+                        # Continue to check other modes
+                    else:
+                        missing_games = current_game_ids - progress_set if current_game_ids else set()
+                        self.logger.debug(f"Manager {manager_key} progress: {len(progress_set)}/{len(current_game_ids)} games completed, missing: {len(missing_games)}")
+                        self._dynamic_cycle_complete = False
+                        return
 
         self._dynamic_cycle_complete = True
 
@@ -1094,6 +1242,30 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
             if isinstance(value, list):
                 return len(value)
         return 0
+    
+    @staticmethod
+    def _get_all_game_ids_for_manager(manager) -> set:
+        """Get all game IDs from a manager's game list."""
+        if manager is None:
+            return set()
+        game_ids = set()
+        for attr in ("live_games", "games_list", "recent_games", "upcoming_games"):
+            game_list = getattr(manager, attr, None)
+            if isinstance(game_list, list) and game_list:
+                for i, game in enumerate(game_list):
+                    game_id = game.get('id')
+                    if game_id:
+                        game_ids.add(str(game_id))
+                    else:
+                        # Fallback to index-based identifier if ID missing
+                        away_abbr = game.get('away_abbr', '')
+                        home_abbr = game.get('home_abbr', '')
+                        if away_abbr and home_abbr:
+                            game_ids.add(f"{away_abbr}@{home_abbr}-{i}")
+                        else:
+                            game_ids.add(f"index-{i}")
+                break
+        return game_ids
 
     def cleanup(self) -> None:
         """Clean up resources."""
