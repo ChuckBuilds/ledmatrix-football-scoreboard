@@ -864,7 +864,10 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
             elif display_mode.endswith('_upcoming'):
                 mode_type = 'upcoming'
             
+            self.logger.info(f"get_cycle_duration: extracted mode_type={mode_type} from display_mode={display_mode}")
+            
             if not mode_type:
+                self.logger.info(f"get_cycle_duration: mode_type is None, returning None")
                 return None
             
             total_games = 0
