@@ -1339,6 +1339,8 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
                 self.logger.debug(f"Display mode {display_mode} has no managers tracked yet - cycle incomplete")
                 return
             
+            self.logger.info(f"_evaluate_dynamic_cycle_completion for {display_mode}: checking {len(used_manager_keys)} manager(s): {used_manager_keys}")
+            
             # Check if all managers used for this display mode have completed
             incomplete_managers = []
             for manager_key in used_manager_keys:
@@ -1386,6 +1388,8 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
                                 else:
                                     missing_games = current_game_ids - progress_set
                                     self.logger.debug(f"Manager {manager_key} progress: {len(progress_set)}/{len(current_game_ids)} games completed, missing: {len(missing_games)}")
+            
+            self.logger.info(f"_evaluate_dynamic_cycle_completion for {display_mode}: incomplete_managers={incomplete_managers}, completed={[k for k in used_manager_keys if k in self._dynamic_managers_completed]}")
             
             if not incomplete_managers:
                 # All managers have completed - but verify they actually completed in THIS cycle
