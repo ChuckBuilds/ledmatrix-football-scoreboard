@@ -1151,7 +1151,7 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
         self._dynamic_mode_to_manager_key[current_mode] = manager_key
         
         # Log for debugging
-        self.logger.debug(f"_record_dynamic_progress: current_mode={current_mode}, display_mode={display_mode}, manager={current_manager.__class__.__name__}, manager_key={manager_key}")
+        self.logger.debug(f"_record_dynamic_progress: current_mode={current_mode}, display_mode={display_mode}, manager={current_manager.__class__.__name__}, manager_key={manager_key}, _last_display_mode={self._last_display_mode}")
 
         total_games = self._get_total_games_for_manager(current_manager)
         
@@ -1170,7 +1170,11 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
                 self.logger.info(f"New cycle detected for {display_mode}: switched from {self._last_display_mode} (last seen {time_since_last:.1f}s ago)")
             elif manager_key not in self._display_mode_to_managers.get(display_mode, set()):
                 # Same mode but manager not tracked yet - this shouldn't happen often but handle it
-                self.logger.debug(f"Manager {manager_key} not yet tracked for current mode {display_mode}")
+                self.logger.info(f"Manager {manager_key} not yet tracked for current mode {display_mode} - resetting state")
+                is_new_cycle = True
+            else:
+                # Same mode and manager already tracked - continue within current cycle
+                self.logger.debug(f"Continuing cycle for {display_mode}: manager {manager_key} already tracked")
             
             # Update last display mode tracking
             self._last_display_mode = display_mode
