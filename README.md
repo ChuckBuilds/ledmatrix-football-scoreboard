@@ -1,3 +1,16 @@
+-----------------------------------------------------------------------------------
+### Connect with ChuckBuilds
+
+- Show support on Youtube: https://www.youtube.com/@ChuckBuilds
+- Stay in touch on Instagram: https://www.instagram.com/ChuckBuilds/
+- Want to chat or need support? Reach out on the ChuckBuilds Discord: https://discord.com/invite/uW36dVAtcT
+- Feeling Generous? Support the project:
+  - Github Sponsorship: https://github.com/sponsors/ChuckBuilds
+  - Buy Me a Coffee: https://buymeacoffee.com/chuckbuilds
+  - Ko-fi: https://ko-fi.com/chuckbuilds/ 
+
+-----------------------------------------------------------------------------------
+
 # Football Scoreboard Plugin
 
 A production-ready plugin for LEDMatrix that displays live, recent, and upcoming football games across NFL and NCAA Football leagues. This plugin reuses the proven, battle-tested code from the main LEDMatrix project for maximum reliability and feature completeness.
