@@ -109,7 +109,7 @@ class SportsCore(ABC):
         self.fonts = self._load_fonts()
 
         # Initialize dynamic team resolver and resolve favorite teams
-        self.dynamic_resolver = DynamicTeamResolver()
+        self.dynamic_resolver = DynamicTeamResolver(cache_manager=cache_manager)
         raw_favorite_teams = self.mode_config.get("favorite_teams", [])
         self.favorite_teams = self.dynamic_resolver.resolve_teams(
             raw_favorite_teams, sport_key
