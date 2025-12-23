@@ -131,12 +131,31 @@ class ScrollDisplay:
             buffer=0.1
         )
         
-        # Use time-based scrolling (not frame-based) for smooth movement
-        self.scroll_helper.set_frame_based_scrolling(False)
+        # Use frame-based scrolling for better FPS control
+        # In frame-based mode: scroll_speed is pixels per frame, scroll_delay controls frame rate
+        # This allows precise control: 1 px/frame at 0.01s delay = 100 FPS
+        self.scroll_helper.set_frame_based_scrolling(True)
+        
+        # Convert scroll_speed from pixels/second to pixels/frame for frame-based mode
+        # If scroll_speed is very low (like 1.0 px/s), treat it as pixels per frame directly
+        # Otherwise, calculate pixels per frame based on scroll_delay
+        if scroll_speed < 10.0:
+            # Low values are likely intended as pixels per frame
+            pixels_per_frame = scroll_speed
+        else:
+            # Higher values are pixels/second, convert to pixels/frame
+            pixels_per_frame = scroll_speed * scroll_delay
+        
+        # Clamp to reasonable range (0.1 to 5 pixels per frame for smooth scrolling)
+        pixels_per_frame = max(0.1, min(5.0, pixels_per_frame))
+        self.scroll_helper.set_scroll_speed(pixels_per_frame)
+        
+        # Calculate effective pixels per second for logging
+        effective_pps = pixels_per_frame / scroll_delay if scroll_delay > 0 else pixels_per_frame * 100
         
         self.logger.info(
-            f"ScrollHelper configured: speed={scroll_speed}px/s, delay={scroll_delay}s, "
-            f"dynamic_duration={dynamic_duration}"
+            f"ScrollHelper configured: {pixels_per_frame:.2f} px/frame, delay={scroll_delay}s "
+            f"(effective {effective_pps:.1f} px/s), dynamic_duration={dynamic_duration}"
         )
     
     def _get_scroll_settings(self, league: str = None) -> Dict[str, Any]:
@@ -557,4 +576,5 @@ class ScrollDisplayManager:
         for scroll_display in self._scroll_displays.values():
             scroll_display.clear()
         self._current_game_type = None
+
 

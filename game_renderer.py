@@ -566,3 +566,4 @@ class GameRenderer:
             return record
         return ''
 
+

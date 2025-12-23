@@ -140,6 +140,12 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
         self._scroll_active: Dict[str, bool] = {}  # {game_type: is_active}
         self._scroll_prepared: Dict[str, bool] = {}  # {game_type: is_prepared}
 
+        # Enable high-FPS mode for scroll display (allows 100+ FPS scrolling)
+        # This signals to the display controller to use high-FPS loop (8ms = 125 FPS)
+        self.enable_scrolling = self._scroll_manager is not None
+        if self.enable_scrolling:
+            self.logger.info("High-FPS scrolling enabled for football scoreboard")
+
         # Mode cycling
         self.current_mode_index = 0
         self.last_mode_switch = 0
