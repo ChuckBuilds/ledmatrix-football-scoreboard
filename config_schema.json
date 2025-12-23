@@ -218,18 +218,18 @@
         "dynamic_duration": {
           "type": "object",
           "title": "NFL Dynamic Duration Settings",
-            "description": "Configure dynamic duration settings for NFL games.",
+          "description": "Configure dynamic duration settings for NFL games.",
           "properties": {
             "enabled": {
               "type": "boolean",
               "default": false,
-                  "description": "Enable dynamic duration for NFL games"
+              "description": "Enable dynamic duration for NFL games"
             },
             "max_duration_seconds": {
               "type": "number",
               "minimum": 60,
               "maximum": 600,
-                    "description": "Max duration for NFL games"
+              "description": "Max duration for NFL games"
             },
             "modes": {
               "type": "object",
@@ -478,18 +478,18 @@
         "dynamic_duration": {
           "type": "object",
           "title": "NCAA FB Dynamic Duration Settings",
-            "description": "Configure dynamic duration settings for NCAA FB games.",
+          "description": "Configure dynamic duration settings for NCAA FB games.",
           "properties": {
             "enabled": {
               "type": "boolean",
               "default": false,
-                  "description": "Enable dynamic duration for NCAA FB games"
+              "description": "Enable dynamic duration for NCAA FB games"
             },
             "max_duration_seconds": {
               "type": "number",
               "minimum": 60,
               "maximum": 600,
-                    "description": "Max duration for NCAA FB games"
+              "description": "Max duration for NCAA FB games"
             },
             "modes": {
               "type": "object",
