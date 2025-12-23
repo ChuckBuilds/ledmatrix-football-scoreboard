@@ -95,8 +95,8 @@
           "properties": {
             "scroll_speed": {
               "type": "number",
-              "default": 50.0,
-              "minimum": 10.0,
+              "default": 1.0,
+              "minimum": 0.01,
               "maximum": 200.0,
               "description": "Scroll speed in pixels per second"
             },
@@ -355,8 +355,8 @@
           "properties": {
             "scroll_speed": {
               "type": "number",
-              "default": 50.0,
-              "minimum": 10.0,
+              "default": 1.0,
+              "minimum": 0.01,
               "maximum": 200.0,
               "description": "Scroll speed in pixels per second"
             },
