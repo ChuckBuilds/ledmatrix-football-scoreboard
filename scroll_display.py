@@ -302,7 +302,15 @@ class ScrollDisplay:
             # Render game card
             try:
                 game_img = renderer.render_game_card(game, game_type)
-                content_items.append(game_img)
+                
+                # Add horizontal padding to prevent logos from being cut off at edges
+                # Logos are positioned at -10 and display_width+10, so we need padding
+                padding = 12  # Padding on each side to ensure logos aren't cut off
+                padded_width = game_img.width + (padding * 2)
+                padded_img = Image.new('RGB', (padded_width, game_img.height), (0, 0, 0))
+                padded_img.paste(game_img, (padding, 0))
+                
+                content_items.append(padded_img)
                 game_count += 1
                 league_counts[game_league] = league_counts.get(game_league, 0) + 1
             except Exception as e:
