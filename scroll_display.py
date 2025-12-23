@@ -43,7 +43,7 @@ class ScrollDisplay:
     """
     
     # Paths to league separator icons
-    NFL_SEPARATOR_ICON = "assets/sports/nfl_logos/nfl.png"
+    NFL_SEPARATOR_ICON = "assets/sports/nfl_logos/NFL.png"
     NCAA_FB_SEPARATOR_ICON = "assets/sports/ncaa_logos/ncaa_fb.png"
     
     def __init__(
@@ -164,7 +164,7 @@ class ScrollDisplay:
         defaults = {
             "scroll_speed": 50.0,
             "scroll_delay": 0.01,
-            "gap_between_games": 24,
+            "gap_between_games": 48,
             "show_league_separators": True,
             "dynamic_duration": True
         }
@@ -285,17 +285,30 @@ class ScrollDisplay:
         for game in games:
             game_league = game.get("league", "nfl")  # Default to NFL if not specified
             
-            # Add league separator if switching leagues
-            if show_separators and current_league is not None and game_league != current_league:
-                separator = self._separator_icons.get(game_league)
-                if separator:
-                    # Create a separator image with proper background
-                    sep_img = Image.new('RGB', (separator.width + 8, self.display_height), (0, 0, 0))
-                    # Center the separator vertically
-                    y_offset = (self.display_height - separator.height) // 2
-                    sep_img.paste(separator, (4, y_offset), separator)
-                    content_items.append(sep_img)
-                    self.logger.debug(f"Added {game_league} separator icon")
+            # Add league separator if switching leagues OR if this is the first league
+            if show_separators:
+                if current_league is None:
+                    # First league - add separator at the start
+                    separator = self._separator_icons.get(game_league)
+                    if separator:
+                        # Create a separator image with proper background
+                        sep_img = Image.new('RGB', (separator.width + 8, self.display_height), (0, 0, 0))
+                        # Center the separator vertically
+                        y_offset = (self.display_height - separator.height) // 2
+                        sep_img.paste(separator, (4, y_offset), separator)
+                        content_items.append(sep_img)
+                        self.logger.debug(f"Added {game_league} separator icon at start")
+                elif game_league != current_league:
+                    # Switching leagues - add separator
+                    separator = self._separator_icons.get(game_league)
+                    if separator:
+                        # Create a separator image with proper background
+                        sep_img = Image.new('RGB', (separator.width + 8, self.display_height), (0, 0, 0))
+                        # Center the separator vertically
+                        y_offset = (self.display_height - separator.height) // 2
+                        sep_img.paste(separator, (4, y_offset), separator)
+                        content_items.append(sep_img)
+                        self.logger.debug(f"Added {game_league} separator icon")
             
             current_league = game_league
             
