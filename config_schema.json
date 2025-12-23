@@ -51,22 +51,78 @@
         "display_modes": {
           "type": "object",
           "title": "Display Modes",
-          "description": "Control which game types to show",
+          "description": "Control which game types to show and how they are displayed",
           "properties": {
             "show_live": {
               "type": "boolean",
               "default": true,
               "description": "Show live NFL games"
             },
+            "live_display_mode": {
+              "type": "string",
+              "enum": ["switch", "scroll"],
+              "default": "switch",
+              "description": "Display mode for live games: 'switch' shows one game at a time, 'scroll' scrolls all games horizontally"
+            },
             "show_recent": {
               "type": "boolean",
               "default": true,
               "description": "Show recently completed NFL games"
             },
+            "recent_display_mode": {
+              "type": "string",
+              "enum": ["switch", "scroll"],
+              "default": "switch",
+              "description": "Display mode for recent games: 'switch' shows one game at a time, 'scroll' scrolls all games horizontally"
+            },
             "show_upcoming": {
               "type": "boolean",
               "default": true,
               "description": "Show upcoming NFL games"
+            },
+            "upcoming_display_mode": {
+              "type": "string",
+              "enum": ["switch", "scroll"],
+              "default": "switch",
+              "description": "Display mode for upcoming games: 'switch' shows one game at a time, 'scroll' scrolls all games horizontally"
+            }
+          }
+        },
+        "scroll_settings": {
+          "type": "object",
+          "title": "Scroll Settings",
+          "description": "Settings for scroll display mode (when display mode is set to 'scroll')",
+          "properties": {
+            "scroll_speed": {
+              "type": "number",
+              "default": 50.0,
+              "minimum": 10.0,
+              "maximum": 200.0,
+              "description": "Scroll speed in pixels per second"
+            },
+            "scroll_delay": {
+              "type": "number",
+              "default": 0.01,
+              "minimum": 0.001,
+              "maximum": 0.1,
+              "description": "Delay between scroll frames in seconds (lower = smoother)"
+            },
+            "gap_between_games": {
+              "type": "integer",
+              "default": 24,
+              "minimum": 8,
+              "maximum": 64,
+              "description": "Gap in pixels between game cards when scrolling"
+            },
+            "show_league_separators": {
+              "type": "boolean",
+              "default": true,
+              "description": "Show league icons (NFL shield, NCAA FB logo) between different leagues"
+            },
+            "dynamic_duration": {
+              "type": "boolean",
+              "default": true,
+              "description": "Automatically calculate display duration based on content width"
             }
           }
         },
@@ -255,22 +311,78 @@
         "display_modes": {
           "type": "object",
           "title": "Display Modes",
-          "description": "Control which game types to show",
+          "description": "Control which game types to show and how they are displayed",
           "properties": {
             "show_live": {
               "type": "boolean",
               "default": true,
               "description": "Show live NCAA FB games"
             },
+            "live_display_mode": {
+              "type": "string",
+              "enum": ["switch", "scroll"],
+              "default": "switch",
+              "description": "Display mode for live games: 'switch' shows one game at a time, 'scroll' scrolls all games horizontally"
+            },
             "show_recent": {
               "type": "boolean",
               "default": true,
               "description": "Show recently completed NCAA FB games"
             },
+            "recent_display_mode": {
+              "type": "string",
+              "enum": ["switch", "scroll"],
+              "default": "switch",
+              "description": "Display mode for recent games: 'switch' shows one game at a time, 'scroll' scrolls all games horizontally"
+            },
             "show_upcoming": {
               "type": "boolean",
               "default": true,
               "description": "Show upcoming NCAA FB games"
+            },
+            "upcoming_display_mode": {
+              "type": "string",
+              "enum": ["switch", "scroll"],
+              "default": "switch",
+              "description": "Display mode for upcoming games: 'switch' shows one game at a time, 'scroll' scrolls all games horizontally"
+            }
+          }
+        },
+        "scroll_settings": {
+          "type": "object",
+          "title": "Scroll Settings",
+          "description": "Settings for scroll display mode (when display mode is set to 'scroll')",
+          "properties": {
+            "scroll_speed": {
+              "type": "number",
+              "default": 50.0,
+              "minimum": 10.0,
+              "maximum": 200.0,
+              "description": "Scroll speed in pixels per second"
+            },
+            "scroll_delay": {
+              "type": "number",
+              "default": 0.01,
+              "minimum": 0.001,
+              "maximum": 0.1,
+              "description": "Delay between scroll frames in seconds (lower = smoother)"
+            },
+            "gap_between_games": {
+              "type": "integer",
+              "default": 24,
+              "minimum": 8,
+              "maximum": 64,
+              "description": "Gap in pixels between game cards when scrolling"
+            },
+            "show_league_separators": {
+              "type": "boolean",
+              "default": true,
+              "description": "Show league icons (NFL shield, NCAA FB logo) between different leagues"
+            },
+            "dynamic_duration": {
+              "type": "boolean",
+              "default": true,
+              "description": "Automatically calculate display duration based on content width"
             }
           }
         },
