@@ -128,7 +128,7 @@ class ScrollDisplay:
             enabled=dynamic_duration,
             min_duration=30,
             max_duration=600,  # 10 minutes max
-            buffer=0.1
+            buffer=0.2  # 20% buffer to ensure scroll completes fully off screen
         )
         
         # Use frame-based scrolling for better FPS control
