@@ -1657,6 +1657,16 @@ class SportsRecent(SportsCore):
                 draw_overlay, score_text, (score_x, score_y), self.fonts["score"]
             )
 
+            # Game date (Below score, centered)
+            game_date = game.get("game_date", "")
+            if game_date:
+                date_width = draw_overlay.textlength(game_date, font=self.fonts["detail"])
+                date_x = (display_width - date_width) // 2
+                date_y = display_height - 7  # Position below score, similar to scroll mode
+                self._draw_text_with_outline(
+                    draw_overlay, game_date, (date_x, date_y), self.fonts["detail"]
+                )
+
             # "Final" text (Top center)
             status_text = game.get(
                 "period_text", "Final"
