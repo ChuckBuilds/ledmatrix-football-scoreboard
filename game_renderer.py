@@ -137,7 +137,8 @@ class GameRenderer:
                     return ImageFont.truetype(font_path, font_size)
                 elif font_path.lower().endswith('.bdf'):
                     # BDF fonts - ImageFont.truetype() does NOT support BDF files
-                    # Try to load pre-converted .pil/.pbm file first (if available)
+                    # Option (b): Try to load pre-converted .pil/.pbm file (recommended approach)
+                    # Use pilfont.py to convert: pilfont.py font.bdf (creates font.pil and font.pbm)
                     pil_font_path = font_path.rsplit('.', 1)[0] + '.pil'
                     if os.path.exists(pil_font_path):
                         try:
@@ -145,20 +146,12 @@ class GameRenderer:
                             self.logger.debug(f"Loaded BDF font from pre-converted PIL file: {pil_font_path}")
                             return font
                         except Exception as e:
-                            self.logger.debug(f"Could not load pre-converted PIL font {pil_font_path}: {e}, trying freetype")
+                            # Pre-converted file exists but failed to load - will fall through to fallback
+                            pass
                     
-                    # If no pre-converted file, use freetype.Face() for BDF fonts
-                    if FREETYPE_AVAILABLE:
-                        try:
-                            face = freetype.Face(font_path)
-                            # Set character size (width, height) in 1/64th of points
-                            face.set_char_size(font_size * 64, font_size * 64, 72, 72)
-                            self.logger.debug(f"Loaded BDF font with freetype: {font_name} at size {font_size}")
-                            return face
-                        except Exception as e:
-                            self.logger.warning(f"Could not load BDF font {font_name} with freetype: {e}, trying fallback")
-                    else:
-                        self.logger.warning(f"freetype not available and no pre-converted PIL file found, cannot load BDF font {font_name}, trying fallback")
+                    # If no pre-converted file or loading failed, BDF cannot be loaded directly
+                    # Note: PIL.BdfFontFile doesn't exist in standard Pillow, so pre-conversion is required
+                    # The warning will be logged only if fallback also fails (see below)
                 else:
                     self.logger.warning(f"Unknown font file type: {font_name}, trying fallback")
             else:
@@ -172,10 +165,28 @@ class GameRenderer:
             if os.path.exists(default_font_path):
                 return ImageFont.truetype(default_font_path, font_size)
         except Exception as e:
-            self.logger.warning(f"Could not load default font: {e}")
+            # Default font also failed - log clear warning about BDF handling failure if this was a BDF font
+            if font_path.lower().endswith('.bdf'):
+                pil_font_path = font_path.rsplit('.', 1)[0] + '.pil'
+                self.logger.warning(
+                    f"BDF font loading failed for {font_name}: "
+                    f"No pre-converted .pil file found at {pil_font_path}. "
+                    f"Convert BDF to PIL format using: pilfont.py {font_path}. "
+                    f"Default font fallback also failed: {e}. Using PIL default font."
+                )
+            else:
+                self.logger.warning(f"Could not load default font: {e}, using PIL default font")
         
-        # Final fallback
-        self.logger.warning(f"Using PIL default font as final fallback for {font_name}")
+        # Final fallback - only log warning for BDF fonts if we haven't already warned above
+        if font_path.lower().endswith('.bdf'):
+            # Check if we already logged a warning (if default font path didn't exist, we need to warn here)
+            if not os.path.exists(default_font_path):
+                pil_font_path = font_path.rsplit('.', 1)[0] + '.pil'
+                self.logger.warning(
+                    f"BDF font {font_name} could not be loaded (no pre-converted .pil file found at {pil_font_path}). "
+                    f"Using PIL default font. To fix: run 'pilfont.py {font_path}' to create {pil_font_path}"
+                )
+        
         return ImageFont.load_default()
     
     def set_rankings_cache(self, rankings: Dict[str, int]) -> None:
