@@ -57,10 +57,11 @@ class GameRenderer:
         # Load fonts
         self.fonts = self._load_fonts()
         
-        # Display options
-        self.show_odds = config.get("show_odds", False)
-        self.show_records = config.get("show_records", False)
-        self.show_ranking = config.get("show_ranking", False)
+        # Display options are read dynamically per league (stored in config under league.display_options)
+        # These defaults are kept for backward compatibility but should not be used
+        self._default_show_odds = config.get("show_odds", False)
+        self._default_show_records = config.get("show_records", False)
+        self._default_show_ranking = config.get("show_ranking", False)
         
         # Rankings cache (populated externally)
         self._team_rankings_cache: Dict[str, int] = {}
@@ -283,13 +284,19 @@ class GameRenderer:
         elif game_type == "upcoming":
             self._draw_upcoming_game_status(draw_overlay, game)
         
+        # Get display options for this game's league
+        game_league = game.get("league", "nfl")
+        show_odds = self._get_display_option(game_league, "show_odds")
+        show_records = self._get_display_option(game_league, "show_records")
+        show_ranking = self._get_display_option(game_league, "show_ranking")
+        
         # Draw odds if enabled
-        if self.show_odds and 'odds' in game and game['odds']:
+        if show_odds and 'odds' in game and game['odds']:
             self._draw_dynamic_odds(draw_overlay, game['odds'])
         
         # Draw records or rankings if enabled
-        if self.show_records or self.show_ranking:
-            self._draw_records_or_rankings(draw_overlay, game)
+        if show_records or show_ranking:
+            self._draw_records_or_rankings(draw_overlay, game, show_records, show_ranking)
         
         # Composite the overlay onto main image
         main_img = Image.alpha_composite(main_img, overlay)
@@ -519,7 +526,29 @@ class GameRenderer:
         except Exception as e:
             self.logger.error(f"Error drawing odds: {e}")
     
-    def _draw_records_or_rankings(self, draw: ImageDraw.Draw, game: Dict) -> None:
+    def _get_display_option(self, league: str, option: str) -> bool:
+        """
+        Get a display option for a specific league from the nested config structure.
+        
+        Args:
+            league: League identifier ('nfl', 'ncaa_fb', etc.)
+            option: Option name ('show_odds', 'show_records', 'show_ranking')
+            
+        Returns:
+            Boolean value of the option, or False if not found
+        """
+        # Read from nested path: config[league]["display_options"][option]
+        league_config = self.config.get(league, {})
+        display_options = league_config.get("display_options", {})
+        value = display_options.get(option, False)
+        
+        # Fallback to root-level config for backward compatibility
+        if value is False and option in self.config:
+            value = self.config.get(option, False)
+        
+        return bool(value)
+    
+    def _draw_records_or_rankings(self, draw: ImageDraw.Draw, game: Dict, show_records: bool, show_ranking: bool) -> None:
         """Draw team records or rankings."""
         try:
             record_font = ImageFont.truetype("assets/fonts/4x6-font.ttf", 6)
@@ -535,34 +564,34 @@ class GameRenderer:
         
         # Away team info
         if away_abbr:
-            away_text = self._get_team_display_text(away_abbr, game.get('away_record', ''))
+            away_text = self._get_team_display_text(away_abbr, game.get('away_record', ''), show_records, show_ranking)
             if away_text:
                 away_record_x = 3
                 self._draw_text_with_outline(draw, away_text, (away_record_x, record_y), record_font)
         
         # Home team info
         if home_abbr:
-            home_text = self._get_team_display_text(home_abbr, game.get('home_record', ''))
+            home_text = self._get_team_display_text(home_abbr, game.get('home_record', ''), show_records, show_ranking)
             if home_text:
                 home_record_bbox = draw.textbbox((0, 0), home_text, font=record_font)
                 home_record_width = home_record_bbox[2] - home_record_bbox[0]
                 home_record_x = self.display_width - home_record_width - 3
                 self._draw_text_with_outline(draw, home_text, (home_record_x, record_y), record_font)
     
-    def _get_team_display_text(self, abbr: str, record: str) -> str:
+    def _get_team_display_text(self, abbr: str, record: str, show_records: bool, show_ranking: bool) -> str:
         """Get the display text for a team (ranking or record)."""
-        if self.show_ranking and self.show_records:
+        if show_ranking and show_records:
             # Rankings replace records when both are enabled
             rank = self._team_rankings_cache.get(abbr, 0)
             if rank > 0:
                 return f"#{rank}"
             return ''
-        elif self.show_ranking:
+        elif show_ranking:
             rank = self._team_rankings_cache.get(abbr, 0)
             if rank > 0:
                 return f"#{rank}"
             return ''
-        elif self.show_records:
+        elif show_records:
             return record
         return ''
 
