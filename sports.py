@@ -1725,13 +1725,13 @@ class SportsRecent(SportsCore):
                 draw_overlay, score_text, (score_x, score_y), self.fonts["score"]
             )
 
-            # Game date (Below centered score, centered)
+            # Game date (Bottom of display, one line above bottom edge, centered)
             game_date = game.get("game_date", "")
             if game_date:
                 date_width = draw_overlay.textlength(game_date, font=self.fonts["detail"])
                 date_x = (display_width - date_width) // 2
-                # Position date below the centered score (score is at center_y - 3, date goes below)
-                date_y = (display_height // 2) + 8  # Position below centered score
+                # Position date at bottom of display, one line above the bottom edge
+                date_y = display_height - 7  # One line above bottom edge
                 self._draw_text_with_outline(
                     draw_overlay, game_date, (date_x, date_y), self.fonts["detail"]
                 )
