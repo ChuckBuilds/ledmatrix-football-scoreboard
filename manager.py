@@ -148,6 +148,9 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
         # This centralizes league management and makes it easy to add more leagues
         self._initialize_league_registry()
         
+        # Parse rotation order from config
+        self._rotation_order = self._parse_rotation_order()
+        
         # Initialize scroll display manager if available
         self._scroll_manager: Optional[ScrollDisplayManager] = None
         if SCROLL_AVAILABLE and ScrollDisplayManager:
@@ -217,6 +220,18 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
         # Format: {display_mode: {'game_id': str, 'league': str, 'last_log_time': float}}
         self._current_game_tracking: Dict[str, Dict[str, Any]] = {}
         self._game_transition_log_interval: float = 1.0  # Minimum seconds between game transition logs
+        
+        # Track mode start times for per-mode duration enforcement
+        # Format: {display_mode: start_time} (e.g., {'football_recent': 1234567890.0})
+        # Reset when mode changes or full cycle completes
+        self._mode_start_time: Dict[str, float] = {}
+        
+        # Rotation order state tracking for configurable rotation
+        # Parsed rotation order from config (filtered to only enabled modes)
+        self._rotation_order: List[str] = []
+        # Per combined mode, track rotation state
+        # Format: {combined_mode: {'current_index': int, 'rotation_order': [str]}}
+        self._rotation_state: Dict[str, Dict[str, Any]] = {}
         
         # Note: Sticky manager tracking has been removed in favor of sequential block display
         # Sequential block display shows all games from one league before moving to the next,
@@ -329,6 +344,138 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
         #         'upcoming': getattr(self, 'xfl_upcoming', None),
         #     }
         # }
+
+    def _parse_rotation_order(self) -> List[str]:
+        """
+        Parse and validate rotation order from config.
+        
+        Reads rotation_order from config, validates each mode exists and is enabled,
+        filters out disabled leagues/modes, and returns list of valid modes in order.
+        Falls back to default if not configured or invalid.
+        
+        Returns:
+            List of valid mode names in rotation order
+            Default: ['football_recent', 'football_upcoming', 'football_live'] if not configured
+        """
+        rotation_order = self.config.get("rotation_order", [])
+        
+        # If not configured, return None to use default behavior
+        if not rotation_order or not isinstance(rotation_order, list):
+            self.logger.debug("No rotation_order configured, using default sequential block behavior")
+            return []
+        
+        valid_modes = []
+        
+        for mode_name in rotation_order:
+            if not isinstance(mode_name, str):
+                self.logger.warning(f"Invalid rotation_order entry (not a string): {mode_name}")
+                continue
+            
+            # Check if it's a granular mode (e.g., "nfl_recent", "ncaa_fb_upcoming")
+            if "_" in mode_name and not mode_name.startswith("football_"):
+                parts = mode_name.split("_", 1)
+                if len(parts) == 2:
+                    league, mode_type = parts
+                    
+                    # Validate league
+                    if league not in self._league_registry:
+                        self.logger.warning(
+                            f"Invalid league in rotation_order: {league} (mode: {mode_name})"
+                        )
+                        continue
+                    
+                    # Check if league is enabled
+                    if not self._league_registry[league].get('enabled', False):
+                        self.logger.debug(
+                            f"Skipping disabled league in rotation_order: {mode_name}"
+                        )
+                        continue
+                    
+                    # Check if mode is enabled for this league
+                    league_config = self.config.get(league, {})
+                    display_modes_config = league_config.get("display_modes", {})
+                    
+                    mode_enabled = True
+                    if mode_type == 'live':
+                        mode_enabled = display_modes_config.get("show_live", True)
+                    elif mode_type == 'recent':
+                        mode_enabled = display_modes_config.get("show_recent", True)
+                    elif mode_type == 'upcoming':
+                        mode_enabled = display_modes_config.get("show_upcoming", True)
+                    else:
+                        self.logger.warning(
+                            f"Invalid mode_type in rotation_order: {mode_type} (mode: {mode_name})"
+                        )
+                        continue
+                    
+                    if not mode_enabled:
+                        self.logger.debug(
+                            f"Skipping disabled mode in rotation_order: {mode_name}"
+                        )
+                        continue
+                    
+                    # Valid granular mode
+                    valid_modes.append(mode_name)
+                    continue
+            
+            # Check if it's a combined mode (e.g., "football_recent", "football_upcoming", "football_live")
+            elif mode_name.startswith("football_"):
+                mode_type = mode_name.replace("football_", "")
+                
+                if mode_type not in ['live', 'recent', 'upcoming']:
+                    self.logger.warning(
+                        f"Invalid combined mode in rotation_order: {mode_name}"
+                    )
+                    continue
+                
+                # Check if at least one enabled league has this mode enabled
+                has_enabled_league_mode = False
+                for league_id, league_data in self._league_registry.items():
+                    if not league_data.get('enabled', False):
+                        continue
+                    
+                    league_config = self.config.get(league_id, {})
+                    display_modes_config = league_config.get("display_modes", {})
+                    
+                    if mode_type == 'live':
+                        if display_modes_config.get("show_live", True):
+                            has_enabled_league_mode = True
+                            break
+                    elif mode_type == 'recent':
+                        if display_modes_config.get("show_recent", True):
+                            has_enabled_league_mode = True
+                            break
+                    elif mode_type == 'upcoming':
+                        if display_modes_config.get("show_upcoming", True):
+                            has_enabled_league_mode = True
+                            break
+                
+                if has_enabled_league_mode:
+                    valid_modes.append(mode_name)
+                else:
+                    self.logger.debug(
+                        f"Skipping combined mode with no enabled leagues: {mode_name}"
+                    )
+                continue
+            
+            # Invalid mode format
+            else:
+                self.logger.warning(
+                    f"Invalid mode format in rotation_order: {mode_name} "
+                    "(must be 'nfl_recent', 'ncaa_fb_upcoming', 'football_recent', etc.)"
+                )
+                continue
+        
+        if valid_modes:
+            self.logger.info(
+                f"Parsed rotation_order: {len(valid_modes)} valid mode(s): {valid_modes}"
+            )
+            return valid_modes
+        else:
+            self.logger.warning(
+                "No valid modes in rotation_order, falling back to default behavior"
+            )
+            return []
 
     def _get_enabled_leagues_for_mode(self, mode_type: str) -> List[str]:
         """
@@ -1070,6 +1217,117 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
             f"NCAA FB enabled: {self.ncaa_fb_enabled}"
         )
         
+        # Check if this is a combined mode (football_recent, football_upcoming, football_live)
+        # and if rotation_order is configured with granular modes
+        is_combined_mode = display_mode.startswith("football_")
+        
+        if is_combined_mode and self._rotation_order:
+            # Filter rotation_order to get granular modes for this combined mode
+            # e.g., for football_recent, get ['nfl_recent', 'ncaa_fb_recent']
+            granular_modes = [
+                mode for mode in self._rotation_order
+                if mode.endswith(f"_{mode_type}") and not mode.startswith("football_")
+            ]
+            
+            if granular_modes:
+                # Initialize rotation state for this combined mode if needed
+                if display_mode not in self._rotation_state:
+                    self._rotation_state[display_mode] = {
+                        'current_index': 0,
+                        'rotation_order': granular_modes
+                    }
+                    self.logger.info(
+                        f"Initialized rotation state for {display_mode}: {granular_modes}"
+                    )
+                
+                rotation_state = self._rotation_state[display_mode]
+                current_index = rotation_state['current_index']
+                rotation_order = rotation_state['rotation_order']
+                
+                # Get current granular mode to display
+                if current_index < len(rotation_order):
+                    current_granular_mode = rotation_order[current_index]
+                    
+                    # Parse granular mode to extract league and mode_type
+                    parts = current_granular_mode.split("_", 1)
+                    if len(parts) == 2:
+                        league, granular_mode_type = parts
+                        
+                        # Validate league and mode_type match
+                        if league in self._league_registry and granular_mode_type == mode_type:
+                            # Track mode start time for this granular mode
+                            granular_display_mode = current_granular_mode
+                            if granular_display_mode not in self._mode_start_time:
+                                self._mode_start_time[granular_display_mode] = time.time()
+                                self.logger.debug(
+                                    f"Started tracking time for granular mode: {granular_display_mode}"
+                                )
+                            
+                            # Check if granular mode duration has expired
+                            effective_mode_duration = self._get_effective_mode_duration(
+                                granular_display_mode, mode_type
+                            )
+                            if effective_mode_duration is not None:
+                                elapsed_time = time.time() - self._mode_start_time[granular_display_mode]
+                                if elapsed_time >= effective_mode_duration:
+                                    # Granular mode duration expired - advance to next
+                                    self.logger.info(
+                                        f"Granular mode duration expired for {granular_display_mode}: "
+                                        f"{elapsed_time:.1f}s >= {effective_mode_duration}s. "
+                                        f"Advancing to next mode in rotation."
+                                    )
+                                    # Reset mode start time
+                                    self._mode_start_time[granular_display_mode] = time.time()
+                                    # Advance rotation index
+                                    rotation_state['current_index'] = (current_index + 1) % len(rotation_order)
+                                    # Return False to signal completion (display controller will call again)
+                                    return False
+                            
+                            # Display the current granular mode
+                            success = self._display_league_mode(league, mode_type, force_clear)
+                            
+                            if success:
+                                return True
+                            else:
+                                # No content for this granular mode - advance to next
+                                self.logger.debug(
+                                    f"No content for {granular_display_mode}, advancing to next mode"
+                                )
+                                rotation_state['current_index'] = (current_index + 1) % len(rotation_order)
+                                return False
+                
+                # If we've cycled through all granular modes, reset and continue
+                # This allows the rotation to wrap around
+                if current_index >= len(rotation_order):
+                    rotation_state['current_index'] = 0
+                    self.logger.debug(f"Wrapped around rotation for {display_mode}")
+                    return False
+        
+        # Not using rotation_order, or rotation_order doesn't have granular modes for this mode
+        # Fall back to existing sequential block logic
+        
+        # Track mode start time for per-mode duration enforcement
+        # Initialize start time if this is the first time seeing this mode
+        if display_mode not in self._mode_start_time:
+            self._mode_start_time[display_mode] = time.time()
+            self.logger.debug(f"Started tracking time for {display_mode}")
+        
+        # Check if mode-level duration has expired
+        effective_mode_duration = self._get_effective_mode_duration(display_mode, mode_type)
+        if effective_mode_duration is not None:
+            elapsed_time = time.time() - self._mode_start_time[display_mode]
+            if elapsed_time >= effective_mode_duration:
+                # Mode duration expired - time to rotate
+                # Important: Don't clear progress tracking - we want to resume where we left off
+                self.logger.info(
+                    f"Mode duration expired for {display_mode}: "
+                    f"{elapsed_time:.1f}s >= {effective_mode_duration}s. "
+                    f"Rotating to next mode (progress preserved for resume)."
+                )
+                # Reset mode start time for next cycle
+                self._mode_start_time[display_mode] = time.time()
+                return False
+        
         # Check if we should use scroll mode for this game type
         # Scroll mode handles multi-league display differently (shows all games scrolling)
         if self._should_use_scroll_mode(mode_type):
@@ -1294,6 +1552,80 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
         
         return False
 
+    def _display_league_mode(self, league: str, mode_type: str, force_clear: bool) -> bool:
+        """
+        Display a specific league/mode combination (e.g., NFL Recent, NCAA FB Upcoming).
+        
+        This method displays content from a single league and mode type, used when
+        rotation_order specifies granular modes like 'nfl_recent' or 'ncaa_fb_upcoming'.
+        
+        Args:
+            league: League ID ('nfl' or 'ncaa_fb')
+            mode_type: Mode type ('live', 'recent', or 'upcoming')
+            force_clear: Whether to force clear display
+            
+        Returns:
+            True if content was displayed, False otherwise
+        """
+        # Validate league
+        if league not in self._league_registry:
+            self.logger.warning(f"Invalid league in _display_league_mode: {league}")
+            return False
+        
+        # Check if league is enabled
+        if not self._league_registry[league].get('enabled', False):
+            self.logger.debug(f"League {league} is disabled, skipping")
+            return False
+        
+        # Get manager for this league/mode combination
+        manager = self._get_league_manager_for_mode(league, mode_type)
+        if not manager:
+            self.logger.debug(f"No manager available for {league} {mode_type}")
+            return False
+        
+        # Create display mode name for tracking
+        display_mode = f"{league}_{mode_type}"
+        
+        # Track mode start time for per-mode duration enforcement
+        if display_mode not in self._mode_start_time:
+            self._mode_start_time[display_mode] = time.time()
+            self.logger.debug(f"Started tracking time for {display_mode}")
+        
+        # Check if mode-level duration has expired
+        effective_mode_duration = self._get_effective_mode_duration(display_mode, mode_type)
+        if effective_mode_duration is not None:
+            elapsed_time = time.time() - self._mode_start_time[display_mode]
+            if elapsed_time >= effective_mode_duration:
+                # Mode duration expired - time to rotate
+                self.logger.info(
+                    f"Mode duration expired for {display_mode}: "
+                    f"{elapsed_time:.1f}s >= {effective_mode_duration}s. "
+                    f"Rotating to next mode (progress preserved for resume)."
+                )
+                # Reset mode start time for next cycle
+                self._mode_start_time[display_mode] = time.time()
+                return False
+        
+        # Set display context for dynamic duration tracking
+        self._current_display_league = league
+        self._current_display_mode_type = mode_type
+        
+        # Try to display content from this league's manager
+        success, _ = self._try_manager_display(
+            manager, force_clear, display_mode, mode_type, None
+        )
+        
+        if success:
+            self.logger.debug(
+                f"Displayed content from {league} {mode_type} (mode: {display_mode})"
+            )
+        else:
+            self.logger.debug(
+                f"No content available for {league} {mode_type} (mode: {display_mode})"
+            )
+        
+        return success
+
     def _display_internal_cycling(self, force_clear: bool) -> bool:
         """Handle display for internal mode cycling (when no display_mode provided).
         
@@ -1379,8 +1711,13 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
     def display(self, display_mode: str = None, force_clear: bool = False) -> bool:
         """Display football games with mode cycling.
         
+        Supports both combined modes (football_recent, football_upcoming, football_live) and
+        granular modes (nfl_recent, ncaa_fb_upcoming, etc.) for precise rotation control.
+        
         Args:
-            display_mode: Optional mode name (e.g., 'football_live', 'football_recent', 'football_upcoming').
+            display_mode: Optional mode name. Can be:
+                         - Combined mode: 'football_live', 'football_recent', 'football_upcoming'
+                         - Granular mode: 'nfl_recent', 'ncaa_fb_upcoming', 'nfl_live', etc.
                          If provided, displays that specific mode. If None, uses internal mode cycling.
             force_clear: If True, clear display before rendering
         """
@@ -1394,7 +1731,36 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
             
             # Route to appropriate display handler
             if display_mode:
-                return self._display_external_mode(display_mode, force_clear)
+                # Check if this is a granular mode (e.g., "nfl_recent", "ncaa_fb_upcoming")
+                if "_" in display_mode and not display_mode.startswith("football_"):
+                    # Granular mode - parse and display directly
+                    parts = display_mode.split("_", 1)
+                    if len(parts) == 2:
+                        league, mode_type_str = parts
+                        # Validate it's a known league
+                        if league in self._league_registry:
+                            # Extract mode_type from the granular mode name
+                            if mode_type_str in ['live', 'recent', 'upcoming']:
+                                # Display this specific league/mode combination
+                                return self._display_league_mode(league, mode_type_str, force_clear)
+                            else:
+                                self.logger.warning(
+                                    f"Invalid mode_type in granular display_mode: {display_mode}"
+                                )
+                                return False
+                        else:
+                            self.logger.warning(
+                                f"Invalid league in granular display_mode: {display_mode}"
+                            )
+                            return False
+                    else:
+                        self.logger.warning(
+                            f"Invalid granular display_mode format: {display_mode}"
+                        )
+                        return False
+                else:
+                    # Combined mode or other format - use existing logic
+                    return self._display_external_mode(display_mode, force_clear)
             else:
                 return self._display_internal_cycling(force_clear)
 
@@ -1548,13 +1914,242 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
         # Fallback to global game_display_duration
         return float(self.game_display_duration)
 
+    def _get_mode_duration(self, mode_type: str, league: Optional[str] = None) -> Optional[float]:
+        """Get mode-level duration for a specific mode type, optionally for a specific league.
+        
+        Resolves mode-level duration using the following hierarchy:
+        1. Per-league mode duration override (if league specified, only check that league)
+        2. Per-league mode duration overrides (if all enabled leagues have same value, or max if different)
+        3. Top-level mode duration setting
+        4. None (triggers dynamic calculation based on game count)
+        
+        Args:
+            mode_type: Mode type ('live', 'recent', or 'upcoming')
+            league: Optional league ID ('nfl' or 'ncaa_fb'). If provided, only checks that league's duration.
+            
+        Returns:
+            Mode duration in seconds (float) or None if not configured
+            
+        Examples:
+            - _get_mode_duration('recent', 'nfl') → Returns NFL's recent_mode_duration if set
+            - _get_mode_duration('recent') → Returns max of all enabled leagues or top-level
+            - If recent_mode_duration=60, returns 60.0
+            - If NFL has recent_mode_duration=45 and NCAA FB has 60, returns 60.0 (max)
+            - If neither configured, returns None (use dynamic calculation)
+        """
+        # If specific league requested, only check that league
+        if league:
+            if league not in self._league_registry:
+                self.logger.warning(f"Invalid league in _get_mode_duration: {league}")
+                return None
+            
+            # Check per-league override first
+            league_config = self.config.get(league, {})
+            league_mode_durations = league_config.get('mode_durations', {})
+            mode_duration_key = f"{mode_type}_mode_duration"  # e.g., 'recent_mode_duration'
+            league_duration = league_mode_durations.get(mode_duration_key)
+            if league_duration is not None:
+                self.logger.debug(
+                    f"_get_mode_duration({mode_type}, {league}): using per-league duration={league_duration}s"
+                )
+                return float(league_duration)
+            
+            # Fall back to top-level mode duration
+            mode_duration_key = f"{mode_type}_mode_duration"
+            top_level_duration = self.config.get(mode_duration_key)
+            if top_level_duration is not None:
+                self.logger.debug(
+                    f"_get_mode_duration({mode_type}, {league}): using top-level duration={top_level_duration}s"
+                )
+                return float(top_level_duration)
+            
+            # No mode duration configured for this league
+            self.logger.debug(
+                f"_get_mode_duration({mode_type}, {league}): no mode duration configured, will use dynamic calculation"
+            )
+            return None
+        
+        # No specific league - check all enabled leagues (existing logic)
+        # Check for per-league overrides
+        league_durations = []
+        
+        # Check NFL if enabled
+        if self.nfl_enabled:
+            nfl_config = self.config.get('nfl', {})
+            nfl_mode_durations = nfl_config.get('mode_durations', {})
+            mode_duration_key = f"{mode_type}_mode_duration"  # e.g., 'recent_mode_duration'
+            nfl_duration = nfl_mode_durations.get(mode_duration_key)
+            if nfl_duration is not None:
+                league_durations.append(float(nfl_duration))
+        
+        # Check NCAA FB if enabled
+        if self.ncaa_fb_enabled:
+            ncaa_fb_config = self.config.get('ncaa_fb', {})
+            ncaa_fb_mode_durations = ncaa_fb_config.get('mode_durations', {})
+            mode_duration_key = f"{mode_type}_mode_duration"  # e.g., 'recent_mode_duration'
+            ncaa_fb_duration = ncaa_fb_mode_durations.get(mode_duration_key)
+            if ncaa_fb_duration is not None:
+                league_durations.append(float(ncaa_fb_duration))
+        
+        # If we have per-league durations, use the maximum to ensure all leagues get their time
+        if league_durations:
+            max_duration = max(league_durations)
+            self.logger.debug(
+                f"_get_mode_duration({mode_type}): per-league durations={league_durations}, using max={max_duration}s"
+            )
+            return max_duration
+        
+        # Check top-level mode duration
+        mode_duration_key = f"{mode_type}_mode_duration"  # e.g., 'recent_mode_duration'
+        top_level_duration = self.config.get(mode_duration_key)
+        if top_level_duration is not None:
+            self.logger.debug(
+                f"_get_mode_duration({mode_type}): using top-level duration={top_level_duration}s"
+            )
+            return float(top_level_duration)
+        
+        # No mode duration configured - return None to trigger dynamic calculation
+        self.logger.debug(
+            f"_get_mode_duration({mode_type}): no mode duration configured, will use dynamic calculation"
+        )
+        return None
+
+    def _get_effective_mode_duration(self, display_mode: str, mode_type: str) -> Optional[float]:
+        """Get effective mode duration integrating with dynamic duration caps.
+        
+        This method combines mode-level durations with dynamic duration caps to determine
+        the actual duration the display controller should use for a mode.
+        
+        Supports both combined modes (football_recent) and granular modes (nfl_recent).
+        
+        Resolution logic:
+        1. Parse display_mode to extract league if granular mode
+        2. Get base mode duration from _get_mode_duration() (with league if granular)
+        3. Check if dynamic duration is enabled for this mode
+        4. If both mode duration and dynamic cap are set, use minimum
+        5. If only one is set, use that value
+        6. If neither is set, return None (triggers dynamic calculation)
+        
+        Args:
+            display_mode: External display mode name (e.g., 'football_recent', 'nfl_recent', 'ncaa_fb_upcoming')
+            mode_type: Mode type ('live', 'recent', or 'upcoming')
+            
+        Returns:
+            Effective mode duration in seconds (float) or None if not configured
+            
+        Examples:
+            - mode_duration=60s, dynamic_cap=45s → returns 45.0
+            - mode_duration=60s, no dynamic cap → returns 60.0
+            - no mode_duration, dynamic_cap=45s → returns None (use dynamic calculation with cap)
+            - neither set → returns None (use dynamic calculation)
+        """
+        # Parse display_mode to extract league if it's a granular mode
+        league = None
+        if "_" in display_mode and not display_mode.startswith("football_"):
+            # Granular mode: e.g., "nfl_recent", "ncaa_fb_upcoming"
+            parts = display_mode.split("_", 1)
+            if len(parts) == 2:
+                potential_league, potential_mode_type = parts
+                # Validate it's a known league
+                if potential_league in self._league_registry:
+                    league = potential_league
+                    # Use the mode_type from the display_mode if it matches
+                    if potential_mode_type == mode_type:
+                        # Mode type matches, use this league
+                        pass
+                    else:
+                        # Mode type doesn't match - might be invalid, but continue anyway
+                        self.logger.debug(
+                            f"Mode type mismatch in _get_effective_mode_duration: "
+                            f"display_mode={display_mode}, mode_type={mode_type}"
+                        )
+        
+        # Get base mode duration (with league if granular mode)
+        mode_duration = self._get_mode_duration(mode_type, league=league)
+        
+        # Check if dynamic duration is enabled and get cap
+        # We need to temporarily set display context to check dynamic settings
+        # Save current context
+        saved_league = self._current_display_league
+        saved_mode_type = self._current_display_mode_type
+        
+        # Set context for enabled leagues (check all enabled leagues for dynamic caps)
+        dynamic_caps = []
+        
+        # If specific league requested (granular mode), only check that league
+        if league:
+            self._current_display_league = league
+            self._current_display_mode_type = mode_type
+            if self.supports_dynamic_duration():
+                dynamic_cap = self.get_dynamic_duration_cap()
+                if dynamic_cap is not None:
+                    dynamic_caps.append(dynamic_cap)
+        else:
+            # No specific league - check all enabled leagues (combined mode)
+            # Check NFL dynamic cap if enabled
+            if self.nfl_enabled:
+                self._current_display_league = 'nfl'
+                self._current_display_mode_type = mode_type
+                if self.supports_dynamic_duration():
+                    dynamic_cap = self.get_dynamic_duration_cap()
+                    if dynamic_cap is not None:
+                        dynamic_caps.append(dynamic_cap)
+            
+            # Check NCAA FB dynamic cap if enabled
+            if self.ncaa_fb_enabled:
+                self._current_display_league = 'ncaa_fb'
+                self._current_display_mode_type = mode_type
+                if self.supports_dynamic_duration():
+                    dynamic_cap = self.get_dynamic_duration_cap()
+                    if dynamic_cap is not None:
+                        dynamic_caps.append(dynamic_cap)
+        
+        # Restore context
+        self._current_display_league = saved_league
+        self._current_display_mode_type = saved_mode_type
+        
+        # If we have dynamic caps, use the maximum (most permissive)
+        effective_dynamic_cap = max(dynamic_caps) if dynamic_caps else None
+        
+        # Apply integration logic
+        if mode_duration is not None and effective_dynamic_cap is not None:
+            # Both set - use minimum
+            effective_duration = min(mode_duration, effective_dynamic_cap)
+            self.logger.debug(
+                f"_get_effective_mode_duration({display_mode}, {mode_type}): "
+                f"mode_duration={mode_duration}s, dynamic_cap={effective_dynamic_cap}s, "
+                f"using min={effective_duration}s"
+            )
+            return effective_duration
+        elif mode_duration is not None:
+            # Only mode duration set
+            self.logger.debug(
+                f"_get_effective_mode_duration({display_mode}, {mode_type}): "
+                f"using mode_duration={mode_duration}s (no dynamic cap)"
+            )
+            return mode_duration
+        else:
+            # Mode duration not set (dynamic cap might be set, but we return None
+            # to trigger dynamic calculation which will apply the cap)
+            self.logger.debug(
+                f"_get_effective_mode_duration({display_mode}, {mode_type}): "
+                f"no mode_duration (dynamic_cap={effective_dynamic_cap}), will use dynamic calculation"
+            )
+            return None
+
     def get_cycle_duration(self, display_mode: str = None) -> Optional[float]:
         """
         Calculate the expected cycle duration for a display mode based on the number of games.
         
-        This implements dynamic duration scaling where:
-        - For switch mode: Total duration = num_games × per_game_duration
+        This implements dynamic duration scaling with support for mode-level durations:
+        - Mode-level duration: Fixed total time for mode (recent_mode_duration, upcoming_mode_duration, live_mode_duration)
+        - Dynamic calculation: Total duration = num_games × per_game_duration
         - For scroll mode: Duration is calculated by ScrollHelper based on content width
+        
+        Priority order:
+        1. Mode-level duration (if configured)
+        2. Dynamic calculation (if no mode-level duration)
+        3. Dynamic duration cap applies to both if enabled
         
         Args:
             display_mode: The display mode to calculate duration for (e.g., 'football_live', 'football_recent')
@@ -1567,10 +2162,20 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
             self.logger.info(f"get_cycle_duration() returning None: is_enabled={self.is_enabled}, display_mode={display_mode}")
             return None
         
-        # Extract mode type
+        # Extract mode type and league (if granular mode)
         mode_type = self._extract_mode_type(display_mode)
         if not mode_type:
             return None
+        
+        # Parse granular mode name if applicable (e.g., "nfl_recent", "ncaa_fb_upcoming")
+        league = None
+        if "_" in display_mode and not display_mode.startswith("football_"):
+            # Granular mode: extract league
+            parts = display_mode.split("_", 1)
+            if len(parts) == 2:
+                potential_league, potential_mode_type = parts
+                if potential_league in self._league_registry and potential_mode_type == mode_type:
+                    league = potential_league
         
         # Check if scroll mode is active for this mode type
         if self._should_use_scroll_mode(mode_type) and self._scroll_manager:
@@ -1580,57 +2185,59 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
                 self.logger.info(f"get_cycle_duration: scroll mode duration for {display_mode} = {scroll_duration}s")
                 return float(scroll_duration)
         
-        # Fall through to switch mode duration calculation
+        # Check for mode-level duration first (priority 1)
+        effective_mode_duration = self._get_effective_mode_duration(display_mode, mode_type)
+        if effective_mode_duration is not None:
+            self.logger.info(
+                f"get_cycle_duration: using mode-level duration for {display_mode} = {effective_mode_duration}s"
+            )
+            return effective_mode_duration
+        
+        # Fall through to dynamic calculation based on game count (priority 2)
         
         try:
-            # Extract the mode type (live, recent, upcoming)
-            mode_type = None
-            if display_mode.endswith('_live'):
-                mode_type = 'live'
-            elif display_mode.endswith('_recent'):
-                mode_type = 'recent'
-            elif display_mode.endswith('_upcoming'):
-                mode_type = 'upcoming'
-            
-            self.logger.info(f"get_cycle_duration: extracted mode_type={mode_type} from display_mode={display_mode}")
-            
-            if not mode_type:
-                self.logger.info(f"get_cycle_duration: mode_type is None, returning None")
-                return None
+            self.logger.info(f"get_cycle_duration: extracted mode_type={mode_type}, league={league} from display_mode={display_mode}")
             
             total_games = 0
             per_game_duration = self.game_display_duration  # Default fallback (will be overridden per league)
             
-            # Collect all managers for this mode and count their games
+            # Collect managers for this mode and count their games
             managers_to_check = []
             
-            if mode_type == 'live':
-                if self.nfl_enabled:
-                    nfl_manager = self._get_manager_for_league_mode('nfl', 'live')
-                    if nfl_manager:
-                        managers_to_check.append(('nfl', nfl_manager))
-                if self.ncaa_fb_enabled:
-                    ncaa_fb_manager = self._get_manager_for_league_mode('ncaa_fb', 'live')
-                    if ncaa_fb_manager:
-                        managers_to_check.append(('ncaa_fb', ncaa_fb_manager))
-            elif mode_type == 'recent':
-                if self.nfl_enabled:
-                    nfl_manager = self._get_manager_for_league_mode('nfl', 'recent')
-                    if nfl_manager:
-                        managers_to_check.append(('nfl', nfl_manager))
-                if self.ncaa_fb_enabled:
-                    ncaa_fb_manager = self._get_manager_for_league_mode('ncaa_fb', 'recent')
-                    if ncaa_fb_manager:
-                        managers_to_check.append(('ncaa_fb', ncaa_fb_manager))
-            elif mode_type == 'upcoming':
-                if self.nfl_enabled:
-                    nfl_manager = self._get_manager_for_league_mode('nfl', 'upcoming')
-                    if nfl_manager:
-                        managers_to_check.append(('nfl', nfl_manager))
-                if self.ncaa_fb_enabled:
-                    ncaa_fb_manager = self._get_manager_for_league_mode('ncaa_fb', 'upcoming')
-                    if ncaa_fb_manager:
-                        managers_to_check.append(('ncaa_fb', ncaa_fb_manager))
+            # If granular mode (specific league), only check that league
+            if league:
+                manager = self._get_manager_for_league_mode(league, mode_type)
+                if manager:
+                    managers_to_check.append((league, manager))
+            else:
+                # Combined mode - check all enabled leagues
+                if mode_type == 'live':
+                    if self.nfl_enabled:
+                        nfl_manager = self._get_manager_for_league_mode('nfl', 'live')
+                        if nfl_manager:
+                            managers_to_check.append(('nfl', nfl_manager))
+                    if self.ncaa_fb_enabled:
+                        ncaa_fb_manager = self._get_manager_for_league_mode('ncaa_fb', 'live')
+                        if ncaa_fb_manager:
+                            managers_to_check.append(('ncaa_fb', ncaa_fb_manager))
+                elif mode_type == 'recent':
+                    if self.nfl_enabled:
+                        nfl_manager = self._get_manager_for_league_mode('nfl', 'recent')
+                        if nfl_manager:
+                            managers_to_check.append(('nfl', nfl_manager))
+                    if self.ncaa_fb_enabled:
+                        ncaa_fb_manager = self._get_manager_for_league_mode('ncaa_fb', 'recent')
+                        if ncaa_fb_manager:
+                            managers_to_check.append(('ncaa_fb', ncaa_fb_manager))
+                elif mode_type == 'upcoming':
+                    if self.nfl_enabled:
+                        nfl_manager = self._get_manager_for_league_mode('nfl', 'upcoming')
+                        if nfl_manager:
+                            managers_to_check.append(('nfl', nfl_manager))
+                    if self.ncaa_fb_enabled:
+                        ncaa_fb_manager = self._get_manager_for_league_mode('ncaa_fb', 'upcoming')
+                        if ncaa_fb_manager:
+                            managers_to_check.append(('ncaa_fb', ncaa_fb_manager))
             
             # CRITICAL: Update managers BEFORE checking game counts!
             self.logger.info(f"get_cycle_duration: updating {len(managers_to_check)} manager(s) before counting games")
@@ -2457,6 +3064,12 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
                 if all_truly_completed:
                     self._dynamic_cycle_complete = True
                     self.logger.info(f"Display mode {display_mode} cycle complete - all {len(used_manager_keys)} manager(s) completed")
+                    
+                    # Reset mode start time since full cycle is complete
+                    # This ensures next cycle starts timing from beginning
+                    if display_mode in self._mode_start_time:
+                        del self._mode_start_time[display_mode]
+                        self.logger.debug(f"Reset mode start time for {display_mode} (full cycle complete)")
                 else:
                     # Some managers aren't truly completed - keep cycle incomplete
                     self._dynamic_cycle_complete = False

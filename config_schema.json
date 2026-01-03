@@ -30,6 +30,46 @@
       "maximum": 60,
       "description": "Duration in seconds to show each individual game before rotating to the next game within the same mode"
     },
+    "recent_mode_duration": {
+      "type": "number",
+      "default": null,
+      "minimum": 10,
+      "maximum": 600,
+      "description": "Total duration in seconds for Recent mode before rotating to next mode. If not set, uses dynamic calculation (total_games × per_game_duration). If set, only shows as many games as fit within this time limit. When mode cycles back, continues from last game shown (no repetition)."
+    },
+    "upcoming_mode_duration": {
+      "type": "number",
+      "default": null,
+      "minimum": 10,
+      "maximum": 600,
+      "description": "Total duration in seconds for Upcoming mode before rotating to next mode. If not set, uses dynamic calculation (total_games × per_game_duration). If set, only shows as many games as fit within this time limit. When mode cycles back, continues from last game shown (no repetition)."
+    },
+    "live_mode_duration": {
+      "type": "number",
+      "default": null,
+      "minimum": 10,
+      "maximum": 600,
+      "description": "Total duration in seconds for Live mode before rotating to next mode. If not set, uses dynamic calculation (total_games × per_game_duration). If set, only shows as many games as fit within this time limit. When mode cycles back, continues from last game shown (no repetition)."
+    },
+    "rotation_order": {
+      "type": "array",
+      "default": ["football_recent", "football_upcoming", "football_live"],
+      "description": "Order in which league/mode combinations rotate. Options: nfl_recent, nfl_upcoming, nfl_live, ncaa_fb_recent, ncaa_fb_upcoming, ncaa_fb_live, football_recent (combined), football_upcoming (combined), football_live (combined). Use combined modes for backward compatibility or granular modes for precise control. Examples: ['nfl_recent', 'nfl_upcoming', 'ncaa_fb_recent', 'ncaa_fb_upcoming'] for league-first rotation, or ['nfl_recent', 'ncaa_fb_recent', 'nfl_upcoming', 'ncaa_fb_upcoming'] for mode-first rotation. When rotation_order contains granular modes, the plugin rotates through them internally when display controller calls combined modes. Each granular mode respects its own mode duration settings. Disabled leagues/modes are automatically filtered out. If rotation_order is empty or not configured, uses default sequential block behavior (all NFL games, then all NCAA FB games).",
+      "items": {
+        "type": "string",
+        "enum": [
+          "nfl_recent",
+          "nfl_upcoming",
+          "nfl_live",
+          "ncaa_fb_recent",
+          "ncaa_fb_upcoming",
+          "ncaa_fb_live",
+          "football_recent",
+          "football_upcoming",
+          "football_live"
+        ]
+      }
+    },
     "nfl": {
       "type": "object",
       "title": "NFL Settings",
@@ -285,6 +325,34 @@
                   }
                 }
               }
+            }
+          }
+        },
+        "mode_durations": {
+          "type": "object",
+          "title": "Mode-Level Durations",
+          "description": "Control total duration for each mode type. Overrides top-level mode durations for this league.",
+          "properties": {
+            "recent_mode_duration": {
+              "type": "number",
+              "default": null,
+              "minimum": 10,
+              "maximum": 600,
+              "description": "Total duration for Recent mode for this league (overrides top-level setting)"
+            },
+            "upcoming_mode_duration": {
+              "type": "number",
+              "default": null,
+              "minimum": 10,
+              "maximum": 600,
+              "description": "Total duration for Upcoming mode for this league"
+            },
+            "live_mode_duration": {
+              "type": "number",
+              "default": null,
+              "minimum": 10,
+              "maximum": 600,
+              "description": "Total duration for Live mode for this league"
             }
           }
         }
@@ -545,6 +613,34 @@
                   }
                 }
               }
+            }
+          }
+        },
+        "mode_durations": {
+          "type": "object",
+          "title": "Mode-Level Durations",
+          "description": "Control total duration for each mode type. Overrides top-level mode durations for this league.",
+          "properties": {
+            "recent_mode_duration": {
+              "type": "number",
+              "default": null,
+              "minimum": 10,
+              "maximum": 600,
+              "description": "Total duration for Recent mode for this league (overrides top-level setting)"
+            },
+            "upcoming_mode_duration": {
+              "type": "number",
+              "default": null,
+              "minimum": 10,
+              "maximum": 600,
+              "description": "Total duration for Upcoming mode for this league"
+            },
+            "live_mode_duration": {
+              "type": "number",
+              "default": null,
+              "minimum": 10,
+              "maximum": 600,
+              "description": "Total duration for Live mode for this league"
             }
           }
         }
