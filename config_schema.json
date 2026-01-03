@@ -59,10 +59,10 @@
         "type": "string",
         "enum": [
           "nfl_recent",
-          "nfl_upcoming",
-          "nfl_live",
           "ncaa_fb_recent",
+          "nfl_upcoming",
           "ncaa_fb_upcoming",
+          "nfl_live",
           "ncaa_fb_live"
         ]
       }
