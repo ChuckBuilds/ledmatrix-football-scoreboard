@@ -188,25 +188,25 @@ class FootballLive(Football, SportsLive):
 
             center_y = display_height // 2
 
-            # Draw logos (shifted slightly more inward than NHL perhaps)
-            home_x = display_width - home_logo.width + 10 #adjusted from 18 # Adjust position as needed
-            home_y = center_y - (home_logo.height // 2)
+            # Draw logos (shifted slightly more inward than NHL perhaps) with layout offsets
+            home_x = display_width - home_logo.width + 10 + self._get_layout_offset('home_logo', 'x_offset') #adjusted from 18 # Adjust position as needed
+            home_y = center_y - (home_logo.height // 2) + self._get_layout_offset('home_logo', 'y_offset')
             main_img.paste(home_logo, (home_x, home_y), home_logo)
 
-            away_x = -10 #adjusted from 18 # Adjust position as needed
-            away_y = center_y - (away_logo.height // 2)
+            away_x = -10 + self._get_layout_offset('away_logo', 'x_offset') #adjusted from 18 # Adjust position as needed
+            away_y = center_y - (away_logo.height // 2) + self._get_layout_offset('away_logo', 'y_offset')
             main_img.paste(away_logo, (away_x, away_y), away_logo)
 
             # --- Draw Text Elements on Overlay ---
             # Note: Rankings are now handled in the records/rankings section below
 
-            # Scores (centered, slightly above bottom)
+            # Scores (centered, slightly above bottom) with layout offsets
             home_score = str(game.get("home_score", "0"))
             away_score = str(game.get("away_score", "0"))
             score_text = f"{away_score}-{home_score}"
             score_width = draw_overlay.textlength(score_text, font=self.fonts['score'])
-            score_x = (display_width - score_width) // 2
-            score_y = (display_height // 2) - 3 #centered #from 14 # Position score higher
+            score_x = (display_width - score_width) // 2 + self._get_layout_offset('score', 'x_offset')
+            score_y = (display_height // 2) - 3 + self._get_layout_offset('score', 'y_offset') #centered #from 14 # Position score higher
             self._draw_text_with_outline(draw_overlay, score_text, (score_x, score_y), self.fonts['score'])
 
             # Period/Quarter and Clock (Top center)
@@ -217,8 +217,8 @@ class FootballLive(Football, SportsLive):
                 period_clock_text = game.get("status_text", "Period Break")
 
             status_width = draw_overlay.textlength(period_clock_text, font=self.fonts['time'])
-            status_x = (display_width - status_width) // 2
-            status_y = 1 # Position at top
+            status_x = (display_width - status_width) // 2 + self._get_layout_offset('status_text', 'x_offset')
+            status_y = 1 + self._get_layout_offset('status_text', 'y_offset') # Position at top
             self._draw_text_with_outline(draw_overlay, period_clock_text, (status_x, status_y), self.fonts['time'])
 
             # Down & Distance or Scoring Event (Below Period/Clock)
@@ -247,8 +247,8 @@ class FootballLive(Football, SportsLive):
                 self._draw_text_with_outline(draw_overlay, scoring_event, (event_x, event_y), self.fonts['detail'], fill=event_color)
             elif down_distance and game.get("is_live"): # Only show if live and available
                 dd_width = draw_overlay.textlength(down_distance, font=self.fonts['detail'])
-                dd_x = (display_width - dd_width) // 2
-                dd_y = (display_height)- 7 # Top of D&D text
+                dd_x = (display_width - dd_width) // 2 + self._get_layout_offset('status_text', 'x_offset')
+                dd_y = (display_height)- 7 + self._get_layout_offset('status_text', 'y_offset') # Top of D&D text
                 down_color = (200, 200, 0) if not game.get("is_redzone", False) else (255,0,0) # Yellowish text
                 self._draw_text_with_outline(draw_overlay, down_distance, (dd_x, dd_y), self.fonts['detail'], fill=down_color)
 
