@@ -1244,8 +1244,17 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
                 current_index = rotation_state['current_index']
                 rotation_order = rotation_state['rotation_order']
                 
-                # Get current granular mode to display
-                if current_index < len(rotation_order):
+                # Try each granular mode in rotation order until we find one with content
+                # This ensures we don't return False prematurely if one mode has no content
+                attempts = 0
+                max_attempts = len(rotation_order)
+                
+                while attempts < max_attempts:
+                    # Wrap around if we've gone past the end
+                    if current_index >= len(rotation_order):
+                        current_index = 0
+                        rotation_state['current_index'] = 0
+                    
                     current_granular_mode = rotation_order[current_index]
                     
                     # Parse granular mode to extract league and mode_type
@@ -1279,29 +1288,50 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
                                     # Reset mode start time
                                     self._mode_start_time[granular_display_mode] = time.time()
                                     # Advance rotation index
-                                    rotation_state['current_index'] = (current_index + 1) % len(rotation_order)
-                                    # Return False to signal completion (display controller will call again)
-                                    return False
+                                    current_index = (current_index + 1) % len(rotation_order)
+                                    rotation_state['current_index'] = current_index
+                                    attempts += 1
+                                    continue  # Try next mode
                             
                             # Display the current granular mode
                             success = self._display_league_mode(league, mode_type, force_clear)
                             
                             if success:
+                                # Successfully displayed content - stay on this granular mode
                                 return True
                             else:
-                                # No content for this granular mode - advance to next
+                                # No content for this granular mode - try next one
                                 self.logger.debug(
-                                    f"No content for {granular_display_mode}, advancing to next mode"
+                                    f"No content for {granular_display_mode}, trying next mode in rotation"
                                 )
-                                rotation_state['current_index'] = (current_index + 1) % len(rotation_order)
-                                return False
+                                current_index = (current_index + 1) % len(rotation_order)
+                                rotation_state['current_index'] = current_index
+                                attempts += 1
+                                continue  # Try next mode
+                        else:
+                            # Invalid granular mode - skip it
+                            self.logger.warning(
+                                f"Invalid granular mode in rotation: {current_granular_mode}"
+                            )
+                            current_index = (current_index + 1) % len(rotation_order)
+                            rotation_state['current_index'] = current_index
+                            attempts += 1
+                            continue
+                    else:
+                        # Invalid format - skip it
+                        self.logger.warning(
+                            f"Invalid granular mode format in rotation: {current_granular_mode}"
+                        )
+                        current_index = (current_index + 1) % len(rotation_order)
+                        rotation_state['current_index'] = current_index
+                        attempts += 1
+                        continue
                 
-                # If we've cycled through all granular modes, reset and continue
-                # This allows the rotation to wrap around
-                if current_index >= len(rotation_order):
-                    rotation_state['current_index'] = 0
-                    self.logger.debug(f"Wrapped around rotation for {display_mode}")
-                    return False
+                # Tried all granular modes and none had content
+                self.logger.debug(
+                    f"Tried all {max_attempts} granular modes for {display_mode}, none had content"
+                )
+                return False
         
         # Not using rotation_order, or rotation_order doesn't have granular modes for this mode
         # Fall back to existing sequential block logic
