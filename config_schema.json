@@ -607,12 +607,12 @@
         }
       }
     },
-  "customization": {
-    "type": "object",
-    "title": "Display Customization",
-    "description": "Customize fonts for different text elements on the scoreboard",
-    "properties": {
-      "score_text": {
+    "customization": {
+      "type": "object",
+      "title": "Display Customization",
+      "description": "Customize fonts for different text elements on the scoreboard",
+      "properties": {
+        "score_text": {
         "type": "object",
         "title": "Game Score",
         "description": "Font settings for the game score display",
@@ -642,8 +642,8 @@
         },
         "x-propertyOrder": ["font", "font_size"],
         "additionalProperties": false
-      },
-      "period_text": {
+        },
+        "period_text": {
         "type": "object",
         "title": "Period/Clock",
         "description": "Font settings for period, quarter, and clock text",
@@ -673,8 +673,8 @@
         },
         "x-propertyOrder": ["font", "font_size"],
         "additionalProperties": false
-      },
-      "team_name": {
+        },
+        "team_name": {
         "type": "object",
         "title": "Team Names",
         "description": "Font settings for team name abbreviations",
@@ -704,8 +704,8 @@
         },
         "x-propertyOrder": ["font", "font_size"],
         "additionalProperties": false
-      },
-      "status_text": {
+        },
+        "status_text": {
         "type": "object",
         "title": "Status Messages",
         "description": "Font settings for status text (e.g., 'Next Game', 'Final')",
@@ -735,8 +735,8 @@
         },
         "x-propertyOrder": ["font", "font_size"],
         "additionalProperties": false
-      },
-      "detail_text": {
+        },
+        "detail_text": {
         "type": "object",
         "title": "Details/Odds",
         "description": "Font settings for odds and other detail information",
@@ -766,8 +766,8 @@
         },
         "x-propertyOrder": ["font", "font_size"],
         "additionalProperties": false
-      },
-      "rank_text": {
+        },
+        "rank_text": {
         "type": "object",
         "title": "Rankings",
         "description": "Font settings for ranking displays",
@@ -797,11 +797,11 @@
         },
         "x-propertyOrder": ["font", "font_size"],
         "additionalProperties": false
-      }
-    },
-    "x-propertyOrder": ["score_text", "period_text", "team_name", "status_text", "detail_text", "rank_text"],
-    "additionalProperties": false
-  }
+        }
+      },
+      "x-propertyOrder": ["score_text", "period_text", "team_name", "status_text", "detail_text", "rank_text"],
+      "additionalProperties": false
+    }
 },
 "additionalProperties": false,
 "required": ["enabled"]
