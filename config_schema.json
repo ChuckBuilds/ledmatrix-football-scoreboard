@@ -797,8 +797,7 @@
         },
         "x-propertyOrder": ["font", "font_size"],
         "additionalProperties": false
-        }
-      },
+        },
       "layout": {
         "type": "object",
         "title": "Layout Positioning",
@@ -931,6 +930,7 @@
         },
         "x-propertyOrder": ["home_logo", "away_logo", "score", "status_text", "date", "time", "records"],
         "additionalProperties": false
+      }
       },
       "x-propertyOrder": ["score_text", "period_text", "team_name", "status_text", "detail_text", "rank_text", "layout"],
       "additionalProperties": false
