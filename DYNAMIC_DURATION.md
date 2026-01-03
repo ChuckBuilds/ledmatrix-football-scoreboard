@@ -213,9 +213,12 @@ Each mode type can have its own duration:
 The plugin provides a `get_cycle_duration(display_mode)` method that the display controller can call to get the expected duration:
 
 ```python
-# Display controller calls this
-duration = plugin.get_cycle_duration("football_recent")
+# Display controller calls this for granular modes
+duration = plugin.get_cycle_duration("nfl_recent")
 # Returns: 30.0 (for 2 games @ 15s each)
+
+duration = plugin.get_cycle_duration("ncaa_fb_upcoming")
+# Returns: 45.0 (for 3 games @ 15s each)
 ```
 
 ## Benefits
@@ -248,13 +251,15 @@ duration = plugin.get_cycle_duration("football_recent")
 - **Behavior**: Cap applies → 120s total (shows 8 games)
 - **Total Duration**: 120 seconds (min of 180 and 120)
 
-### Scenario 4: Multi-League with Resume
-- **Configuration**: NFL @ 15s/game, NCAA FB @ 15s/game, `recent_mode_duration: 60`
-- **Games**: 20 NFL + 30 NCAA FB = 50 total recent games
-- **Cycle 1**: Shows NFL games 1-4 (60s) → rotates
-- **Cycle 2**: Resumes NFL at game 5-8 → continues until all NFL shown
-- **Cycle 3**: Shows NCAA FB games 1-4 → continues across cycles
-- **Total Cycles**: ~13 cycles to show all 50 games (4 per 60s cycle)
+### Scenario 4: Granular Modes with Resume
+- **Configuration**: `nfl_recent` @ 15s/game, `ncaa_fb_recent` @ 15s/game, `recent_mode_duration: 60`
+- **Games**: 20 NFL games, 30 NCAA FB games
+- **Display Controller Rotation**: `nfl_recent` → `nfl_upcoming` → `ncaa_fb_recent` → `ncaa_fb_upcoming` → ...
+- **Cycle 1 (nfl_recent)**: Shows NFL games 1-4 (60s) → rotates to next mode
+- **Cycle 2 (ncaa_fb_recent)**: Shows NCAA FB games 1-4 (60s) → rotates
+- **Cycle 3 (nfl_recent resumes)**: Shows NFL games 5-8 → continues until all NFL shown
+- **Cycle 4 (ncaa_fb_recent resumes)**: Shows NCAA FB games 5-8 → continues across cycles
+- **Total Cycles**: ~13 cycles to show all games (4 per 60s cycle per mode)
 
 ### Scenario 5: Single Favorite Team
 - **Configuration**: TB as favorite, 15s per game
@@ -266,12 +271,14 @@ duration = plugin.get_cycle_duration("football_recent")
 - **Games Available**: 16 games this week
 - **Total Duration**: 16 × 10s = **160 seconds (2.67 minutes)** (dynamic)
 
-### Scenario 7: Mixed Leagues with Per-League Overrides
+### Scenario 7: Per-League Mode Duration Overrides
 - **Configuration**: 
-  - NFL: `mode_durations.recent_mode_duration: 45`
-  - NCAA FB: `mode_durations.recent_mode_duration: 60`
-- **Behavior**: Uses 60s (maximum) to ensure both leagues get their time
-- **Total Duration**: 60 seconds
+  - NFL: `mode_durations.recent_mode_duration: 45` (for `nfl_recent`)
+  - NCAA FB: `mode_durations.recent_mode_duration: 60` (for `ncaa_fb_recent`)
+- **Behavior**: 
+  - `nfl_recent` uses 45s
+  - `ncaa_fb_recent` uses 60s
+  - Each granular mode has its own independent duration
 
 ## Technical Details
 
@@ -287,7 +294,7 @@ def get_cycle_duration(self, display_mode: str = None) -> Optional[float]:
     3. Dynamic duration cap applies to both if enabled
     
     Args:
-        display_mode: The mode name (e.g., 'football_live', 'football_recent')
+        display_mode: The granular mode name (e.g., 'nfl_live', 'nfl_recent', 'ncaa_fb_upcoming')
     
     Returns:
         Total duration in seconds, or None if no games available
@@ -300,16 +307,15 @@ def get_cycle_duration(self, display_mode: str = None) -> Optional[float]:
 
 ### Duration Resolution Logic
 
-**For Mode-Level Duration:**
-1. Check per-league overrides: `config.nfl.mode_durations.recent_mode_duration`
-2. If multiple leagues, use maximum: `max(nfl_duration, ncaa_fb_duration)`
-3. Check top-level: `config.recent_mode_duration`
-4. If both mode duration and dynamic cap exist: `min(mode_duration, dynamic_cap)`
-5. If neither, use dynamic calculation
+**For Mode-Level Duration (Granular Modes):**
+1. Check per-league override: `config.nfl.mode_durations.recent_mode_duration` (for `nfl_recent`)
+2. Check top-level: `config.recent_mode_duration`
+3. If both mode duration and dynamic cap exist: `min(mode_duration, dynamic_cap)`
+4. If neither, use dynamic calculation
 
-**For Dynamic Calculation:**
-1. Count games from all enabled leagues
-2. Get per-game duration for each league
+**For Dynamic Calculation (Granular Modes):**
+1. Count games from the specific league (e.g., only NFL games for `nfl_recent`)
+2. Get per-game duration for that league
 3. Calculate: `total_games × per_game_duration`
 4. Apply dynamic duration cap if enabled
 
@@ -353,10 +359,10 @@ The calculation automatically filters out:
 When enabled, the plugin logs cycle duration calculations:
 
 ```
-INFO - get_cycle_duration: using mode-level duration for football_recent = 60s
+INFO - get_cycle_duration: using mode-level duration for nfl_recent = 60s
 INFO - get_cycle_duration: nfl recent has 2 games, per_game_duration=15s
-INFO - get_cycle_duration: football_recent = 2 games × 15s = 30s
-INFO - Mode duration expired for football_recent: 60.2s >= 60s. Rotating to next mode (progress preserved for resume).
+INFO - get_cycle_duration: nfl_recent = 2 games × 15s = 30s
+INFO - Mode duration expired for nfl_recent: 60.2s >= 60s. Rotating to next mode (progress preserved for resume).
 ```
 
 ## Migration from Fixed Duration

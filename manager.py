@@ -148,9 +148,6 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
         # This centralizes league management and makes it easy to add more leagues
         self._initialize_league_registry()
         
-        # Parse rotation order from config
-        self._rotation_order = self._parse_rotation_order()
-        
         # Initialize scroll display manager if available
         self._scroll_manager: Optional[ScrollDisplayManager] = None
         if SCROLL_AVAILABLE and ScrollDisplayManager:
@@ -222,16 +219,9 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
         self._game_transition_log_interval: float = 1.0  # Minimum seconds between game transition logs
         
         # Track mode start times for per-mode duration enforcement
-        # Format: {display_mode: start_time} (e.g., {'football_recent': 1234567890.0})
+        # Format: {display_mode: start_time} (e.g., {'nfl_recent': 1234567890.0})
         # Reset when mode changes or full cycle completes
         self._mode_start_time: Dict[str, float] = {}
-        
-        # Rotation order state tracking for configurable rotation
-        # Parsed rotation order from config (filtered to only enabled modes)
-        self._rotation_order: List[str] = []
-        # Per combined mode, track rotation state
-        # Format: {combined_mode: {'current_index': int, 'rotation_order': [str]}}
-        self._rotation_state: Dict[str, Dict[str, Any]] = {}
         
         # Note: Sticky manager tracking has been removed in favor of sequential block display
         # Sequential block display shows all games from one league before moving to the next,
@@ -344,109 +334,6 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
         #         'upcoming': getattr(self, 'xfl_upcoming', None),
         #     }
         # }
-
-    def _parse_rotation_order(self) -> List[str]:
-        """
-        Parse and validate rotation order from config.
-        
-        Reads rotation_order from config, validates each mode exists and is enabled,
-        filters out disabled leagues/modes, and returns list of valid modes in order.
-        Falls back to default if not configured or invalid.
-        
-        Returns:
-            List of valid mode names in rotation order
-            Default: ['football_recent', 'football_upcoming', 'football_live'] if not configured
-        """
-        rotation_order = self.config.get("rotation_order", [])
-        
-        # If not configured, return None to use default behavior
-        if not rotation_order or not isinstance(rotation_order, list):
-            self.logger.debug("No rotation_order configured, using default sequential block behavior")
-            return []
-        
-        valid_modes = []
-        
-        for mode_name in rotation_order:
-            if not isinstance(mode_name, str):
-                self.logger.warning(f"Invalid rotation_order entry (not a string): {mode_name}")
-                continue
-            
-            # Check if it's a granular mode (e.g., "nfl_recent", "ncaa_fb_upcoming")
-            if "_" in mode_name and not mode_name.startswith("football_"):
-                parts = mode_name.split("_", 1)
-                if len(parts) == 2:
-                    league, mode_type = parts
-                    
-                    # Validate league
-                    if league not in self._league_registry:
-                        self.logger.warning(
-                            f"Invalid league in rotation_order: {league} (mode: {mode_name})"
-                        )
-                        continue
-                    
-                    # Check if league is enabled
-                    if not self._league_registry[league].get('enabled', False):
-                        self.logger.debug(
-                            f"Skipping disabled league in rotation_order: {mode_name}"
-                        )
-                        continue
-                    
-                    # Check if mode is enabled for this league
-                    league_config = self.config.get(league, {})
-                    display_modes_config = league_config.get("display_modes", {})
-                    
-                    mode_enabled = True
-                    if mode_type == 'live':
-                        mode_enabled = display_modes_config.get("show_live", True)
-                    elif mode_type == 'recent':
-                        mode_enabled = display_modes_config.get("show_recent", True)
-                    elif mode_type == 'upcoming':
-                        mode_enabled = display_modes_config.get("show_upcoming", True)
-                    else:
-                        self.logger.warning(
-                            f"Invalid mode_type in rotation_order: {mode_type} (mode: {mode_name})"
-                        )
-                        continue
-                    
-                    if not mode_enabled:
-                        self.logger.debug(
-                            f"Skipping disabled mode in rotation_order: {mode_name}"
-                        )
-                        continue
-                    
-                    # Valid granular mode
-                    valid_modes.append(mode_name)
-                    continue
-            
-            # Combined modes (football_recent, football_upcoming, football_live) are not allowed
-            # The display controller already handles rotation between these combined modes
-            # rotation_order only controls internal rotation within each combined mode
-            elif mode_name.startswith("football_"):
-                self.logger.warning(
-                    f"Combined modes (football_*) are not allowed in rotation_order: {mode_name}. "
-                    f"Only granular modes (nfl_*, ncaa_fb_*) are supported. "
-                    f"The display controller already rotates between combined modes."
-                )
-                continue
-            
-            # Invalid mode format
-            else:
-                self.logger.warning(
-                    f"Invalid mode format in rotation_order: {mode_name} "
-                    "(must be granular mode: 'nfl_recent', 'ncaa_fb_upcoming', 'nfl_live', etc.)"
-                )
-                continue
-        
-        if valid_modes:
-            self.logger.info(
-                f"Parsed rotation_order: {len(valid_modes)} valid mode(s): {valid_modes}"
-            )
-            return valid_modes
-        else:
-            self.logger.warning(
-                "No valid modes in rotation_order, falling back to default behavior"
-            )
-            return []
 
     def _get_enabled_leagues_for_mode(self, mode_type: str) -> List[str]:
         """
@@ -1153,23 +1040,11 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
         """
         Handle display for external display_mode calls (from display controller).
         
-        This method implements sequential block display:
-        - Shows all games from one league before moving to the next
-        - Leagues are shown in priority order (NFL first, then NCAA FB, etc.)
-        - Uses completion tracking to know when to move to the next league
-        - Supports both scroll mode and switch mode
-        
-        Sequential block flow:
-        1. Get enabled leagues for this mode type in priority order
-        2. For each league in order:
-           a. Check if league is complete (all games shown)
-           b. If not complete, try to display from that league
-           c. If display succeeds, return True (stay on this league)
-           d. If display fails or league complete, move to next league
-        3. If all leagues complete or no content, return False
+        NOTE: This method is legacy support. With granular modes, display() now
+        handles modes directly. This method should not be called for granular modes.
         
         Args:
-            display_mode: External mode name (e.g., 'football_live', 'football_recent')
+            display_mode: External mode name (legacy combined modes only)
             force_clear: Whether to force clear display
             
         Returns:
@@ -1183,285 +1058,25 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
             self.logger.warning(f"Unknown display_mode: {display_mode}")
             return False
         
-        self.logger.debug(
-            f"Mode type: {mode_type}, NFL enabled: {self.nfl_enabled}, "
-            f"NCAA FB enabled: {self.ncaa_fb_enabled}"
-        )
-        
-        # Check if this is a combined mode (football_recent, football_upcoming, football_live)
-        # and if rotation_order is configured with granular modes
-        is_combined_mode = display_mode.startswith("football_")
-        
-        if is_combined_mode and self._rotation_order:
-            # Filter rotation_order to get granular modes for this combined mode
-            # e.g., for football_recent, get ['nfl_recent', 'ncaa_fb_recent']
-            granular_modes = [
-                mode for mode in self._rotation_order
-                if mode.endswith(f"_{mode_type}") and not mode.startswith("football_")
-            ]
-            
-            self.logger.info(
-                f"Checking rotation_order for {display_mode}: "
-                f"rotation_order={self._rotation_order}, "
-                f"filtered granular_modes={granular_modes}"
-            )
-            
-            if granular_modes:
-                # Initialize rotation state for this combined mode if needed
-                if display_mode not in self._rotation_state:
-                    self._rotation_state[display_mode] = {
-                        'current_index': 0,
-                        'rotation_order': granular_modes
-                    }
-                    self.logger.info(
-                        f"Initialized rotation state for {display_mode}: {granular_modes}"
-                    )
-                
-                rotation_state = self._rotation_state[display_mode]
-                current_index = rotation_state['current_index']
-                rotation_order = rotation_state['rotation_order']
-                
-                # Try each granular mode in rotation order until we find one with content
-                # This ensures we don't return False prematurely if one mode has no content
-                attempts = 0
-                max_attempts = len(rotation_order)
-                
-                while attempts < max_attempts:
-                    # Wrap around if we've gone past the end
-                    if current_index >= len(rotation_order):
-                        current_index = 0
-                        rotation_state['current_index'] = 0
-                    
-                    current_granular_mode = rotation_order[current_index]
-                    
-                    # Parse granular mode to extract league and mode_type
-                    parts = current_granular_mode.split("_", 1)
-                    if len(parts) == 2:
-                        league, granular_mode_type = parts
-                        
-                        # Validate league and mode_type match
-                        if league in self._league_registry and granular_mode_type == mode_type:
-                            # Track mode start time for this granular mode
-                            granular_display_mode = current_granular_mode
-                            if granular_display_mode not in self._mode_start_time:
-                                self._mode_start_time[granular_display_mode] = time.time()
-                                self.logger.debug(
-                                    f"Started tracking time for granular mode: {granular_display_mode}"
-                                )
-                            
-                            # Check if granular mode duration has expired
-                            effective_mode_duration = self._get_effective_mode_duration(
-                                granular_display_mode, mode_type
-                            )
-                            if effective_mode_duration is not None:
-                                elapsed_time = time.time() - self._mode_start_time[granular_display_mode]
-                                if elapsed_time >= effective_mode_duration:
-                                    # Granular mode duration expired - advance to next
-                                    self.logger.info(
-                                        f"Granular mode duration expired for {granular_display_mode}: "
-                                        f"{elapsed_time:.1f}s >= {effective_mode_duration}s. "
-                                        f"Advancing to next mode in rotation."
-                                    )
-                                    # Reset mode start time
-                                    self._mode_start_time[granular_display_mode] = time.time()
-                                    # Advance rotation index
-                                    current_index = (current_index + 1) % len(rotation_order)
-                                    rotation_state['current_index'] = current_index
-                                    attempts += 1
-                                    continue  # Try next mode
-                            
-                            # Display the current granular mode
-                            success = self._display_league_mode(league, mode_type, force_clear)
-                            
-                            if success:
-                                # Successfully displayed content - stay on this granular mode
-                                return True
-                            else:
-                                # No content for this granular mode - try next one
-                                self.logger.debug(
-                                    f"No content for {granular_display_mode}, trying next mode in rotation"
-                                )
-                                current_index = (current_index + 1) % len(rotation_order)
-                                rotation_state['current_index'] = current_index
-                                attempts += 1
-                                continue  # Try next mode
-                        else:
-                            # Invalid granular mode - skip it
-                            self.logger.warning(
-                                f"Invalid granular mode in rotation: {current_granular_mode}"
-                            )
-                            current_index = (current_index + 1) % len(rotation_order)
-                            rotation_state['current_index'] = current_index
-                            attempts += 1
-                            continue
-                    else:
-                        # Invalid format - skip it
-                        self.logger.warning(
-                            f"Invalid granular mode format in rotation: {current_granular_mode}"
-                        )
-                        current_index = (current_index + 1) % len(rotation_order)
-                        rotation_state['current_index'] = current_index
-                        attempts += 1
-                        continue
-                
-                # Tried all granular modes and none had content
-                self.logger.info(
-                    f"Tried all {max_attempts} granular modes for {display_mode}, none had content"
-                )
-                return False
-        
-        # Not using rotation_order, or rotation_order doesn't have granular modes for this mode
-        # Fall back to existing sequential block logic
-        if is_combined_mode:
-            if not self._rotation_order:
-                self.logger.info(
-                    f"No rotation_order configured for {display_mode}, using sequential block logic"
-                )
-            elif not granular_modes:
-                self.logger.info(
-                    f"No granular modes in rotation_order for {display_mode} (mode_type={mode_type}), "
-                    f"using sequential block logic"
-                )
-        
-        # Track mode start time for per-mode duration enforcement
-        # Initialize start time if this is the first time seeing this mode
-        if display_mode not in self._mode_start_time:
-            self._mode_start_time[display_mode] = time.time()
-            self.logger.debug(f"Started tracking time for {display_mode}")
-        
-        # Check if mode-level duration has expired
-        effective_mode_duration = self._get_effective_mode_duration(display_mode, mode_type)
-        if effective_mode_duration is not None:
-            elapsed_time = time.time() - self._mode_start_time[display_mode]
-            if elapsed_time >= effective_mode_duration:
-                # Mode duration expired - time to rotate
-                # Important: Don't clear progress tracking - we want to resume where we left off
-                self.logger.info(
-                    f"Mode duration expired for {display_mode}: "
-                    f"{elapsed_time:.1f}s >= {effective_mode_duration}s. "
-                    f"Rotating to next mode (progress preserved for resume)."
-                )
-                # Reset mode start time for next cycle
-                self._mode_start_time[display_mode] = time.time()
-                return False
-        
-        # Check if we should use scroll mode for this game type
-        # Scroll mode handles multi-league display differently (shows all games scrolling)
-        if self._should_use_scroll_mode(mode_type):
-            return self._display_scroll_mode(display_mode, mode_type, force_clear)
-        
-        # Otherwise, use switch mode with sequential block display
-        
-        # Get enabled leagues for this mode type in priority order
-        # This respects both league-level and mode-level enabling/disabling
-        enabled_leagues = self._get_enabled_leagues_for_mode(mode_type)
-        
-        self.logger.info(
-            f"Sequential block logic for {display_mode}: enabled_leagues={enabled_leagues}"
-        )
-        
-        if not enabled_leagues:
+        # If this is a granular mode, it should have been handled by display() directly
+        # This is legacy support for combined modes (which no longer exist)
+        if not display_mode.startswith("football_"):
             self.logger.warning(
-                f"No enabled leagues for {display_mode} mode type {mode_type}"
+                f"_display_external_mode() called with granular mode: {display_mode}. "
+                f"This should be handled by display() directly."
             )
-            # Clear display when no content available (safety measure)
-            if force_clear:
-                try:
-                    self.display_manager.clear()
-                    self.display_manager.update_display()
-                except Exception as clear_err:
-                    self.logger.debug(f"Error clearing display when no content: {clear_err}")
+            # Try to handle it anyway by parsing and calling _display_league_mode
+            parts = display_mode.split("_", 1)
+            if len(parts) == 2:
+                league, mode_type_str = parts
+                if league in self._league_registry and mode_type_str == mode_type:
+                    return self._display_league_mode(league, mode_type, force_clear)
             return False
         
-        # Sequential block: Try each league in priority order
-        # Show all games from one league before moving to the next
-        for league_id in enabled_leagues:
-            # Check if this league has completed showing all its games
-            league_complete = self._is_league_complete_for_mode(league_id, mode_type)
-            
-            if league_complete:
-                # This league is done - move to next league
-                self.logger.debug(
-                    f"League {league_id} {mode_type} is complete, moving to next league"
-                )
-                continue
-            
-            # League not complete - try to display from this league
-            manager = self._get_league_manager_for_mode(league_id, mode_type)
-            if not manager:
-                self.logger.debug(f"No manager available for {league_id} {mode_type}")
-                continue
-            
-            self.logger.debug(
-                f"Trying to display from {league_id} {mode_type} "
-                f"(priority: {self._league_registry[league_id].get('priority', 999)})"
-            )
-            
-            # Try to display content from this league's manager
-            success, _ = self._try_manager_display(
-                manager, force_clear, display_mode, mode_type, None
-            )
-            
-            if success:
-                # Successfully displayed content from this league
-                # Stay on this league until it completes all games
-                # Only log at DEBUG level - game transitions are logged separately
-                self.logger.debug(
-                    f"Plugin display() returning True for {display_mode} "
-                    f"(showing {league_id} {mode_type})"
-                )
-                return True
-            else:
-                # Manager returned False - no content or between games
-                # Check if league is now complete (maybe it just finished)
-                if self._is_league_complete_for_mode(league_id, mode_type):
-                    self.logger.debug(
-                        f"League {league_id} {mode_type} completed, moving to next league"
-                    )
-                    continue
-                else:
-                    # League not complete but no content right now (between games)
-                    # This is normal - manager will have content on next call
-                    self.logger.debug(
-                        f"League {league_id} {mode_type} has no content right now "
-                        "(between games or data loading)"
-                    )
-                    # Don't return False yet - might have content on next call
-                    # But also don't block other leagues if they have content
-                    # For now, return False to allow display controller to handle timing
-                    return False
-        
-        # All enabled leagues have been checked
-        # Check if all leagues are complete
-        all_complete = all(
-            self._is_league_complete_for_mode(league_id, mode_type)
-            for league_id in enabled_leagues
-        )
-        
-        if all_complete:
-            self.logger.info(
-                f"All leagues complete for {display_mode}: {enabled_leagues}. "
-                "Mode cycle complete."
-            )
-        else:
-            # Some leagues not complete but no content available right now
-            # This can happen if managers are between games or loading data
-            self.logger.debug(
-                f"No content available for {display_mode} right now. "
-                f"Leagues checked: {enabled_leagues}"
-            )
-        
-        # Clear display when no content available (safety measure)
-        if force_clear:
-            try:
-                self.display_manager.clear()
-                self.display_manager.update_display()
-            except Exception as clear_err:
-                self.logger.debug(f"Error clearing display when no content: {clear_err}")
-        
-        self.logger.info(
-            f"Plugin display() returning False for {display_mode} - "
-            f"no content available or all leagues complete"
+        # Legacy combined mode handling (should not be reached with new architecture)
+        self.logger.warning(
+            f"_display_external_mode() called with combined mode: {display_mode}. "
+            f"Combined modes are no longer supported. Use granular modes instead."
         )
         return False
     
@@ -1730,16 +1345,16 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
         return result
 
     def display(self, display_mode: str = None, force_clear: bool = False) -> bool:
-        """Display football games with mode cycling.
+        """Display football games for a specific granular mode.
         
-        Supports both combined modes (football_recent, football_upcoming, football_live) and
-        granular modes (nfl_recent, ncaa_fb_upcoming, etc.) for precise rotation control.
+        The plugin now uses granular modes directly (nfl_recent, nfl_upcoming, nfl_live,
+        ncaa_fb_recent, ncaa_fb_upcoming, ncaa_fb_live) registered in manifest.json.
+        The display controller handles rotation between these modes.
         
         Args:
-            display_mode: Optional mode name. Can be:
-                         - Combined mode: 'football_live', 'football_recent', 'football_upcoming'
-                         - Granular mode: 'nfl_recent', 'ncaa_fb_upcoming', 'nfl_live', etc.
-                         If provided, displays that specific mode. If None, uses internal mode cycling.
+            display_mode: Granular mode name (e.g., 'nfl_recent', 'ncaa_fb_upcoming', 'nfl_live')
+                         Format: {league}_{mode_type}
+                         If None, uses internal mode cycling (legacy support).
             force_clear: If True, clear display before rendering
         """
         if not self.is_enabled:
@@ -1752,37 +1367,92 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
             
             # Route to appropriate display handler
             if display_mode:
-                # Check if this is a granular mode (e.g., "nfl_recent", "ncaa_fb_upcoming")
-                if "_" in display_mode and not display_mode.startswith("football_"):
-                    # Granular mode - parse and display directly
-                    parts = display_mode.split("_", 1)
-                    if len(parts) == 2:
-                        league, mode_type_str = parts
-                        # Validate it's a known league
-                        if league in self._league_registry:
-                            # Extract mode_type from the granular mode name
-                            if mode_type_str in ['live', 'recent', 'upcoming']:
-                                # Display this specific league/mode combination
-                                return self._display_league_mode(league, mode_type_str, force_clear)
-                            else:
-                                self.logger.warning(
-                                    f"Invalid mode_type in granular display_mode: {display_mode}"
-                                )
-                                return False
-                        else:
-                            self.logger.warning(
-                                f"Invalid league in granular display_mode: {display_mode}"
-                            )
-                            return False
-                    else:
+                # Handle legacy combined modes (football_recent, football_upcoming, football_live)
+                # These should not be called with new architecture, but handle gracefully
+                # for backward compatibility during transition
+                if display_mode.startswith("football_"):
+                    # Legacy combined mode - extract mode_type and show all enabled leagues
+                    mode_type_str = display_mode.replace("football_", "")
+                    if mode_type_str not in ['live', 'recent', 'upcoming']:
                         self.logger.warning(
-                            f"Invalid granular display_mode format: {display_mode}"
+                            f"Invalid legacy combined mode: {display_mode}"
                         )
                         return False
-                else:
-                    # Combined mode or other format - use existing logic
-                    return self._display_external_mode(display_mode, force_clear)
+                    
+                    # Show all enabled leagues for this mode type (sequential block)
+                    # This maintains backward compatibility during transition
+                    enabled_leagues = self._get_enabled_leagues_for_mode(mode_type_str)
+                    if not enabled_leagues:
+                        self.logger.debug(
+                            f"No enabled leagues for legacy mode {display_mode}"
+                        )
+                        return False
+                    
+                    # Try to display from first enabled league
+                    # This is a simplified fallback for legacy mode support
+                    for league_id in enabled_leagues:
+                        success = self._display_league_mode(league_id, mode_type_str, force_clear)
+                        if success:
+                            return True
+                    
+                    # No content from any league
+                    return False
+                
+                # Parse granular mode name: {league}_{mode_type}
+                # e.g., "nfl_recent" -> league="nfl", mode_type="recent"
+                parts = display_mode.split("_", 1)
+                if len(parts) != 2:
+                    self.logger.warning(
+                        f"Invalid granular display_mode format: {display_mode} "
+                        "(expected format: {league}_{mode_type}, e.g., 'nfl_recent')"
+                    )
+                    return False
+                
+                league, mode_type_str = parts
+                
+                # Validate league exists in registry
+                if league not in self._league_registry:
+                    self.logger.warning(
+                        f"Invalid league in display_mode: {league} (mode: {display_mode})"
+                    )
+                    return False
+                
+                # Validate mode_type is valid
+                if mode_type_str not in ['live', 'recent', 'upcoming']:
+                    self.logger.warning(
+                        f"Invalid mode_type in display_mode: {mode_type_str} (mode: {display_mode})"
+                    )
+                    return False
+                
+                # Check if league is enabled
+                if not self._league_registry[league].get('enabled', False):
+                    self.logger.debug(
+                        f"League {league} is disabled, skipping {display_mode}"
+                    )
+                    return False
+                
+                # Check if mode is enabled for this league
+                league_config = self.config.get(league, {})
+                display_modes_config = league_config.get("display_modes", {})
+                
+                mode_enabled = True
+                if mode_type_str == 'live':
+                    mode_enabled = display_modes_config.get("show_live", True)
+                elif mode_type_str == 'recent':
+                    mode_enabled = display_modes_config.get("show_recent", True)
+                elif mode_type_str == 'upcoming':
+                    mode_enabled = display_modes_config.get("show_upcoming", True)
+                
+                if not mode_enabled:
+                    self.logger.debug(
+                        f"Mode {mode_type_str} is disabled for league {league}, skipping {display_mode}"
+                    )
+                    return False
+                
+                # Display this specific league/mode combination
+                return self._display_league_mode(league, mode_type_str, force_clear)
             else:
+                # No display_mode provided - use internal cycling (legacy support)
                 return self._display_internal_cycling(force_clear)
 
         except Exception as e:
@@ -1888,21 +1558,73 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
         """
         Return the registered plugin mode name(s) that have live content.
         
-        This should return the mode names as registered in manifest.json, not internal
-        mode names. The plugin is registered with "football_live", "football_recent", "football_upcoming".
+        Returns granular live modes (nfl_live, ncaa_fb_live) that have live content.
+        The plugin is registered with granular modes in manifest.json.
         """
         if not self.is_enabled:
             return []
 
-        # Check if any league has live content
-        has_any_live = self.has_live_content()
+        live_modes = []
         
-        if has_any_live:
-            # Return the registered plugin mode name, not internal mode names
-            # The plugin is registered with "football_live" in manifest.json
-            return ["football_live"]
+        # Check NFL live content
+        if (
+            self.nfl_enabled
+            and self.nfl_live_priority
+            and hasattr(self, "nfl_live")
+        ):
+            live_games = getattr(self.nfl_live, "live_games", [])
+            if live_games:
+                # Filter out any games that are final or appear over
+                live_games = [g for g in live_games if not g.get("is_final", False)]
+                # Additional validation using helper method if available
+                if hasattr(self.nfl_live, "_is_game_really_over"):
+                    live_games = [g for g in live_games if not self.nfl_live._is_game_really_over(g)]
+                
+                if live_games:
+                    # Check if favorite teams filter applies
+                    favorite_teams = getattr(self.nfl_live, "favorite_teams", [])
+                    if favorite_teams:
+                        # Only include if there are live games for favorite teams
+                        if any(
+                            game.get("home_abbr") in favorite_teams
+                            or game.get("away_abbr") in favorite_teams
+                            for game in live_games
+                        ):
+                            live_modes.append("nfl_live")
+                    else:
+                        # No favorite teams configured, include if any live games exist
+                        live_modes.append("nfl_live")
         
-        return []
+        # Check NCAA FB live content
+        if (
+            self.ncaa_fb_enabled
+            and self.ncaa_fb_live_priority
+            and hasattr(self, "ncaa_fb_live")
+        ):
+            live_games = getattr(self.ncaa_fb_live, "live_games", [])
+            if live_games:
+                # Filter out any games that are final or appear over
+                live_games = [g for g in live_games if not g.get("is_final", False)]
+                # Additional validation using helper method if available
+                if hasattr(self.ncaa_fb_live, "_is_game_really_over"):
+                    live_games = [g for g in live_games if not self.ncaa_fb_live._is_game_really_over(g)]
+                
+                if live_games:
+                    # Check if favorite teams filter applies
+                    favorite_teams = getattr(self.ncaa_fb_live, "favorite_teams", [])
+                    if favorite_teams:
+                        # Only include if there are live games for favorite teams
+                        if any(
+                            game.get("home_abbr") in favorite_teams
+                            or game.get("away_abbr") in favorite_teams
+                            for game in live_games
+                        ):
+                            live_modes.append("ncaa_fb_live")
+                    else:
+                        # No favorite teams configured, include if any live games exist
+                        live_modes.append("ncaa_fb_live")
+        
+        return live_modes
 
     def _get_game_duration(self, league: str, mode_type: str, manager=None) -> float:
         """Get game duration for a league and mode type combination.

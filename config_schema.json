@@ -51,22 +51,6 @@
       "maximum": 600,
       "description": "Total duration in seconds for Live mode before rotating to next mode. If not set, uses dynamic calculation (total_games × per_game_duration). If set, only shows as many games as fit within this time limit. When mode cycles back, continues from last game shown (no repetition)."
     },
-    "rotation_order": {
-      "type": "array",
-      "default": [],
-      "description": "Order in which league/mode combinations rotate within each combined mode. Only granular modes are allowed: nfl_recent, nfl_upcoming, nfl_live, ncaa_fb_recent, ncaa_fb_upcoming, ncaa_fb_live. The display controller already handles rotation between combined modes (football_recent → football_upcoming → football_live). This setting controls the internal rotation WITHIN each combined mode. Examples: ['nfl_recent', 'ncaa_fb_recent'] for football_recent mode, or ['nfl_upcoming', 'ncaa_fb_upcoming'] for football_upcoming mode. When rotation_order contains granular modes, the plugin rotates through them internally when display controller calls combined modes. Each granular mode respects its own mode duration settings. Disabled leagues/modes are automatically filtered out. If rotation_order is empty or not configured, uses default sequential block behavior (all NFL games, then all NCAA FB games).",
-      "items": {
-        "type": "string",
-        "enum": [
-          "nfl_recent",
-          "nfl_upcoming",
-          "nfl_live",
-          "ncaa_fb_recent",
-          "ncaa_fb_upcoming",
-          "ncaa_fb_live"
-        ]
-      }
-    },
     "nfl": {
       "type": "object",
       "title": "NFL Settings",

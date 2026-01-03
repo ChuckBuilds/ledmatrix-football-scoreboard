@@ -68,136 +68,62 @@ This will show games for all AP Top 25 teams plus Georgia and Alabama (duplicate
 
 ## 📺 Display Modes
 
-The plugin supports three display modes that cycle automatically:
+The plugin registers granular display modes directly in `manifest.json`. The display controller rotates through these modes automatically:
 
-1. **Live Games**: Currently active games with real-time updates
-2. **Recent Games**: Recently completed games with final scores
-3. **Upcoming Games**: Scheduled games with start times and odds
+**NFL Modes:**
+- `nfl_recent`: Recently completed NFL games with final scores
+- `nfl_upcoming`: Scheduled NFL games with start times and odds
+- `nfl_live`: Currently active NFL games with real-time updates
 
-## 🔄 Rotation Order Configuration
+**NCAA FB Modes:**
+- `ncaa_fb_recent`: Recently completed NCAA Football games with final scores
+- `ncaa_fb_upcoming`: Scheduled NCAA Football games with start times and odds
+- `ncaa_fb_live`: Currently active NCAA Football games with real-time updates
 
-The plugin supports configurable rotation order, allowing you to specify the exact sequence of league/mode combinations. This gives you precise control over how games are displayed.
+### How Rotation Works
 
-### Combined vs Granular Modes
+The display controller rotates through all registered modes in the order they appear in `manifest.json`. Each mode can have its own `display_duration` configured in the plugin config.
 
-**Combined Modes** (default, backward compatible):
-- `football_recent`: Shows all recent games from all enabled leagues (NFL → NCAA FB)
-- `football_upcoming`: Shows all upcoming games from all enabled leagues
-- `football_live`: Shows all live games from all enabled leagues
+**Default Rotation Order:**
+1. `nfl_recent`
+2. `nfl_upcoming`
+3. `nfl_live`
+4. `ncaa_fb_recent`
+5. `ncaa_fb_upcoming`
+6. `ncaa_fb_live`
 
-**Granular Modes** (for precise control):
-- `nfl_recent`, `nfl_upcoming`, `nfl_live`: NFL-specific modes
-- `ncaa_fb_recent`, `ncaa_fb_upcoming`, `ncaa_fb_live`: NCAA FB-specific modes
-
-### Configuration
-
-Add a `rotation_order` array to your config to specify the rotation sequence:
+**Customizing Rotation Order:**
+You can reorder modes in `manifest.json` to change the rotation sequence. For example, to show all Recent games before Upcoming:
 
 ```json
-{
-  "rotation_order": [
-    "nfl_recent",
-    "nfl_upcoming",
-    "ncaa_fb_recent",
-    "ncaa_fb_upcoming"
-  ]
-}
+"display_modes": [
+  "nfl_recent",
+  "ncaa_fb_recent",
+  "nfl_upcoming",
+  "ncaa_fb_upcoming",
+  "nfl_live",
+  "ncaa_fb_live"
+]
 ```
 
-### Rotation Patterns
+### Disabled Leagues/Modes
 
-**League-First Pattern** (all NFL modes, then all NCAA FB modes):
-```json
-{
-  "rotation_order": [
-    "nfl_recent",
-    "nfl_upcoming",
-    "nfl_live",
-    "ncaa_fb_recent",
-    "ncaa_fb_upcoming",
-    "ncaa_fb_live"
-  ]
-}
-```
+If a league or mode is disabled in the config, the plugin returns `False` for that mode, and the display controller automatically skips it. This allows you to:
 
-**Mode-First Pattern** (all Recent, then all Upcoming, then all Live):
-```json
-{
-  "rotation_order": [
-    "nfl_recent",
-    "ncaa_fb_recent",
-    "nfl_upcoming",
-    "ncaa_fb_upcoming",
-    "nfl_live",
-    "ncaa_fb_live"
-  ]
-}
-```
+- Disable entire leagues (e.g., disable NCAA FB to show only NFL)
+- Disable specific modes per league (e.g., disable `nfl_upcoming` but keep `nfl_recent` and `nfl_live`)
+- Mix and match enabled/disabled modes as needed
 
-**Custom Pattern** (your preferred sequence):
-```json
-{
-  "rotation_order": [
-    "nfl_recent",
-    "nfl_upcoming",
-    "ncaa_fb_recent",
-    "ncaa_fb_upcoming"
-  ]
-}
-```
+### Mode Durations
 
-### How It Works
+Each granular mode respects its own mode duration settings:
+- `nfl_recent` uses `nfl.mode_durations.recent_mode_duration` or top-level `recent_mode_duration`
+- `ncaa_fb_upcoming` uses `ncaa_fb.mode_durations.upcoming_mode_duration` or top-level `upcoming_mode_duration`
+- Each mode can have independent duration configuration
 
-1. **When `rotation_order` is configured**: The plugin uses granular rotation internally
-   - Display controller still calls combined modes (`football_recent`, `football_upcoming`, `football_live`)
-   - Plugin internally rotates through granular modes based on `rotation_order`
-   - Each granular mode can have its own duration
+### Live Priority
 
-2. **When `rotation_order` is not configured**: Uses default sequential block behavior
-   - Shows all NFL games, then all NCAA FB games
-   - Maintains backward compatibility with existing configs
-
-3. **Mode Durations**: Each granular mode respects its own mode duration settings
-   - `nfl_recent` uses `nfl.mode_durations.recent_mode_duration` or top-level `recent_mode_duration`
-   - `ncaa_fb_upcoming` uses `ncaa_fb.mode_durations.upcoming_mode_duration` or top-level `upcoming_mode_duration`
-
-4. **Resume Functionality**: When a mode cycles back, it continues from where it left off
-   - Progress is preserved across rotation cycles
-   - No repetition of already-shown games
-
-### Example Flow
-
-**Config:**
-```json
-{
-  "rotation_order": [
-    "nfl_recent",
-    "nfl_upcoming",
-    "ncaa_fb_recent",
-    "ncaa_fb_upcoming"
-  ],
-  "recent_mode_duration": 60,
-  "upcoming_mode_duration": 60
-}
-```
-
-**Display Controller calls `football_recent`:**
-1. Plugin checks `rotation_order` and finds `["nfl_recent", "ncaa_fb_recent"]` (filtered for recent mode)
-2. Shows `nfl_recent` for 60 seconds
-3. Advances to `ncaa_fb_recent` for 60 seconds
-4. Wraps around to `nfl_recent` again
-
-**Display Controller calls `football_upcoming`:**
-1. Plugin checks `rotation_order` and finds `["nfl_upcoming", "ncaa_fb_upcoming"]`
-2. Shows `nfl_upcoming` for 60 seconds
-3. Advances to `ncaa_fb_upcoming` for 60 seconds
-4. Wraps around to `nfl_upcoming` again
-
-### Backward Compatibility
-
-- If `rotation_order` is not configured, the plugin uses default sequential block behavior
-- Existing configs continue to work without changes
-- Combined modes (`football_recent`, etc.) can still be used in `rotation_order` for mixed patterns
+When live games are available, the display controller prioritizes live modes (`nfl_live`, `ncaa_fb_live`) based on the `has_live_content()` and `get_live_modes()` methods. The plugin returns only the granular live modes that actually have live content.
 
 ## ⏱️ Duration Configuration
 
