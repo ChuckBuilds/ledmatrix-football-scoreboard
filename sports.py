@@ -2111,32 +2111,63 @@ class SportsLive(SportsCore):
                 for game in data["events"]:
                     details = self._extract_game_details(game)
                     if details:
-                        # Log game status for debugging
+                        # Log game status for debugging - use INFO level to see what's happening
                         status_state = game.get("competitions", [{}])[0].get("status", {}).get("type", {}).get("state", "unknown")
-                        self.logger.debug(
-                            f"Game {details.get('away_abbr', '?')}@{details.get('home_abbr', '?')}: "
-                            f"state={status_state}, is_live={details.get('is_live')}, "
-                            f"is_halftime={details.get('is_halftime')}, is_final={details.get('is_final')}"
+                        status_name = game.get("competitions", [{}])[0].get("status", {}).get("type", {}).get("name", "unknown")
+                        self.logger.info(
+                            f"[{self.sport_key.upper()} Live] Game {details.get('away_abbr', '?')}@{details.get('home_abbr', '?')}: "
+                            f"state={status_state}, name={status_name}, is_live={details.get('is_live')}, "
+                            f"is_halftime={details.get('is_halftime')}, is_final={details.get('is_final')}, "
+                            f"clock={details.get('clock', 'N/A')}, period={details.get('period', 'N/A')}, "
+                            f"status_text={details.get('status_text', 'N/A')}"
                         )
                         
                         # Filter out final games and games that appear to be over
                         if details.get("is_final", False):
-                            self.logger.debug(
-                                f"Filtered out final game: {details.get('away_abbr')}@{details.get('home_abbr')} "
+                            self.logger.info(
+                                f"[{self.sport_key.upper()} Live] Filtered out final game: {details.get('away_abbr')}@{details.get('home_abbr')} "
                                 f"(is_final={details.get('is_final')}, clock={details.get('clock')}, period={details.get('period')})"
                             )
                             continue
                         
                         # Additional validation: check if game appears to be over
                         if self._is_game_really_over(details):
-                            self.logger.debug(
-                                f"Skipping game that appears final: {details.get('away_abbr')}@{details.get('home_abbr')} "
+                            self.logger.info(
+                                f"[{self.sport_key.upper()} Live] Skipping game that appears final: {details.get('away_abbr')}@{details.get('home_abbr')} "
                                 f"(clock={details.get('clock')}, period={details.get('period')}, period_text={details.get('period_text')})"
                             )
                             continue
                         
-                        if details["is_live"] or details["is_halftime"]:
+                        # Check if game should be considered live
+                        # First check explicit flags
+                        is_explicitly_live = details["is_live"] or details["is_halftime"]
+                        
+                        # Also check if game appears to be live based on status even if not explicitly marked
+                        # Some APIs may mark games differently (e.g., "in progress" vs "in")
+                        status_text = details.get("status_text", "").upper()
+                        appears_live_by_status = (
+                            (status_state == "in" and not details.get("is_final", False))
+                            or (status_name and "in" in status_name.lower() and "progress" in status_name.lower())
+                            or (status_text and ("Q1" in status_text or "Q2" in status_text or "Q3" in status_text or "Q4" in status_text or "OT" in status_text))
+                            or (details.get("clock") and details.get("clock") != "" and details.get("clock") != "0:00" and details.get("clock") != ":00")
+                        )
+                        
+                        is_actually_live = is_explicitly_live or appears_live_by_status
+                        
+                        if is_actually_live:
+                            if appears_live_by_status and not is_explicitly_live:
+                                # Game appears to be live but wasn't explicitly marked as such - log this
+                                self.logger.warning(
+                                    f"[{self.sport_key.upper()} Live] Game {details.get('away_abbr')}@{details.get('home_abbr')} "
+                                    f"appears live (state={status_state}, name={status_name}, clock={details.get('clock')}) "
+                                    f"but is_live={details.get('is_live')}, is_halftime={details.get('is_halftime')} - treating as live"
+                                )
                             live_or_halftime_count += 1
+                            self.logger.info(
+                                f"[{self.sport_key.upper()} Live] Found live/halftime game: {details.get('away_abbr')}@{details.get('home_abbr')} "
+                                f"(is_live={details.get('is_live')}, is_halftime={details.get('is_halftime')}, "
+                                f"state={status_state}, appears_live_by_status={appears_live_by_status})"
+                            )
                             
                             # Track game timestamps for stale detection
                             game_id = details.get("id")
@@ -2158,24 +2189,30 @@ class SportsLive(SportsCore):
                                     timestamps["last_score"] = current_score
                                     timestamps["score_changed_at"] = time.time()
                             
-                            # If show_favorite_teams_only is true, only add if it's a favorite.
-                            # Otherwise, add all games.
-                            should_include = (
-                                self.show_all_live
-                                or not self.show_favorite_teams_only
-                                or (
-                                    self.show_favorite_teams_only
-                                    and (
-                                        details["home_abbr"] in self.favorite_teams
-                                        or details["away_abbr"] in self.favorite_teams
-                                    )
+                            # Determine if this game should be included based on filtering settings
+                            # Priority: show_all_live > favorite_teams_only (if favorites exist) > show all
+                            if self.show_all_live:
+                                # Always show all live games if show_all_live is enabled
+                                should_include = True
+                            elif not self.show_favorite_teams_only:
+                                # If favorite teams filtering is disabled, show all games
+                                should_include = True
+                            elif not self.favorite_teams:
+                                # If favorite teams filtering is enabled but no favorites are configured,
+                                # show all games (same behavior as SportsUpcoming)
+                                should_include = True
+                            else:
+                                # Favorite teams filtering is enabled AND favorites are configured
+                                # Only show games involving favorite teams
+                                should_include = (
+                                    details["home_abbr"] in self.favorite_teams
+                                    or details["away_abbr"] in self.favorite_teams
                                 )
-                            )
                             
                             if not should_include:
                                 filtered_out_count += 1
-                                self.logger.debug(
-                                    f"Filtered out live game {details.get('away_abbr')}@{details.get('home_abbr')}: "
+                                self.logger.info(
+                                    f"[{self.sport_key.upper()} Live] Filtered out live game {details.get('away_abbr')}@{details.get('home_abbr')}: "
                                     f"show_all_live={self.show_all_live}, "
                                     f"show_favorite_teams_only={self.show_favorite_teams_only}, "
                                     f"favorite_teams={self.favorite_teams}"
@@ -2186,11 +2223,14 @@ class SportsLive(SportsCore):
                                     self._fetch_odds(details)
                                 new_live_games.append(details)
                 
-                self.logger.debug(
-                    f"Live game filtering: {total_events} total events, "
+                self.logger.info(
+                    f"[{self.sport_key.upper()} Live] Live game filtering: {total_events} total events, "
                     f"{live_or_halftime_count} live/halftime, "
                     f"{filtered_out_count} filtered out, "
-                    f"{len(new_live_games)} included"
+                    f"{len(new_live_games)} included | "
+                    f"show_all_live={self.show_all_live}, "
+                    f"show_favorite_teams_only={self.show_favorite_teams_only}, "
+                    f"favorite_teams={self.favorite_teams if self.favorite_teams else '[] (showing all)'}"
                 )
                 
                 # Detect and remove stale games
