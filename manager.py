@@ -1200,6 +1200,12 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
                 if mode.endswith(f"_{mode_type}") and not mode.startswith("football_")
             ]
             
+            self.logger.info(
+                f"Checking rotation_order for {display_mode}: "
+                f"rotation_order={self._rotation_order}, "
+                f"filtered granular_modes={granular_modes}"
+            )
+            
             if granular_modes:
                 # Initialize rotation state for this combined mode if needed
                 if display_mode not in self._rotation_state:
@@ -1299,13 +1305,23 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
                         continue
                 
                 # Tried all granular modes and none had content
-                self.logger.debug(
+                self.logger.info(
                     f"Tried all {max_attempts} granular modes for {display_mode}, none had content"
                 )
                 return False
         
         # Not using rotation_order, or rotation_order doesn't have granular modes for this mode
         # Fall back to existing sequential block logic
+        if is_combined_mode:
+            if not self._rotation_order:
+                self.logger.info(
+                    f"No rotation_order configured for {display_mode}, using sequential block logic"
+                )
+            elif not granular_modes:
+                self.logger.info(
+                    f"No granular modes in rotation_order for {display_mode} (mode_type={mode_type}), "
+                    f"using sequential block logic"
+                )
         
         # Track mode start time for per-mode duration enforcement
         # Initialize start time if this is the first time seeing this mode
@@ -1339,6 +1355,10 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
         # Get enabled leagues for this mode type in priority order
         # This respects both league-level and mode-level enabling/disabling
         enabled_leagues = self._get_enabled_leagues_for_mode(mode_type)
+        
+        self.logger.info(
+            f"Sequential block logic for {display_mode}: enabled_leagues={enabled_leagues}"
+        )
         
         if not enabled_leagues:
             self.logger.warning(
