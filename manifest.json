@@ -16,9 +16,12 @@
     "live-scores"
   ],
   "display_modes": [
-    "football_live",
-    "football_recent",
-    "football_upcoming"
+    "nfl_recent",
+    "nfl_upcoming",
+    "nfl_live",
+    "ncaa_fb_recent",
+    "ncaa_fb_upcoming",
+    "ncaa_fb_live"
   ],
   "download_url_template": "https://github.com/ChuckBuilds/ledmatrix-football-scoreboard/archive/refs/tags/v{version}.zip",
   "versions": [

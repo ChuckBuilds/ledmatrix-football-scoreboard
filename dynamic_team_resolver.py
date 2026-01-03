@@ -18,11 +18,6 @@ class DynamicTeamResolver:
     like AP Top 25 rankings, which update automatically.
     """
     
-    # Cache for rankings data
-    _rankings_cache: Dict[str, List[str]] = {}
-    _cache_timestamp: float = 0
-    _cache_duration: int = 3600  # 1 hour cache
-    
     # Supported dynamic team patterns
     DYNAMIC_PATTERNS = {
         'AP_TOP_25': {'sport': 'ncaa_fb', 'limit': 25},
@@ -30,8 +25,17 @@ class DynamicTeamResolver:
         'AP_TOP_5': {'sport': 'ncaa_fb', 'limit': 5},
     }
     
-    def __init__(self, request_timeout: int = 30):
-        """Initialize the dynamic team resolver."""
+    # Cache duration in seconds (1 hour)
+    CACHE_DURATION = 3600
+    
+    def __init__(self, cache_manager=None, request_timeout: int = 30):
+        """Initialize the dynamic team resolver.
+        
+        Args:
+            cache_manager: Optional cache manager instance for storing rankings cache
+            request_timeout: Timeout for API requests in seconds
+        """
+        self.cache_manager = cache_manager
         self.request_timeout = request_timeout
         self.logger = logger
         
@@ -90,20 +94,20 @@ class DynamicTeamResolver:
             pattern_sport = pattern_config['sport']
             limit = pattern_config['limit']
             
-            # Check cache first
-            cache_key = f"{pattern_sport}_{dynamic_team}"
-            if self._is_cache_valid():
-                cached_teams = self._rankings_cache.get(cache_key)
+            # Check cache first (using cache_manager if available)
+            cache_key = f"dynamic_teams_{pattern_sport}_{dynamic_team}"
+            if self.cache_manager:
+                cached_teams = self.cache_manager.get(cache_key)
                 if cached_teams:
-                    self.logger.debug(f"Using cached {dynamic_team} teams")
+                    self.logger.debug(f"Using cached {dynamic_team} teams from cache_manager")
                     return cached_teams[:limit]
             
             # Fetch fresh rankings
             rankings = self._fetch_rankings(pattern_sport)
             if rankings:
-                # Cache the results
-                self._rankings_cache[cache_key] = rankings
-                self._cache_timestamp = time.time()
+                # Cache the results using cache_manager if available
+                if self.cache_manager:
+                    self.cache_manager.set(cache_key, rankings, ttl=self.CACHE_DURATION)
                 
                 self.logger.info(f"Fetched {len(rankings)} teams for {dynamic_team}")
                 return rankings[:limit]
@@ -168,10 +172,6 @@ class DynamicTeamResolver:
         except Exception as e:
             self.logger.error(f"Error fetching rankings for {sport}: {e}")
             return []
-    
-    def _is_cache_valid(self) -> bool:
-        """Check if the rankings cache is still valid."""
-        return time.time() - self._cache_timestamp < self._cache_duration
     
     def _is_potential_dynamic_team(self, team: str) -> bool:
         """Check if a team name looks like a dynamic team pattern."""

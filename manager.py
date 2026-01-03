@@ -3,11 +3,33 @@ Football Scoreboard Plugin for LEDMatrix - Using Existing Managers
 
 This plugin provides NFL and NCAA FB scoreboard functionality by reusing
 the proven, working manager classes from the LEDMatrix core project.
+
+Display Modes:
+- Switch Mode: Display one game at a time with timed transitions
+- Scroll Mode: High-FPS horizontal scrolling of all games with league separators
+
+Sequential Block Display Architecture:
+This plugin implements a sequential block display approach where all games from
+one league are shown before moving to the next league. This provides:
+
+1. Predictable Display Order: NFL games show first, then NCAA FB games
+2. Accurate Dynamic Duration: Duration calculations include all leagues
+3. Scalable Design: Easy to add more leagues in the future
+4. Granular Control: Support for enabling/disabling at league and mode levels
+
+The sequential block flow:
+- For a display mode (e.g., 'football_recent'), get enabled leagues in priority order
+- Show all games from the first league (NFL) until complete
+- Then show all games from the next league (NCAA FB) until complete
+- When all enabled leagues complete, the display mode cycle is complete
+
+This replaces the previous "sticky manager" approach which prevented league rotation
+and made it difficult to ensure both leagues were displayed.
 """
 
 import logging
 import time
-from typing import Dict, Any, Set, Optional
+from typing import Dict, Any, Set, Optional, Tuple, List
 
 from PIL import ImageFont
 
@@ -27,6 +49,14 @@ from ncaa_fb_managers import (
     NCAAFBRecentManager,
     NCAAFBUpcomingManager,
 )
+
+# Import scroll display components
+try:
+    from scroll_display import ScrollDisplayManager
+    SCROLL_AVAILABLE = True
+except ImportError:
+    ScrollDisplayManager = None
+    SCROLL_AVAILABLE = False
 
 logger = logging.getLogger(__name__)
 
@@ -81,15 +111,23 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
         
         self.logger.info(f"League enabled states - NFL: {self.nfl_enabled}, NCAA FB: {self.ncaa_fb_enabled}")
 
+        # League registry: maps league IDs to their configuration and managers
+        # This structure makes it easy to add more leagues in the future
+        # Format: {league_id: {'enabled': bool, 'priority': int, 'live_priority': bool, 'managers': {...}}}
+        # The registry will be populated after managers are initialized
+        self._league_registry: Dict[str, Dict[str, Any]] = {}
+
         # Global settings
         self.display_duration = float(config.get("display_duration", 30))
-        self.game_display_duration = float(config.get("game_display_duration", 15))
 
         # Live priority per league
         self.nfl_live_priority = self.config.get("nfl", {}).get("live_priority", False)
         self.ncaa_fb_live_priority = self.config.get("ncaa_fb", {}).get(
             "live_priority", False
         )
+        
+        # Display mode settings per league and game type
+        self._display_mode_settings = self._parse_display_mode_settings()
 
         # Initialize background service if available
         self.background_service = None
@@ -104,6 +142,36 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
 
         # Initialize managers
         self._initialize_managers()
+        
+        # Initialize league registry after managers are created
+        # This centralizes league management and makes it easy to add more leagues
+        self._initialize_league_registry()
+        
+        # Initialize scroll display manager if available
+        self._scroll_manager: Optional[ScrollDisplayManager] = None
+        if SCROLL_AVAILABLE and ScrollDisplayManager:
+            try:
+                self._scroll_manager = ScrollDisplayManager(
+                    self.display_manager,
+                    self.config,
+                    self.logger
+                )
+                self.logger.info("Scroll display manager initialized")
+            except Exception as e:
+                self.logger.warning(f"Could not initialize scroll display manager: {e}")
+                self._scroll_manager = None
+        else:
+            self.logger.debug("Scroll mode not available - ScrollDisplayManager not imported")
+        
+        # Track current scroll state
+        self._scroll_active: Dict[str, bool] = {}  # {game_type: is_active}
+        self._scroll_prepared: Dict[str, bool] = {}  # {game_type: is_prepared}
+
+        # Enable high-FPS mode for scroll display (allows 100+ FPS scrolling)
+        # This signals to the display controller to use high-FPS loop (8ms = 125 FPS)
+        self.enable_scrolling = self._scroll_manager is not None
+        if self.enable_scrolling:
+            self.logger.info("High-FPS scrolling enabled for football scoreboard")
 
         # Mode cycling
         self.current_mode_index = 0
@@ -144,9 +212,19 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
         self._last_display_mode_time: float = 0.0  # When we last saw this mode
         self._current_active_display_mode: Optional[str] = None  # Currently active external display mode
         
-        # Sticky manager tracking - ensures we complete all games from one league before switching
-        self._sticky_manager_per_mode: Dict[str, Any] = {}  # {display_mode: manager_instance}
-        self._sticky_manager_start_time: Dict[str, float] = {}  # {display_mode: timestamp}
+        # Track current game for transition detection
+        # Format: {display_mode: {'game_id': str, 'league': str, 'last_log_time': float}}
+        self._current_game_tracking: Dict[str, Dict[str, Any]] = {}
+        self._game_transition_log_interval: float = 1.0  # Minimum seconds between game transition logs
+        
+        # Track mode start times for per-mode duration enforcement
+        # Format: {display_mode: start_time} (e.g., {'nfl_recent': 1234567890.0})
+        # Reset when mode changes or full cycle completes
+        self._mode_start_time: Dict[str, float] = {}
+        
+        # Note: Sticky manager tracking has been removed in favor of sequential block display
+        # Sequential block display shows all games from one league before moving to the next,
+        # which is simpler and more predictable than the sticky manager approach
 
     def _initialize_managers(self):
         """Initialize all manager instances."""
@@ -183,6 +261,206 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
 
         except Exception as e:
             self.logger.error(f"Error initializing managers: {e}", exc_info=True)
+
+    def _initialize_league_registry(self) -> None:
+        """
+        Initialize the league registry with all available leagues.
+        
+        The league registry centralizes league management and makes it easy to:
+        - Add new leagues in the future (just add an entry here)
+        - Query enabled leagues for a mode type
+        - Get managers in priority order
+        - Check league completion status
+        
+        Registry format:
+        {
+            'league_id': {
+                'enabled': bool,           # Whether the league is enabled
+                'priority': int,           # Display priority (lower = higher priority)
+                'live_priority': bool,     # Whether live priority is enabled for this league
+                'managers': {
+                    'live': Manager or None,
+                    'recent': Manager or None,
+                    'upcoming': Manager or None
+                }
+            }
+        }
+        
+        This design allows the display logic to iterate through leagues in priority
+        order without hardcoding league names throughout the codebase.
+        """
+        # NFL league entry - highest priority (1)
+        # Note: We normalize league IDs to use consistent naming ('nfl', 'ncaa_fb')
+        # even though managers may use different internal identifiers
+        self._league_registry['nfl'] = {
+            'enabled': self.nfl_enabled,
+            'priority': 1,  # Highest priority - shows first
+            'live_priority': self.nfl_live_priority,
+            'managers': {
+                'live': getattr(self, 'nfl_live', None),
+                'recent': getattr(self, 'nfl_recent', None),
+                'upcoming': getattr(self, 'nfl_upcoming', None),
+            }
+        }
+        
+        # NCAA FB league entry - second priority (2)
+        self._league_registry['ncaa_fb'] = {
+            'enabled': self.ncaa_fb_enabled,
+            'priority': 2,  # Second priority - shows after NFL
+            'live_priority': self.ncaa_fb_live_priority,
+            'managers': {
+                'live': getattr(self, 'ncaa_fb_live', None),
+                'recent': getattr(self, 'ncaa_fb_recent', None),
+                'upcoming': getattr(self, 'ncaa_fb_upcoming', None),
+            }
+        }
+        
+        # Log registry state for debugging
+        enabled_leagues = [lid for lid, data in self._league_registry.items() if data['enabled']]
+        self.logger.info(
+            f"League registry initialized: {len(self._league_registry)} league(s) registered, "
+            f"{len(enabled_leagues)} enabled: {enabled_leagues}"
+        )
+        
+        # Future leagues can be added here following the same pattern:
+        # self._league_registry['xfl'] = {
+        #     'enabled': self.config.get('xfl', {}).get('enabled', False),
+        #     'priority': 3,
+        #     'live_priority': self.config.get('xfl', {}).get('live_priority', False),
+        #     'managers': {
+        #         'live': getattr(self, 'xfl_live', None),
+        #         'recent': getattr(self, 'xfl_recent', None),
+        #         'upcoming': getattr(self, 'xfl_upcoming', None),
+        #     }
+        # }
+
+    def _get_enabled_leagues_for_mode(self, mode_type: str) -> List[str]:
+        """
+        Get list of enabled leagues for a specific mode type in priority order.
+        
+        This method respects both league-level and mode-level disabling:
+        - League must be enabled (league.enabled = True)
+        - Mode must be enabled for that league (league.display_modes.show_<mode> = True)
+        
+        Args:
+            mode_type: Mode type ('live', 'recent', or 'upcoming')
+            
+        Returns:
+            List of league IDs in priority order (lower priority number = higher priority)
+            Example: ['nfl', 'ncaa_fb'] means NFL shows first, then NCAA FB
+            
+        This is the core method for sequential block display - it determines
+        which leagues should be shown and in what order.
+        """
+        enabled_leagues = []
+        
+        # Iterate through all registered leagues
+        for league_id, league_data in self._league_registry.items():
+            # Check if league is enabled
+            if not league_data.get('enabled', False):
+                continue
+            
+            # Check if this mode type is enabled for this league
+            # Get the league config to check display_modes settings
+            league_config = self.config.get(league_id, {})
+            display_modes_config = league_config.get("display_modes", {})
+            
+            # Check the appropriate flag based on mode type
+            mode_enabled = True  # Default to enabled if not specified
+            if mode_type == 'live':
+                mode_enabled = display_modes_config.get("show_live", True)
+            elif mode_type == 'recent':
+                mode_enabled = display_modes_config.get("show_recent", True)
+            elif mode_type == 'upcoming':
+                mode_enabled = display_modes_config.get("show_upcoming", True)
+            
+            # Only include if mode is enabled for this league
+            if mode_enabled:
+                enabled_leagues.append(league_id)
+        
+        # Sort by priority (lower number = higher priority)
+        enabled_leagues.sort(key=lambda lid: self._league_registry[lid].get('priority', 999))
+        
+        self.logger.debug(
+            f"Enabled leagues for {mode_type} mode: {enabled_leagues} "
+            f"(priorities: {[self._league_registry[lid].get('priority') for lid in enabled_leagues]})"
+        )
+        
+        return enabled_leagues
+
+    def _is_league_complete_for_mode(self, league_id: str, mode_type: str) -> bool:
+        """
+        Check if a league has completed showing all games for a specific mode type.
+        
+        This is used in sequential block display to determine when to move from
+        one league to the next. A league is considered complete when all its games
+        have been shown for their full duration (tracked via dynamic duration system).
+        
+        Args:
+            league_id: League identifier ('nfl', 'ncaa_fb', etc.)
+            mode_type: Mode type ('live', 'recent', or 'upcoming')
+            
+        Returns:
+            True if the league's manager for this mode is marked as complete,
+            False otherwise
+            
+        The completion status is tracked in _dynamic_managers_completed set,
+        using manager keys in the format: "{league_id}_{mode_type}:ManagerClass"
+        """
+        # Get the manager for this league and mode
+        manager = self._get_league_manager_for_mode(league_id, mode_type)
+        if not manager:
+            # No manager means league can't be displayed, so consider it "complete"
+            # (nothing to show, so we can move on)
+            return True
+        
+        # Build the manager key that matches what's used in progress tracking
+        # Format: "{league_id}_{mode_type}:ManagerClass"
+        manager_key = self._build_manager_key(f"{league_id}_{mode_type}", manager)
+        
+        # Check if this manager is in the completed set
+        is_complete = manager_key in self._dynamic_managers_completed
+        
+        if is_complete:
+            self.logger.debug(f"League {league_id} {mode_type} is complete (manager_key: {manager_key})")
+        else:
+            self.logger.debug(f"League {league_id} {mode_type} is not complete (manager_key: {manager_key})")
+        
+        return is_complete
+
+    def _get_league_manager_for_mode(self, league_id: str, mode_type: str):
+        """
+        Get the manager instance for a specific league and mode type.
+        
+        This is a convenience method that looks up managers from the league registry.
+        It provides a single point of access for getting managers, making the code
+        more maintainable and easier to extend.
+        
+        Args:
+            league_id: League identifier ('nfl', 'ncaa_fb', etc.)
+            mode_type: Mode type ('live', 'recent', or 'upcoming')
+            
+        Returns:
+            Manager instance if found, None otherwise
+            
+        The manager is retrieved from the league registry, which is populated
+        during initialization. If the league or mode doesn't exist, returns None.
+        """
+        # Check if league exists in registry
+        if league_id not in self._league_registry:
+            self.logger.warning(f"League {league_id} not found in registry")
+            return None
+        
+        # Get managers dict for this league
+        managers = self._league_registry[league_id].get('managers', {})
+        
+        # Get the manager for this mode type
+        manager = managers.get(mode_type)
+        
+        if manager is None:
+            self.logger.debug(f"No manager found for {league_id} {mode_type}")
+        
+        return manager
 
     def _adapt_config_for_manager(self, league: str) -> Dict[str, Any]:
         """
@@ -265,11 +543,11 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
                 "live_game_duration": league_config.get("live_game_duration", 20),
                 "recent_game_duration": league_config.get(
                     "recent_game_duration",
-                    self.config.get("game_display_duration", 15)
+                    15  # Default per-game duration for recent games
                 ),
                 "upcoming_game_duration": league_config.get(
                     "upcoming_game_duration",
-                    self.config.get("game_display_duration", 15)
+                    15  # Default per-game duration for upcoming games
                 ),
                 "live_priority": league_config.get("live_priority", False),
                 "show_favorite_teams_only": show_favorites_only,
@@ -295,16 +573,161 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
         if not display_config and hasattr(self.cache_manager, 'config_manager'):
             display_config = self.cache_manager.config_manager.get_display_config()
         
+        # Get customization config from main config (shared across all leagues)
+        customization_config = self.config.get("customization", {})
+        
         manager_config.update(
             {
                 "timezone": timezone_str,
                 "display": display_config,
+                "customization": customization_config,
             }
         )
         
         self.logger.debug(f"Using timezone: {timezone_str} for {league} managers")
 
         return manager_config
+    
+    def _parse_display_mode_settings(self) -> Dict[str, Dict[str, str]]:
+        """
+        Parse display mode settings from config.
+        
+        Returns:
+            Dict mapping league -> game_type -> display_mode ('switch' or 'scroll')
+            e.g., {'nfl': {'live': 'switch', 'recent': 'scroll', 'upcoming': 'scroll'}}
+        """
+        settings = {}
+        
+        for league in ['nfl', 'ncaa_fb']:
+            league_config = self.config.get(league, {})
+            display_modes_config = league_config.get("display_modes", {})
+            
+            settings[league] = {
+                'live': display_modes_config.get('live_display_mode', 'switch'),
+                'recent': display_modes_config.get('recent_display_mode', 'switch'),
+                'upcoming': display_modes_config.get('upcoming_display_mode', 'switch'),
+            }
+            
+            self.logger.debug(f"Display mode settings for {league}: {settings[league]}")
+        
+        return settings
+    
+    def _get_display_mode(self, league: str, game_type: str) -> str:
+        """
+        Get the display mode for a specific league and game type.
+        
+        Args:
+            league: 'nfl' or 'ncaa_fb'
+            game_type: 'live', 'recent', or 'upcoming'
+            
+        Returns:
+            'switch' or 'scroll'
+        """
+        return self._display_mode_settings.get(league, {}).get(game_type, 'switch')
+    
+    def _should_use_scroll_mode(self, mode_type: str) -> bool:
+        """
+        Check if ANY enabled league should use scroll mode for this game type.
+        
+        This determines if we should collect games for scrolling or use switch mode.
+        
+        Args:
+            mode_type: 'live', 'recent', or 'upcoming'
+            
+        Returns:
+            True if at least one enabled league uses scroll mode for this game type
+        """
+        if self.nfl_enabled and self._get_display_mode('nfl', mode_type) == 'scroll':
+            return True
+        if self.ncaa_fb_enabled and self._get_display_mode('ncaa_fb', mode_type) == 'scroll':
+            return True
+        return False
+    
+    def _collect_games_for_scroll(
+        self, 
+        mode_type: str, 
+        live_priority_active: bool = False
+    ) -> Tuple[List[Dict], List[str]]:
+        """
+        Collect all games from enabled leagues for scroll mode.
+        
+        Args:
+            mode_type: 'live', 'recent', or 'upcoming'
+            live_priority_active: If True, only include live games
+            
+        Returns:
+            Tuple of (games list with league info, list of leagues included)
+        """
+        games = []
+        leagues = []
+        
+        # Collect NFL games if enabled and using scroll mode
+        if self.nfl_enabled and self._get_display_mode('nfl', mode_type) == 'scroll':
+            nfl_manager = self._get_manager_for_league_mode('nfl', mode_type)
+            if nfl_manager:
+                nfl_games = self._get_games_from_manager(nfl_manager, mode_type)
+                if nfl_games:
+                    # Add league info to each game
+                    for game in nfl_games:
+                        game['league'] = 'nfl'
+                    games.extend(nfl_games)
+                    if 'nfl' not in leagues:
+                        leagues.append('nfl')
+                    self.logger.debug(f"Collected {len(nfl_games)} NFL {mode_type} games for scroll")
+        
+        # Collect NCAA FB games if enabled and using scroll mode
+        if self.ncaa_fb_enabled and self._get_display_mode('ncaa_fb', mode_type) == 'scroll':
+            ncaa_manager = self._get_manager_for_league_mode('ncaa_fb', mode_type)
+            if ncaa_manager:
+                ncaa_games = self._get_games_from_manager(ncaa_manager, mode_type)
+                if ncaa_games:
+                    # Add league info to each game
+                    for game in ncaa_games:
+                        game['league'] = 'ncaa_fb'
+                    games.extend(ncaa_games)
+                    if 'ncaa_fb' not in leagues:
+                        leagues.append('ncaa_fb')
+                    self.logger.debug(f"Collected {len(ncaa_games)} NCAA FB {mode_type} games for scroll")
+        
+        # If live priority is active, filter to only live games
+        if live_priority_active and mode_type == 'live':
+            games = [g for g in games if g.get('is_live', False) and not g.get('is_final', False)]
+            self.logger.debug(f"Live priority active: filtered to {len(games)} live games")
+        
+        return games, leagues
+    
+    def _get_games_from_manager(self, manager, mode_type: str) -> List[Dict]:
+        """Get games list from a manager based on mode type."""
+        if mode_type == 'live':
+            return list(getattr(manager, 'live_games', []) or [])
+        elif mode_type == 'recent':
+            # Try games_list first (used by recent managers), then recent_games
+            games = getattr(manager, 'games_list', None)
+            if games is None:
+                games = getattr(manager, 'recent_games', [])
+            return list(games or [])
+        elif mode_type == 'upcoming':
+            # Try games_list first (used by upcoming managers), then upcoming_games
+            games = getattr(manager, 'games_list', None)
+            if games is None:
+                games = getattr(manager, 'upcoming_games', [])
+            return list(games or [])
+        return []
+    
+    def _get_rankings_cache(self) -> Dict[str, int]:
+        """Get combined team rankings cache from all managers."""
+        rankings = {}
+        
+        # Try to get rankings from each manager
+        for manager_attr in ['nfl_live', 'nfl_recent', 'nfl_upcoming', 
+                            'ncaa_fb_live', 'ncaa_fb_recent', 'ncaa_fb_upcoming']:
+            manager = getattr(self, manager_attr, None)
+            if manager:
+                manager_rankings = getattr(manager, '_team_rankings_cache', {})
+                if manager_rankings:
+                    rankings.update(manager_rankings)
+        
+        return rankings
 
     def _get_available_modes(self) -> list:
         """Get list of available display modes based on enabled leagues."""
@@ -416,12 +839,531 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
         except Exception as e:
             self.logger.error(f"Error updating managers: {e}")
 
-    def display(self, display_mode: str = None, force_clear: bool = False) -> bool:
-        """Display football games with mode cycling.
+    def _get_managers_in_priority_order(self, mode_type: str) -> list:
+        """
+        Get managers for a mode type in priority order based on league registry.
+        
+        This method replaces the old sticky manager logic with a simpler approach:
+        - Returns managers in priority order (NFL first, then NCAA FB, etc.)
+        - Sequential block display logic handles showing all games from one league
+          before moving to the next
+        - No sticky manager state needed - completion is tracked via dynamic duration
         
         Args:
-            display_mode: Optional mode name (e.g., 'football_live', 'football_recent', 'football_upcoming').
-                         If provided, displays that specific mode. If None, uses internal mode cycling.
+            mode_type: Mode type ('live', 'recent', or 'upcoming')
+            
+        Returns:
+            List of manager instances in priority order (highest priority first)
+            Managers are filtered to only include enabled leagues with the mode enabled
+            
+        This is used by the sequential block display logic to determine which
+        leagues should be shown and in what order.
+        """
+        managers = []
+        
+        # Get enabled leagues for this mode type in priority order
+        enabled_leagues = self._get_enabled_leagues_for_mode(mode_type)
+        
+        # Get managers for each enabled league in priority order
+        for league_id in enabled_leagues:
+            manager = self._get_league_manager_for_mode(league_id, mode_type)
+            if manager:
+                managers.append(manager)
+                self.logger.debug(
+                    f"Added {league_id} {mode_type} manager to priority list "
+                    f"(priority: {self._league_registry[league_id].get('priority', 999)})"
+                )
+        
+        self.logger.debug(
+            f"Managers in priority order for {mode_type}: "
+            f"{[m.__class__.__name__ for m in managers]}"
+        )
+        
+        return managers
+
+    def _try_manager_display(
+        self, 
+        manager, 
+        force_clear: bool, 
+        display_mode: str, 
+        mode_type: str, 
+        sticky_manager=None  # Kept for compatibility but no longer used
+    ) -> Tuple[bool, Optional[str]]:
+        """
+        Try to display content from a single manager.
+        
+        This method handles displaying content from a manager and tracking progress
+        for dynamic duration. It no longer uses sticky manager logic - sequential
+        block display handles league rotation at a higher level.
+        
+        Args:
+            manager: Manager instance to try
+            force_clear: Whether to force clear display
+            display_mode: External display mode name (e.g., 'football_recent')
+            mode_type: Mode type ('live', 'recent', or 'upcoming')
+            sticky_manager: Deprecated parameter (kept for compatibility, ignored)
+            
+        Returns:
+            Tuple of (success: bool, actual_mode: Optional[str])
+            - success: True if manager displayed content, False otherwise
+            - actual_mode: The actual mode name used for tracking (e.g., 'nfl_recent')
+        """
+        if not manager:
+            return False, None
+        
+        # Track which league we're displaying for granular dynamic duration
+        # This sets _current_display_league and _current_display_mode_type
+        # which are used for progress tracking and duration calculations
+        self._set_display_context_from_manager(manager, mode_type)
+        
+        # Ensure manager is updated before displaying
+        # This fetches fresh data if needed based on update intervals
+        self._ensure_manager_updated(manager)
+        
+        # Attempt to display content from this manager
+        # Manager returns True if it has content to show, False if no content
+        result = manager.display(force_clear)
+        
+        # Build the actual mode name from league and mode_type for accurate tracking
+        # This is used to track progress per league separately
+        # Example: 'nfl_recent' or 'ncaa_fb_live'
+        actual_mode = (
+            f"{self._current_display_league}_{mode_type}" 
+            if self._current_display_league and mode_type 
+            else display_mode
+        )
+        
+        # Track game transitions for logging
+        # Only log at DEBUG level for frequent calls, INFO for game transitions
+        manager_class_name = manager.__class__.__name__
+        has_current_game = hasattr(manager, 'current_game') and manager.current_game is not None
+        current_game = getattr(manager, 'current_game', None) if has_current_game else None
+        
+        # Get current game ID for transition detection
+        current_game_id = None
+        if current_game:
+            current_game_id = current_game.get('id') or current_game.get('game_id')
+            if not current_game_id:
+                # Fallback: create ID from team abbreviations
+                away = current_game.get('away_abbr', '')
+                home = current_game.get('home_abbr', '')
+                if away and home:
+                    current_game_id = f"{away}@{home}"
+        
+        # Check for game transition
+        game_tracking = self._current_game_tracking.get(display_mode, {})
+        last_game_id = game_tracking.get('game_id')
+        last_league = game_tracking.get('league')
+        last_log_time = game_tracking.get('last_log_time', 0.0)
+        current_time = time.time()
+        
+        # Detect game transition or league change
+        game_changed = (current_game_id and current_game_id != last_game_id)
+        league_changed = (self._current_display_league and self._current_display_league != last_league)
+        time_since_last_log = current_time - last_log_time
+        
+        # Log game transitions at INFO level (but throttle to avoid spam)
+        if (game_changed or league_changed) and time_since_last_log >= self._game_transition_log_interval:
+            if game_changed and current_game_id:
+                away_abbr = current_game.get('away_abbr', '?') if current_game else '?'
+                home_abbr = current_game.get('home_abbr', '?') if current_game else '?'
+                self.logger.info(
+                    f"Game transition in {display_mode}: "
+                    f"{away_abbr} @ {home_abbr} "
+                    f"({self._current_display_league or 'unknown'} {mode_type})"
+                )
+            elif league_changed and self._current_display_league:
+                self.logger.info(
+                    f"League transition in {display_mode}: "
+                    f"switched to {self._current_display_league} {mode_type}"
+                )
+            
+            # Update tracking
+            self._current_game_tracking[display_mode] = {
+                'game_id': current_game_id,
+                'league': self._current_display_league,
+                'last_log_time': current_time
+            }
+        else:
+            # Frequent calls - only log at DEBUG level
+            self.logger.debug(
+                f"Manager {manager_class_name} display() returned {result}, "
+                f"has_current_game={has_current_game}, game_id={current_game_id}"
+            )
+        
+        if result is True:
+            # Manager successfully displayed content
+            # Track progress for dynamic duration system
+            manager_key = self._build_manager_key(actual_mode, manager)
+            
+            try:
+                # Record that we've seen this manager and track game progress
+                # This updates _dynamic_manager_progress and marks games as shown
+                self._record_dynamic_progress(manager, actual_mode=actual_mode, display_mode=display_mode)
+            except Exception as progress_err:  # pylint: disable=broad-except
+                self.logger.debug(f"Dynamic progress tracking failed: {progress_err}")
+            
+            # Track which managers were used for this display mode
+            # This is used to determine when all leagues have completed
+            if display_mode:
+                self._display_mode_to_managers.setdefault(display_mode, set()).add(manager_key)
+            
+            # Check if this manager (league) has completed all its games
+            # If all enabled leagues complete, the display mode cycle is complete
+            self._evaluate_dynamic_cycle_completion(display_mode=display_mode)
+            return True, actual_mode
+        
+        elif result is False:
+            # Manager returned False - no content available or between games
+            # In sequential block display, we'll try the next league if this one is complete
+            # The completion check happens in _display_external_mode()
+            self.logger.debug(
+                f"Manager {manager_class_name} returned False - no content or between games"
+            )
+            return False, None
+        
+        else:
+            # Result is None or other unexpected value - assume success
+            # This handles edge cases where managers return None instead of True/False
+            manager_key = self._build_manager_key(actual_mode, manager)
+            
+            try:
+                self._record_dynamic_progress(manager, actual_mode=actual_mode, display_mode=display_mode)
+            except Exception as progress_err:  # pylint: disable=broad-except
+                self.logger.debug(f"Dynamic progress tracking failed: {progress_err}")
+            
+            # Track which managers were used for this display mode
+            if display_mode:
+                self._display_mode_to_managers.setdefault(display_mode, set()).add(manager_key)
+            
+            self._evaluate_dynamic_cycle_completion(display_mode=display_mode)
+            return True, actual_mode
+
+    def _display_external_mode(self, display_mode: str, force_clear: bool) -> bool:
+        """
+        Handle display for external display_mode calls (from display controller).
+        
+        NOTE: This method is legacy support. With granular modes, display() now
+        handles modes directly. This method should not be called for granular modes.
+        
+        Args:
+            display_mode: External mode name (legacy combined modes only)
+            force_clear: Whether to force clear display
+            
+        Returns:
+            True if content was displayed, False otherwise
+        """
+        self.logger.debug(f"Display called with mode: {display_mode}")
+        
+        # Extract the mode type (live, recent, upcoming)
+        mode_type = self._extract_mode_type(display_mode)
+        if not mode_type:
+            self.logger.warning(f"Unknown display_mode: {display_mode}")
+            return False
+        
+        # If this is a granular mode, it should have been handled by display() directly
+        # This is legacy support for combined modes (which no longer exist)
+        if not display_mode.startswith("football_"):
+            self.logger.warning(
+                f"_display_external_mode() called with granular mode: {display_mode}. "
+                f"This should be handled by display() directly."
+            )
+            # Try to handle it anyway by parsing and calling _display_league_mode
+            parts = display_mode.split("_", 1)
+            if len(parts) == 2:
+                league, mode_type_str = parts
+                if league in self._league_registry and mode_type_str == mode_type:
+                    return self._display_league_mode(league, mode_type, force_clear)
+            return False
+        
+        # Legacy combined mode handling (should not be reached with new architecture)
+        self.logger.warning(
+            f"_display_external_mode() called with combined mode: {display_mode}. "
+            f"Combined modes are no longer supported. Use granular modes instead."
+        )
+        return False
+    
+    def _display_scroll_mode(self, display_mode: str, mode_type: str, force_clear: bool) -> bool:
+        """Handle display for scroll mode.
+        
+        Args:
+            display_mode: External mode name (e.g., 'football_live')
+            mode_type: Game type ('live', 'recent', 'upcoming')
+            force_clear: Whether to force clear display
+            
+        Returns:
+            True if content was displayed, False otherwise
+        """
+        if not self._scroll_manager:
+            self.logger.warning("Scroll mode requested but scroll manager not available")
+            # Fall back to switch mode
+            return self._display_switch_mode_fallback(display_mode, mode_type, force_clear)
+        
+        # Check if we need to prepare new scroll content
+        scroll_key = f"{display_mode}_{mode_type}"
+        
+        if not self._scroll_prepared.get(scroll_key, False):
+            # Update managers first to get latest game data
+            if self.nfl_enabled:
+                nfl_manager = self._get_manager_for_league_mode('nfl', mode_type)
+                if nfl_manager:
+                    self._ensure_manager_updated(nfl_manager)
+            if self.ncaa_fb_enabled:
+                ncaa_manager = self._get_manager_for_league_mode('ncaa_fb', mode_type)
+                if ncaa_manager:
+                    self._ensure_manager_updated(ncaa_manager)
+            
+            # Check if live priority should filter to only live games
+            live_priority_active = (
+                mode_type == 'live' and 
+                (self.nfl_live_priority or self.ncaa_fb_live_priority) and
+                self.has_live_content()
+            )
+            
+            # Collect games from all leagues using scroll mode
+            games, leagues = self._collect_games_for_scroll(mode_type, live_priority_active)
+            
+            if not games:
+                self.logger.debug(f"No games to scroll for {display_mode}")
+                self._scroll_prepared[scroll_key] = False
+                self._scroll_active[scroll_key] = False
+                return False
+            
+            # Get rankings cache for display
+            rankings = self._get_rankings_cache()
+            
+            # Prepare scroll content
+            success = self._scroll_manager.prepare_and_display(
+                games, mode_type, leagues, rankings
+            )
+            
+            if success:
+                self._scroll_prepared[scroll_key] = True
+                self._scroll_active[scroll_key] = True
+                self.logger.info(
+                    f"[Football Scroll] Started scrolling {len(games)} {mode_type} games "
+                    f"from {', '.join(leagues)}"
+                )
+            else:
+                self._scroll_prepared[scroll_key] = False
+                self._scroll_active[scroll_key] = False
+                return False
+        
+        # Display the next scroll frame
+        if self._scroll_active.get(scroll_key, False):
+            displayed = self._scroll_manager.display_frame(mode_type)
+            
+            if displayed:
+                # Check if scroll is complete
+                if self._scroll_manager.is_complete(mode_type):
+                    self.logger.info(f"[Football Scroll] Cycle complete for {display_mode}")
+                    # Reset for next cycle
+                    self._scroll_prepared[scroll_key] = False
+                    self._scroll_active[scroll_key] = False
+                    # Mark cycle as complete for dynamic duration
+                    self._dynamic_cycle_complete = True
+                
+                return True
+            else:
+                # Scroll display failed
+                self._scroll_active[scroll_key] = False
+                return False
+        
+        return False
+    
+    def _display_switch_mode_fallback(self, display_mode: str, mode_type: str, force_clear: bool) -> bool:
+        """Fallback to switch mode when scroll is not available.
+        
+        This is essentially the same logic as the switch mode portion of _display_external_mode.
+        """
+        # Resolve managers to try for this mode type (in priority order)
+        managers_to_try = self._resolve_managers_for_mode(mode_type)
+        
+        # Try each manager until one returns True (has content)
+        # Sequential block display handles league rotation at a higher level
+        for current_manager in managers_to_try:
+            success, _ = self._try_manager_display(
+                current_manager, force_clear, display_mode, mode_type, None
+            )
+            
+            if success:
+                return True
+        
+        return False
+
+    def _display_league_mode(self, league: str, mode_type: str, force_clear: bool) -> bool:
+        """
+        Display a specific league/mode combination (e.g., NFL Recent, NCAA FB Upcoming).
+        
+        This method displays content from a single league and mode type, used when
+        rotation_order specifies granular modes like 'nfl_recent' or 'ncaa_fb_upcoming'.
+        
+        Args:
+            league: League ID ('nfl' or 'ncaa_fb')
+            mode_type: Mode type ('live', 'recent', or 'upcoming')
+            force_clear: Whether to force clear display
+            
+        Returns:
+            True if content was displayed, False otherwise
+        """
+        # Validate league
+        if league not in self._league_registry:
+            self.logger.warning(f"Invalid league in _display_league_mode: {league}")
+            return False
+        
+        # Check if league is enabled
+        if not self._league_registry[league].get('enabled', False):
+            self.logger.debug(f"League {league} is disabled, skipping")
+            return False
+        
+        # Get manager for this league/mode combination
+        manager = self._get_league_manager_for_mode(league, mode_type)
+        if not manager:
+            self.logger.debug(f"No manager available for {league} {mode_type}")
+            return False
+        
+        # Create display mode name for tracking
+        display_mode = f"{league}_{mode_type}"
+        
+        # Set display context for dynamic duration tracking
+        self._current_display_league = league
+        self._current_display_mode_type = mode_type
+        
+        # Try to display content from this league's manager
+        success, _ = self._try_manager_display(
+            manager, force_clear, display_mode, mode_type, None
+        )
+        
+        # Only track mode start time and check duration if we actually have content to display
+        if success:
+            # Track mode start time for per-mode duration enforcement (only when content exists)
+            if display_mode not in self._mode_start_time:
+                self._mode_start_time[display_mode] = time.time()
+                self.logger.debug(f"Started tracking time for {display_mode}")
+            
+            # Check if mode-level duration has expired (only check if we have content)
+            effective_mode_duration = self._get_effective_mode_duration(display_mode, mode_type)
+            if effective_mode_duration is not None:
+                elapsed_time = time.time() - self._mode_start_time[display_mode]
+                if elapsed_time >= effective_mode_duration:
+                    # Mode duration expired - time to rotate
+                    self.logger.info(
+                        f"Mode duration expired for {display_mode}: "
+                        f"{elapsed_time:.1f}s >= {effective_mode_duration}s. "
+                        f"Rotating to next mode (progress preserved for resume)."
+                    )
+                    # Reset mode start time for next cycle
+                    self._mode_start_time[display_mode] = time.time()
+                    return False
+            
+            self.logger.debug(
+                f"Displayed content from {league} {mode_type} (mode: {display_mode})"
+            )
+        else:
+            # No content - clear any existing start time so mode can start fresh when content becomes available
+            if display_mode in self._mode_start_time:
+                del self._mode_start_time[display_mode]
+                self.logger.debug(f"Cleared mode start time for {display_mode} (no content available)")
+            
+            self.logger.debug(
+                f"No content available for {league} {mode_type} (mode: {display_mode})"
+            )
+        
+        return success
+
+    def _display_internal_cycling(self, force_clear: bool) -> bool:
+        """Handle display for internal mode cycling (when no display_mode provided).
+        
+        Args:
+            force_clear: Whether to force clear display
+            
+        Returns:
+            True if content was displayed, False otherwise
+        """
+        current_time = time.time()
+        
+        # Check if we should stay on live mode
+        should_stay_on_live = False
+        if self.has_live_content():
+            # Get current mode name
+            current_mode = self.modes[self.current_mode_index] if self.modes else None
+            # If we're on a live mode, stay there
+            if current_mode and current_mode.endswith('_live'):
+                should_stay_on_live = True
+            # If we're not on a live mode but have live content, switch to it
+            elif not (current_mode and current_mode.endswith('_live')):
+                # Find the first live mode
+                for i, mode in enumerate(self.modes):
+                    if mode.endswith('_live'):
+                        self.current_mode_index = i
+                        force_clear = True
+                        self.last_mode_switch = current_time
+                        self.logger.info(f"Live content detected - switching to display mode: {mode}")
+                        break
+        
+        # Handle mode cycling only if not staying on live
+        if not should_stay_on_live and current_time - self.last_mode_switch >= self.display_duration:
+            self.current_mode_index = (self.current_mode_index + 1) % len(self.modes)
+            self.last_mode_switch = current_time
+            force_clear = True
+            
+            current_mode = self.modes[self.current_mode_index]
+            self.logger.info(f"Switching to display mode: {current_mode}")
+        
+        # Get current manager and display
+        current_manager = self._get_current_manager()
+        if not current_manager:
+            self.logger.warning("No manager available for current mode")
+            return False
+        
+        # Track which league/mode we're displaying for granular dynamic duration
+        current_mode = self.modes[self.current_mode_index] if self.modes else None
+        if current_mode:
+            # Extract mode type from mode name
+            mode_type = self._extract_mode_type(current_mode)
+            if mode_type:
+                self._set_display_context_from_manager(current_manager, mode_type)
+        
+        result = current_manager.display(force_clear)
+        if result is not False:
+            try:
+                # Build the actual mode name from league and mode_type for accurate tracking
+                current_mode = self.modes[self.current_mode_index] if self.modes else None
+                if current_mode:
+                    manager_key = self._build_manager_key(current_mode, current_manager)
+                    # Track which managers were used for internal mode cycling
+                    # For internal cycling, the mode itself is the display_mode
+                    self._display_mode_to_managers.setdefault(current_mode, set()).add(manager_key)
+                self._record_dynamic_progress(
+                    current_manager, actual_mode=current_mode, display_mode=current_mode
+                )
+            except Exception as progress_err:  # pylint: disable=broad-except
+                self.logger.debug(f"Dynamic progress tracking failed: {progress_err}")
+        else:
+            # Manager returned False (no content) - ensure display is cleared
+            # This is a safety measure in case the manager didn't clear it
+            if force_clear:
+                try:
+                    self.display_manager.clear()
+                    self.display_manager.update_display()
+                except Exception as clear_err:
+                    self.logger.debug(f"Error clearing display when manager returned False: {clear_err}")
+        
+        current_mode = self.modes[self.current_mode_index] if self.modes else None
+        self._evaluate_dynamic_cycle_completion(display_mode=current_mode)
+        return result
+
+    def display(self, display_mode: str = None, force_clear: bool = False) -> bool:
+        """Display football games for a specific granular mode.
+        
+        The plugin now uses granular modes directly (nfl_recent, nfl_upcoming, nfl_live,
+        ncaa_fb_recent, ncaa_fb_upcoming, ncaa_fb_live) registered in manifest.json.
+        The display controller handles rotation between these modes.
+        
+        Args:
+            display_mode: Granular mode name (e.g., 'nfl_recent', 'ncaa_fb_upcoming', 'nfl_live')
+                         Format: {league}_{mode_type}
+                         If None, uses internal mode cycling (legacy support).
             force_clear: If True, clear display before rendering
         """
         if not self.is_enabled:
@@ -431,336 +1373,125 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
             # Track the current active display mode for use in is_cycle_complete()
             if display_mode:
                 self._current_active_display_mode = display_mode
-            # If display_mode is provided, use it to determine which manager to call
+            
+            # Route to appropriate display handler
             if display_mode:
-                self.logger.debug(f"Display called with mode: {display_mode}")
-                # Map external mode names to internal managers
-                # External modes: football_live, football_recent, football_upcoming
-                # Internal modes: nfl_live, nfl_recent, nfl_upcoming, ncaa_fb_live, etc.
-                
-                # Extract the mode type (live, recent, upcoming)
-                mode_type = None
-                if display_mode.endswith('_live'):
-                    mode_type = 'live'
-                elif display_mode.endswith('_recent'):
-                    mode_type = 'recent'
-                elif display_mode.endswith('_upcoming'):
-                    mode_type = 'upcoming'
-                
-                if not mode_type:
-                    self.logger.warning(f"Unknown display_mode: {display_mode}")
+                # Handle legacy combined modes (football_recent, football_upcoming, football_live)
+                # These should not be called with new architecture, but handle gracefully
+                # for backward compatibility during transition
+                if display_mode.startswith("football_"):
+                    # Legacy combined mode - extract mode_type and show all enabled leagues
+                    mode_type_str = display_mode.replace("football_", "")
+                    if mode_type_str not in ['live', 'recent', 'upcoming']:
+                        self.logger.warning(
+                            f"Invalid legacy combined mode: {display_mode}"
+                        )
+                        return False
+                    
+                    # Show all enabled leagues for this mode type (sequential block)
+                    # This maintains backward compatibility during transition
+                    enabled_leagues = self._get_enabled_leagues_for_mode(mode_type_str)
+                    if not enabled_leagues:
+                        self.logger.debug(
+                            f"No enabled leagues for legacy mode {display_mode}"
+                        )
+                        return False
+                    
+                    # Try to display from first enabled league
+                    # This is a simplified fallback for legacy mode support
+                    for league_id in enabled_leagues:
+                        success = self._display_league_mode(league_id, mode_type_str, force_clear)
+                        if success:
+                            return True
+                    
+                    # No content from any league
                     return False
                 
-                self.logger.debug(f"Mode type: {mode_type}, NFL enabled: {self.nfl_enabled}, NCAA FB enabled: {self.ncaa_fb_enabled}")
+                # Parse granular mode name: {league}_{mode_type}
+                # e.g., "nfl_recent" -> league="nfl", mode_type="recent"
+                # e.g., "ncaa_fb_recent" -> league="ncaa_fb", mode_type="recent"
+                # e.g., "uefa.champions_recent" -> league="uefa.champions", mode_type="recent" (for soccer)
+                # 
+                # Scalable approach: Check league registry first, then extract mode type
+                # This works for any league naming convention (underscores, dots, etc.)
+                mode_type_str = None
+                league = None
                 
-                # Determine which manager to use based on enabled leagues
-                # For live mode, prioritize leagues with live content and live_priority enabled
-                managers_to_try = []
+                # Known mode type suffixes (standardized across all sports plugins)
+                mode_suffixes = ['_live', '_recent', '_upcoming']
                 
-                if mode_type == 'live':
-                    # Ensure managers are updated before checking for live games
-                    if self.nfl_enabled and hasattr(self, 'nfl_live'):
-                        try:
-                            self.nfl_live.update()
-                        except Exception as e:
-                            self.logger.debug(f"Error updating NFL live manager: {e}")
-                    
-                    if self.ncaa_fb_enabled and hasattr(self, 'ncaa_fb_live'):
-                        try:
-                            self.ncaa_fb_live.update()
-                        except Exception as e:
-                            self.logger.debug(f"Error updating NCAA FB live manager: {e}")
-                    
-                    # Check NFL first (highest priority) - use same logic as has_live_content()
-                    if (self.nfl_enabled and self.nfl_live_priority and 
-                        hasattr(self, 'nfl_live')):
-                        live_games = getattr(self.nfl_live, 'live_games', [])
-                        if live_games:
-                            # Filter out any games that are final or appear over
-                            live_games = [g for g in live_games if not g.get('is_final', False)]
-                            # Additional validation using helper method if available
-                            if hasattr(self.nfl_live, '_is_game_really_over'):
-                                live_games = [g for g in live_games 
-                                             if not self.nfl_live._is_game_really_over(g)]
-                            
-                            if live_games:
-                                # If favorite teams are configured, only show if there are live games for favorite teams
-                                favorite_teams = getattr(self.nfl_live, 'favorite_teams', [])
-                                if favorite_teams:
-                                    has_favorite_live = any(
-                                        game.get('home_abbr') in favorite_teams
-                                        or game.get('away_abbr') in favorite_teams
-                                        for game in live_games
-                                    )
-                                    if has_favorite_live:
-                                        managers_to_try.append(self.nfl_live)
-                                        self.logger.debug("NFL has live games with favorite teams - prioritizing NFL")
-                                else:
-                                    # No favorite teams configured, any live game counts
-                                    managers_to_try.append(self.nfl_live)
-                                    self.logger.debug("NFL has live games - prioritizing NFL")
-                    
-                    # Check NCAA FB - use same logic as has_live_content()
-                    if (self.ncaa_fb_enabled and self.ncaa_fb_live_priority and 
-                        hasattr(self, 'ncaa_fb_live')):
-                        live_games = getattr(self.ncaa_fb_live, 'live_games', [])
-                        if live_games:
-                            favorite_teams = getattr(self.ncaa_fb_live, 'favorite_teams', [])
-                            if favorite_teams:
-                                has_favorite_live = any(
-                                    game.get('home_abbr') in favorite_teams
-                                    or game.get('away_abbr') in favorite_teams
-                                    for game in live_games
-                                )
-                                if has_favorite_live:
-                                    managers_to_try.append(self.ncaa_fb_live)
-                                    self.logger.debug("NCAA FB has live games with favorite teams")
-                            else:
-                                # No favorite teams configured, any live game counts
-                                managers_to_try.append(self.ncaa_fb_live)
-                                self.logger.debug("NCAA FB has live games")
-                    
-                    # Fallback: if no live content found, show any enabled live manager (NFL first)
-                    if not managers_to_try:
-                        if self.nfl_enabled and hasattr(self, 'nfl_live'):
-                            managers_to_try.append(self.nfl_live)
-                            self.logger.debug("No live content found, falling back to NFL live manager")
-                        if self.ncaa_fb_enabled and hasattr(self, 'ncaa_fb_live'):
-                            managers_to_try.append(self.ncaa_fb_live)
-                            self.logger.debug("No live content found, falling back to NCAA FB live manager")
-                else:
-                    # For recent and upcoming modes, use standard priority order
-                    # NFL > NCAA FB
-                    if self.nfl_enabled:
-                        if mode_type == 'recent' and hasattr(self, 'nfl_recent'):
-                            managers_to_try.append(self.nfl_recent)
-                        elif mode_type == 'upcoming' and hasattr(self, 'nfl_upcoming'):
-                            managers_to_try.append(self.nfl_upcoming)
-                    
-                    if self.ncaa_fb_enabled:
-                        if mode_type == 'recent' and hasattr(self, 'ncaa_fb_recent'):
-                            managers_to_try.append(self.ncaa_fb_recent)
-                        elif mode_type == 'upcoming' and hasattr(self, 'ncaa_fb_upcoming'):
-                            managers_to_try.append(self.ncaa_fb_upcoming)
+                # Try to match against league registry first (most reliable)
+                # Check each league ID in registry to see if display_mode starts with it
+                for league_id in self._league_registry.keys():
+                    for mode_suffix in mode_suffixes:
+                        expected_mode = f"{league_id}{mode_suffix}"
+                        if display_mode == expected_mode:
+                            league = league_id
+                            mode_type_str = mode_suffix[1:]  # Remove leading underscore
+                            break
+                    if league:
+                        break
                 
-                # Track which managers were actually used (had content) for this display mode
-                used_managers = []
-                
-                # STICKY MANAGER LOGIC: Complete all games from one league before switching
-                # Check if we already have a sticky manager for this mode
-                sticky_manager = self._sticky_manager_per_mode.get(display_mode)
-                
-                self.logger.info(f"Sticky manager check for {display_mode}: sticky={sticky_manager.__class__.__name__ if sticky_manager else None}, available_managers={[m.__class__.__name__ for m in managers_to_try if m]}")
-                
-                # If we have a sticky manager, try it first and only switch if it's done
-                if sticky_manager and sticky_manager in managers_to_try:
-                    self.logger.info(f"Using sticky manager {sticky_manager.__class__.__name__} for {display_mode} - RESTRICTING to this manager only")
-                    managers_to_try = [sticky_manager]  # Only try the sticky manager
-                else:
-                    # No sticky manager yet, or it's not in the list anymore - will select a new one
-                    if sticky_manager:
-                        self.logger.info(f"Sticky manager {sticky_manager.__class__.__name__} no longer available for {display_mode}, selecting new one from {len(managers_to_try)} options")
-                        self._sticky_manager_per_mode.pop(display_mode, None)
-                        self._sticky_manager_start_time.pop(display_mode, None)
-                    else:
-                        self.logger.info(f"No sticky manager yet for {display_mode}, will select from {len(managers_to_try)} available managers")
-                
-                # Try each manager until one returns True (has content)
-                for current_manager in managers_to_try:
-                    if current_manager:
-                        # Track which league we're displaying for granular dynamic duration
-                        if current_manager == self.nfl_live or current_manager == self.nfl_recent or current_manager == self.nfl_upcoming:
-                            self._current_display_league = 'nfl'
-                        elif current_manager == self.ncaa_fb_live or current_manager == self.ncaa_fb_recent or current_manager == self.ncaa_fb_upcoming:
-                            self._current_display_league = 'ncaa_fb'
-                        self._current_display_mode_type = mode_type
-                        
-                        # Ensure manager is updated before displaying
-                        self._ensure_manager_updated(current_manager)
-                        
-                        result = current_manager.display(force_clear)
-                        
-                        # Debug logging
-                        manager_class_name = current_manager.__class__.__name__
-                        has_current_game = hasattr(current_manager, 'current_game') and current_manager.current_game is not None
-                        self.logger.info(f"Manager {manager_class_name} display() returned {result}, has_current_game={has_current_game}")
-                        
-                        # If display returned True, we have content to show
-                        if result is True:
-                            # Build the actual mode name from league and mode_type for accurate tracking
-                            actual_mode = f"{self._current_display_league}_{mode_type}" if self._current_display_league and mode_type else display_mode
-                            manager_key = self._build_manager_key(actual_mode, current_manager)
-                            used_managers.append(manager_key)
-                            
-                            try:
-                                self._record_dynamic_progress(current_manager, actual_mode=actual_mode, display_mode=display_mode)
-                            except Exception as progress_err:  # pylint: disable=broad-except
-                                self.logger.debug(
-                                    "Dynamic progress tracking failed: %s", progress_err
-                                )
-                            
-                            # Set as sticky manager AFTER progress tracking (which may clear it on new cycle)
-                            if display_mode not in self._sticky_manager_per_mode:
-                                self._sticky_manager_per_mode[display_mode] = current_manager
-                                self._sticky_manager_start_time[display_mode] = time.time()
-                                self.logger.info(f"Set sticky manager {current_manager.__class__.__name__} for {display_mode}")
-                            
-                            # Track which managers were used for this display mode
-                            if display_mode:
-                                self._display_mode_to_managers.setdefault(display_mode, set()).add(manager_key)
-                            
-                            self._evaluate_dynamic_cycle_completion(display_mode=display_mode)
-                            self.logger.info(f"Plugin display() returning {result} for {display_mode}")
-                            return result
-                        # If result is False from sticky manager, check if it completed its games
-                        elif result is False and current_manager == sticky_manager:
-                            # Check if this manager has completed all its games
-                            actual_mode = f"{self._current_display_league}_{mode_type}" if self._current_display_league and mode_type else display_mode
-                            manager_key = self._build_manager_key(actual_mode, current_manager)
-                            
-                            # If this manager is marked as completed, move to next manager
-                            if manager_key in self._dynamic_managers_completed:
-                                self.logger.info(f"Sticky manager {current_manager.__class__.__name__} completed all games, switching to next manager")
-                                self._sticky_manager_per_mode.pop(display_mode, None)
-                                self._sticky_manager_start_time.pop(display_mode, None)
-                                # Don't continue - fall through to try next manager
+                # Fallback: If no registry match, parse from the end (for backward compatibility)
+                if not league:
+                    for mode_suffix in mode_suffixes:
+                        if display_mode.endswith(mode_suffix):
+                            mode_type_str = mode_suffix[1:]  # Remove leading underscore
+                            league = display_mode[:-len(mode_suffix)]  # Everything before the suffix
+                            # Validate it's a known league
+                            if league in self._league_registry:
                                 break
                             else:
-                                # Manager not done yet, just returning False temporarily (between game switches)
-                                self.logger.debug(f"Sticky manager {current_manager.__class__.__name__} returned False (between games), continuing")
-                                continue
-                        # If result is False from non-sticky manager, try next
-                        elif result is False:
-                            continue
-                        # If result is None or other, assume success
-                        else:
-                            # Build the actual mode name from league and mode_type for accurate tracking
-                            actual_mode = f"{self._current_display_league}_{mode_type}" if self._current_display_league and mode_type else display_mode
-                            manager_key = self._build_manager_key(actual_mode, current_manager)
-                            used_managers.append(manager_key)
-                            
-                            try:
-                                self._record_dynamic_progress(current_manager, actual_mode=actual_mode, display_mode=display_mode)
-                            except Exception as progress_err:  # pylint: disable=broad-except
-                                self.logger.debug(
-                                    "Dynamic progress tracking failed: %s", progress_err
-                                )
-                            
-                            # Track which managers were used for this display mode
-                            if display_mode:
-                                self._display_mode_to_managers.setdefault(display_mode, set()).add(manager_key)
-                            
-                            self._evaluate_dynamic_cycle_completion(display_mode=display_mode)
-                            return True
+                                # Not a known league, try next suffix
+                                league = None
+                                mode_type_str = None
                 
-                # No manager had content - log why
-                if not managers_to_try:
-                    # Enhanced diagnostic logging
-                    nfl_has_manager = hasattr(self, 'nfl_live') if mode_type == 'live' else (hasattr(self, 'nfl_recent') if mode_type == 'recent' else hasattr(self, 'nfl_upcoming'))
-                    ncaa_fb_has_manager = hasattr(self, 'ncaa_fb_live') if mode_type == 'live' else (hasattr(self, 'ncaa_fb_recent') if mode_type == 'recent' else hasattr(self, 'ncaa_fb_upcoming'))
-                    self.logger.warning(f"No managers to try for {display_mode}: nfl_enabled={self.nfl_enabled}, nfl_has_manager={nfl_has_manager}, ncaa_fb_enabled={self.ncaa_fb_enabled}, ncaa_fb_has_manager={ncaa_fb_has_manager}")
-                else:
-                    # Managers were tried but all returned False - log details for live mode
-                    if mode_type == 'live':
-                        if hasattr(self, 'nfl_live'):
-                            nfl_live_games = getattr(self.nfl_live, 'live_games', [])
-                            self.logger.warning(f"football_live: All managers returned False. NFL live_games count: {len(nfl_live_games) if nfl_live_games else 0}")
-                            if nfl_live_games:
-                                self.logger.warning(f"football_live: NFL has {len(nfl_live_games)} live game(s) but display() returned False")
-                        if hasattr(self, 'ncaa_fb_live'):
-                            ncaa_live_games = getattr(self.ncaa_fb_live, 'live_games', [])
-                            self.logger.warning(f"football_live: All managers returned False. NCAA FB live_games count: {len(ncaa_live_games) if ncaa_live_games else 0}")
-                            if ncaa_live_games:
-                                self.logger.warning(f"football_live: NCAA FB has {len(ncaa_live_games)} live game(s) but display() returned False")
-                    else:
-                        self.logger.debug(f"No content available for mode: {display_mode} after trying {len(managers_to_try)} manager(s)")
+                if not mode_type_str or not league:
+                    self.logger.warning(
+                        f"Invalid granular display_mode format: {display_mode} "
+                        f"(expected format: {{league}}_{{mode_type}}, e.g., 'nfl_recent' or 'ncaa_fb_recent'). "
+                        f"Valid leagues: {list(self._league_registry.keys())}"
+                    )
+                    return False
                 
-                # Clear display when no content available (safety measure)
-                if force_clear:
-                    try:
-                        self.display_manager.clear()
-                        self.display_manager.update_display()
-                    except Exception as clear_err:
-                        self.logger.debug(f"Error clearing display when no content: {clear_err}")
-                self.logger.info(f"Plugin display() returning False for {display_mode} - no content from any manager")
-                return False
-            
-            # Fall back to internal mode cycling if no display_mode provided
-            current_time = time.time()
-
-            # Check if we should stay on live mode
-            should_stay_on_live = False
-            if self.has_live_content():
-                # Get current mode name
-                current_mode = self.modes[self.current_mode_index] if self.modes else None
-                # If we're on a live mode, stay there
-                if current_mode and current_mode.endswith('_live'):
-                    should_stay_on_live = True
-                # If we're not on a live mode but have live content, switch to it
-                elif not (current_mode and current_mode.endswith('_live')):
-                    # Find the first live mode
-                    for i, mode in enumerate(self.modes):
-                        if mode.endswith('_live'):
-                            self.current_mode_index = i
-                            force_clear = True
-                            self.last_mode_switch = current_time
-                            self.logger.info(f"Live content detected - switching to display mode: {mode}")
-                            break
-
-            # Handle mode cycling only if not staying on live
-            if not should_stay_on_live and current_time - self.last_mode_switch >= self.display_duration:
-                self.current_mode_index = (self.current_mode_index + 1) % len(
-                    self.modes
-                )
-                self.last_mode_switch = current_time
-                force_clear = True
-
-                current_mode = self.modes[self.current_mode_index]
-                self.logger.info(f"Switching to display mode: {current_mode}")
-
-            # Get current manager and display
-            current_manager = self._get_current_manager()
-            if current_manager:
-                # Track which league/mode we're displaying for granular dynamic duration
-                current_mode = self.modes[self.current_mode_index] if self.modes else None
-                if current_mode:
-                    if current_mode.startswith("nfl_"):
-                        self._current_display_league = 'nfl'
-                        self._current_display_mode_type = current_mode.split("_", 1)[1]
-                    elif current_mode.startswith("ncaa_fb_"):
-                        self._current_display_league = 'ncaa_fb'
-                        self._current_display_mode_type = current_mode.split("_", 2)[2]
+                # Validate league exists in registry (double-check)
+                if league not in self._league_registry:
+                    self.logger.warning(
+                        f"Invalid league in display_mode: {league} (mode: {display_mode}). "
+                        f"Valid leagues: {list(self._league_registry.keys())}"
+                    )
+                    return False
                 
-                result = current_manager.display(force_clear)
-                if result is not False:
-                    try:
-                        # Build the actual mode name from league and mode_type for accurate tracking
-                        current_mode = self.modes[self.current_mode_index] if self.modes else None
-                        if current_mode:
-                            manager_key = self._build_manager_key(current_mode, current_manager)
-                            # Track which managers were used for internal mode cycling
-                            # For internal cycling, the mode itself is the display_mode
-                            self._display_mode_to_managers.setdefault(current_mode, set()).add(manager_key)
-                        self._record_dynamic_progress(current_manager, actual_mode=current_mode, display_mode=current_mode)
-                    except Exception as progress_err:  # pylint: disable=broad-except
-                        self.logger.debug(
-                            "Dynamic progress tracking failed: %s", progress_err
-                        )
-                else:
-                    # Manager returned False (no content) - ensure display is cleared
-                    # This is a safety measure in case the manager didn't clear it
-                    if force_clear:
-                        try:
-                            self.display_manager.clear()
-                            self.display_manager.update_display()
-                        except Exception as clear_err:
-                            self.logger.debug(f"Error clearing display when manager returned False: {clear_err}")
-                current_mode = self.modes[self.current_mode_index] if self.modes else None
-                self._evaluate_dynamic_cycle_completion(display_mode=current_mode)
-                return result
+                # Check if league is enabled
+                if not self._league_registry[league].get('enabled', False):
+                    self.logger.debug(
+                        f"League {league} is disabled, skipping {display_mode}"
+                    )
+                    return False
+                
+                # Check if mode is enabled for this league
+                league_config = self.config.get(league, {})
+                display_modes_config = league_config.get("display_modes", {})
+                
+                mode_enabled = True
+                if mode_type_str == 'live':
+                    mode_enabled = display_modes_config.get("show_live", True)
+                elif mode_type_str == 'recent':
+                    mode_enabled = display_modes_config.get("show_recent", True)
+                elif mode_type_str == 'upcoming':
+                    mode_enabled = display_modes_config.get("show_upcoming", True)
+                
+                if not mode_enabled:
+                    self.logger.debug(
+                        f"Mode {mode_type_str} is disabled for league {league}, skipping {display_mode}"
+                    )
+                    return False
+                
+                # Display this specific league/mode combination
+                return self._display_league_mode(league, mode_type_str, force_clear)
             else:
-                self.logger.warning("No manager available for current mode")
-                return False
+                # No display_mode provided - use internal cycling (legacy support)
+                return self._display_internal_cycling(force_clear)
 
         except Exception as e:
             self.logger.error(f"Error in display method: {e}")
@@ -773,7 +1504,8 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
             (self.nfl_enabled and self.nfl_live_priority)
             or (self.ncaa_fb_enabled and self.ncaa_fb_live_priority)
         )
-        self.logger.info(f"has_live_priority() called: nfl_enabled={self.nfl_enabled}, nfl_live_priority={self.nfl_live_priority}, ncaa_fb_enabled={self.ncaa_fb_enabled}, ncaa_fb_live_priority={self.ncaa_fb_live_priority}, result={result}")
+        # Log at DEBUG level since this is called frequently and the result rarely changes
+        self.logger.debug(f"has_live_priority() called: nfl_enabled={self.nfl_enabled}, nfl_live_priority={self.nfl_live_priority}, ncaa_fb_enabled={self.ncaa_fb_enabled}, ncaa_fb_live_priority={self.ncaa_fb_live_priority}, result={result}")
         return result
 
     def has_live_content(self) -> bool:
@@ -864,30 +1596,323 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
         """
         Return the registered plugin mode name(s) that have live content.
         
-        This should return the mode names as registered in manifest.json, not internal
-        mode names. The plugin is registered with "football_live", "football_recent", "football_upcoming".
+        Returns granular live modes (nfl_live, ncaa_fb_live) that have live content.
+        The plugin is registered with granular modes in manifest.json.
         """
         if not self.is_enabled:
             return []
 
-        # Check if any league has live content
-        has_any_live = self.has_live_content()
+        live_modes = []
         
-        if has_any_live:
-            # Return the registered plugin mode name, not internal mode names
-            # The plugin is registered with "football_live" in manifest.json
-            return ["football_live"]
+        # Check NFL live content
+        if (
+            self.nfl_enabled
+            and self.nfl_live_priority
+            and hasattr(self, "nfl_live")
+        ):
+            live_games = getattr(self.nfl_live, "live_games", [])
+            if live_games:
+                # Filter out any games that are final or appear over
+                live_games = [g for g in live_games if not g.get("is_final", False)]
+                # Additional validation using helper method if available
+                if hasattr(self.nfl_live, "_is_game_really_over"):
+                    live_games = [g for g in live_games if not self.nfl_live._is_game_really_over(g)]
+                
+                if live_games:
+                    # Check if favorite teams filter applies
+                    favorite_teams = getattr(self.nfl_live, "favorite_teams", [])
+                    if favorite_teams:
+                        # Only include if there are live games for favorite teams
+                        if any(
+                            game.get("home_abbr") in favorite_teams
+                            or game.get("away_abbr") in favorite_teams
+                            for game in live_games
+                        ):
+                            live_modes.append("nfl_live")
+                    else:
+                        # No favorite teams configured, include if any live games exist
+                        live_modes.append("nfl_live")
         
-        return []
+        # Check NCAA FB live content
+        if (
+            self.ncaa_fb_enabled
+            and self.ncaa_fb_live_priority
+            and hasattr(self, "ncaa_fb_live")
+        ):
+            live_games = getattr(self.ncaa_fb_live, "live_games", [])
+            if live_games:
+                # Filter out any games that are final or appear over
+                live_games = [g for g in live_games if not g.get("is_final", False)]
+                # Additional validation using helper method if available
+                if hasattr(self.ncaa_fb_live, "_is_game_really_over"):
+                    live_games = [g for g in live_games if not self.ncaa_fb_live._is_game_really_over(g)]
+                
+                if live_games:
+                    # Check if favorite teams filter applies
+                    favorite_teams = getattr(self.ncaa_fb_live, "favorite_teams", [])
+                    if favorite_teams:
+                        # Only include if there are live games for favorite teams
+                        if any(
+                            game.get("home_abbr") in favorite_teams
+                            or game.get("away_abbr") in favorite_teams
+                            for game in live_games
+                        ):
+                            live_modes.append("ncaa_fb_live")
+                    else:
+                        # No favorite teams configured, include if any live games exist
+                        live_modes.append("ncaa_fb_live")
+        
+        return live_modes
+
+    def _get_game_duration(self, league: str, mode_type: str, manager=None) -> float:
+        """Get game duration for a league and mode type combination.
+        
+        Resolves duration using the following hierarchy:
+        1. Manager's game_display_duration attribute (if manager provided)
+        2. League-specific mode duration (e.g., nfl.live_game_duration)
+        3. League-specific default (15 seconds)
+        
+        Args:
+            league: League name ('nfl' or 'ncaa_fb')
+            mode_type: Mode type ('live', 'recent', or 'upcoming')
+            manager: Optional manager instance (if provided, checks manager's game_display_duration)
+            
+        Returns:
+            Game duration in seconds (float)
+        """
+        # First, try manager's game_display_duration if available
+        if manager:
+            manager_duration = getattr(manager, 'game_display_duration', None)
+            if manager_duration is not None:
+                return float(manager_duration)
+        
+        # Next, try league-specific mode duration
+        league_config = self.config.get(league, {})
+        mode_duration_key = f"{mode_type}_game_duration"  # e.g., 'live_game_duration'
+        mode_duration = league_config.get(mode_duration_key)
+        if mode_duration is not None:
+            return float(mode_duration)
+        
+        # Fallback to league-specific default (15 seconds)
+        return 15.0
+
+    def _get_mode_duration(self, mode_type: str, league: Optional[str] = None) -> Optional[float]:
+        """Get mode-level duration for a specific mode type, optionally for a specific league.
+        
+        Resolves mode-level duration using the following hierarchy:
+        1. Per-league mode duration override (if league specified, only check that league)
+        2. Per-league mode duration overrides (if all enabled leagues have same value, or max if different)
+        3. None (triggers dynamic calculation based on game count)
+        
+        Args:
+            mode_type: Mode type ('live', 'recent', or 'upcoming')
+            league: Optional league ID ('nfl' or 'ncaa_fb'). If provided, only checks that league's duration.
+            
+        Returns:
+            Mode duration in seconds (float) or None if not configured
+            
+        Examples:
+            - _get_mode_duration('recent', 'nfl') → Returns NFL's recent_mode_duration if set
+            - _get_mode_duration('recent') → Returns max of all enabled leagues or top-level
+            - If recent_mode_duration=60, returns 60.0
+            - If NFL has recent_mode_duration=45 and NCAA FB has 60, returns 60.0 (max)
+            - If neither configured, returns None (use dynamic calculation)
+        """
+        # If specific league requested, only check that league
+        if league:
+            if league not in self._league_registry:
+                self.logger.warning(f"Invalid league in _get_mode_duration: {league}")
+                return None
+            
+            # Check per-league override first
+            league_config = self.config.get(league, {})
+            league_mode_durations = league_config.get('mode_durations', {})
+            mode_duration_key = f"{mode_type}_mode_duration"  # e.g., 'recent_mode_duration'
+            league_duration = league_mode_durations.get(mode_duration_key)
+            if league_duration is not None:
+                self.logger.debug(
+                    f"_get_mode_duration({mode_type}, {league}): using per-league duration={league_duration}s"
+                )
+                return float(league_duration)
+            
+            # No mode duration configured for this league
+            self.logger.debug(
+                f"_get_mode_duration({mode_type}, {league}): no mode duration configured, will use dynamic calculation"
+            )
+            return None
+        
+        # No specific league - check all enabled leagues (existing logic)
+        # Check for per-league overrides
+        league_durations = []
+        
+        # Check NFL if enabled
+        if self.nfl_enabled:
+            nfl_config = self.config.get('nfl', {})
+            nfl_mode_durations = nfl_config.get('mode_durations', {})
+            mode_duration_key = f"{mode_type}_mode_duration"  # e.g., 'recent_mode_duration'
+            nfl_duration = nfl_mode_durations.get(mode_duration_key)
+            if nfl_duration is not None:
+                league_durations.append(float(nfl_duration))
+        
+        # Check NCAA FB if enabled
+        if self.ncaa_fb_enabled:
+            ncaa_fb_config = self.config.get('ncaa_fb', {})
+            ncaa_fb_mode_durations = ncaa_fb_config.get('mode_durations', {})
+            mode_duration_key = f"{mode_type}_mode_duration"  # e.g., 'recent_mode_duration'
+            ncaa_fb_duration = ncaa_fb_mode_durations.get(mode_duration_key)
+            if ncaa_fb_duration is not None:
+                league_durations.append(float(ncaa_fb_duration))
+        
+        # If we have per-league durations, use the maximum to ensure all leagues get their time
+        if league_durations:
+            max_duration = max(league_durations)
+            self.logger.debug(
+                f"_get_mode_duration({mode_type}): per-league durations={league_durations}, using max={max_duration}s"
+            )
+            return max_duration
+        
+        # No mode duration configured - return None to trigger dynamic calculation
+        self.logger.debug(
+            f"_get_mode_duration({mode_type}): no mode duration configured, will use dynamic calculation"
+        )
+        return None
+
+    def _get_effective_mode_duration(self, display_mode: str, mode_type: str) -> Optional[float]:
+        """Get effective mode duration integrating with dynamic duration caps.
+        
+        This method combines mode-level durations with dynamic duration caps to determine
+        the actual duration the display controller should use for a mode.
+        
+        Supports both combined modes (football_recent) and granular modes (nfl_recent).
+        
+        Resolution logic:
+        1. Parse display_mode to extract league if granular mode
+        2. Get base mode duration from _get_mode_duration() (with league if granular)
+        3. Check if dynamic duration is enabled for this mode
+        4. If both mode duration and dynamic cap are set, use minimum
+        5. If only one is set, use that value
+        6. If neither is set, return None (triggers dynamic calculation)
+        
+        Args:
+            display_mode: External display mode name (e.g., 'football_recent', 'nfl_recent', 'ncaa_fb_upcoming')
+            mode_type: Mode type ('live', 'recent', or 'upcoming')
+            
+        Returns:
+            Effective mode duration in seconds (float) or None if not configured
+            
+        Examples:
+            - mode_duration=60s, dynamic_cap=45s → returns 45.0
+            - mode_duration=60s, no dynamic cap → returns 60.0
+            - no mode_duration, dynamic_cap=45s → returns None (use dynamic calculation with cap)
+            - neither set → returns None (use dynamic calculation)
+        """
+        # Parse display_mode to extract league if it's a granular mode
+        league = None
+        if "_" in display_mode and not display_mode.startswith("football_"):
+            # Granular mode: e.g., "nfl_recent", "ncaa_fb_upcoming"
+            parts = display_mode.split("_", 1)
+            if len(parts) == 2:
+                potential_league, potential_mode_type = parts
+                # Validate it's a known league
+                if potential_league in self._league_registry:
+                    league = potential_league
+                    # Use the mode_type from the display_mode if it matches
+                    if potential_mode_type == mode_type:
+                        # Mode type matches, use this league
+                        pass
+                    else:
+                        # Mode type doesn't match - might be invalid, but continue anyway
+                        self.logger.debug(
+                            f"Mode type mismatch in _get_effective_mode_duration: "
+                            f"display_mode={display_mode}, mode_type={mode_type}"
+                        )
+        
+        # Get base mode duration (with league if granular mode)
+        mode_duration = self._get_mode_duration(mode_type, league=league)
+        
+        # Check if dynamic duration is enabled and get cap
+        # We need to temporarily set display context to check dynamic settings
+        # Save current context
+        saved_league = self._current_display_league
+        saved_mode_type = self._current_display_mode_type
+        
+        # Set context for enabled leagues (check all enabled leagues for dynamic caps)
+        dynamic_caps = []
+        
+        # If specific league requested (granular mode), only check that league
+        if league:
+            self._current_display_league = league
+            self._current_display_mode_type = mode_type
+            if self.supports_dynamic_duration():
+                dynamic_cap = self.get_dynamic_duration_cap()
+                if dynamic_cap is not None:
+                    dynamic_caps.append(dynamic_cap)
+        else:
+            # No specific league - check all enabled leagues (combined mode)
+            # Check NFL dynamic cap if enabled
+            if self.nfl_enabled:
+                self._current_display_league = 'nfl'
+                self._current_display_mode_type = mode_type
+                if self.supports_dynamic_duration():
+                    dynamic_cap = self.get_dynamic_duration_cap()
+                    if dynamic_cap is not None:
+                        dynamic_caps.append(dynamic_cap)
+            
+            # Check NCAA FB dynamic cap if enabled
+            if self.ncaa_fb_enabled:
+                self._current_display_league = 'ncaa_fb'
+                self._current_display_mode_type = mode_type
+                if self.supports_dynamic_duration():
+                    dynamic_cap = self.get_dynamic_duration_cap()
+                    if dynamic_cap is not None:
+                        dynamic_caps.append(dynamic_cap)
+        
+        # Restore context
+        self._current_display_league = saved_league
+        self._current_display_mode_type = saved_mode_type
+        
+        # If we have dynamic caps, use the maximum (most permissive)
+        effective_dynamic_cap = max(dynamic_caps) if dynamic_caps else None
+        
+        # Apply integration logic
+        if mode_duration is not None and effective_dynamic_cap is not None:
+            # Both set - use minimum
+            effective_duration = min(mode_duration, effective_dynamic_cap)
+            self.logger.debug(
+                f"_get_effective_mode_duration({display_mode}, {mode_type}): "
+                f"mode_duration={mode_duration}s, dynamic_cap={effective_dynamic_cap}s, "
+                f"using min={effective_duration}s"
+            )
+            return effective_duration
+        elif mode_duration is not None:
+            # Only mode duration set
+            self.logger.debug(
+                f"_get_effective_mode_duration({display_mode}, {mode_type}): "
+                f"using mode_duration={mode_duration}s (no dynamic cap)"
+            )
+            return mode_duration
+        else:
+            # Mode duration not set (dynamic cap might be set, but we return None
+            # to trigger dynamic calculation which will apply the cap)
+            self.logger.debug(
+                f"_get_effective_mode_duration({display_mode}, {mode_type}): "
+                f"no mode_duration (dynamic_cap={effective_dynamic_cap}), will use dynamic calculation"
+            )
+            return None
 
     def get_cycle_duration(self, display_mode: str = None) -> Optional[float]:
         """
         Calculate the expected cycle duration for a display mode based on the number of games.
         
-        This implements dynamic duration scaling where:
-        - Total duration = num_games × per_game_duration
-        - Each game is shown for the user-configured duration
-        - Supports per-league and per-mode duration configuration
+        This implements dynamic duration scaling with support for mode-level durations:
+        - Mode-level duration: Fixed total time for mode (recent_mode_duration, upcoming_mode_duration, live_mode_duration)
+        - Dynamic calculation: Total duration = num_games × per_game_duration
+        - For scroll mode: Duration is calculated by ScrollHelper based on content width
+        
+        Priority order:
+        1. Mode-level duration (if configured)
+        2. Dynamic calculation (if no mode-level duration)
+        3. Dynamic duration cap applies to both if enabled
         
         Args:
             display_mode: The display mode to calculate duration for (e.g., 'football_live', 'football_recent')
@@ -900,43 +1925,82 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
             self.logger.info(f"get_cycle_duration() returning None: is_enabled={self.is_enabled}, display_mode={display_mode}")
             return None
         
+        # Extract mode type and league (if granular mode)
+        mode_type = self._extract_mode_type(display_mode)
+        if not mode_type:
+            return None
+        
+        # Parse granular mode name if applicable (e.g., "nfl_recent", "ncaa_fb_upcoming")
+        league = None
+        if "_" in display_mode and not display_mode.startswith("football_"):
+            # Granular mode: extract league
+            parts = display_mode.split("_", 1)
+            if len(parts) == 2:
+                potential_league, potential_mode_type = parts
+                if potential_league in self._league_registry and potential_mode_type == mode_type:
+                    league = potential_league
+        
+        # Check if scroll mode is active for this mode type
+        if self._should_use_scroll_mode(mode_type) and self._scroll_manager:
+            # Get dynamic duration from scroll manager
+            scroll_duration = self._scroll_manager.get_dynamic_duration(mode_type)
+            if scroll_duration > 0:
+                self.logger.info(f"get_cycle_duration: scroll mode duration for {display_mode} = {scroll_duration}s")
+                return float(scroll_duration)
+        
+        # Check for mode-level duration first (priority 1)
+        effective_mode_duration = self._get_effective_mode_duration(display_mode, mode_type)
+        if effective_mode_duration is not None:
+            self.logger.info(
+                f"get_cycle_duration: using mode-level duration for {display_mode} = {effective_mode_duration}s"
+            )
+            return effective_mode_duration
+        
+        # Fall through to dynamic calculation based on game count (priority 2)
+        
         try:
-            # Extract the mode type (live, recent, upcoming)
-            mode_type = None
-            if display_mode.endswith('_live'):
-                mode_type = 'live'
-            elif display_mode.endswith('_recent'):
-                mode_type = 'recent'
-            elif display_mode.endswith('_upcoming'):
-                mode_type = 'upcoming'
-            
-            self.logger.info(f"get_cycle_duration: extracted mode_type={mode_type} from display_mode={display_mode}")
-            
-            if not mode_type:
-                self.logger.info(f"get_cycle_duration: mode_type is None, returning None")
-                return None
+            self.logger.info(f"get_cycle_duration: extracted mode_type={mode_type}, league={league} from display_mode={display_mode}")
             
             total_games = 0
-            per_game_duration = self.game_display_duration  # Default fallback
+            per_game_duration = self.game_display_duration  # Default fallback (will be overridden per league)
             
-            # Collect all managers for this mode and count their games
+            # Collect managers for this mode and count their games
             managers_to_check = []
             
-            if mode_type == 'live':
-                if self.nfl_enabled and hasattr(self, 'nfl_live'):
-                    managers_to_check.append(('nfl', self.nfl_live))
-                if self.ncaa_fb_enabled and hasattr(self, 'ncaa_fb_live'):
-                    managers_to_check.append(('ncaa_fb', self.ncaa_fb_live))
-            elif mode_type == 'recent':
-                if self.nfl_enabled and hasattr(self, 'nfl_recent'):
-                    managers_to_check.append(('nfl', self.nfl_recent))
-                if self.ncaa_fb_enabled and hasattr(self, 'ncaa_fb_recent'):
-                    managers_to_check.append(('ncaa_fb', self.ncaa_fb_recent))
-            elif mode_type == 'upcoming':
-                if self.nfl_enabled and hasattr(self, 'nfl_upcoming'):
-                    managers_to_check.append(('nfl', self.nfl_upcoming))
-                if self.ncaa_fb_enabled and hasattr(self, 'ncaa_fb_upcoming'):
-                    managers_to_check.append(('ncaa_fb', self.ncaa_fb_upcoming))
+            # If granular mode (specific league), only check that league
+            if league:
+                manager = self._get_manager_for_league_mode(league, mode_type)
+                if manager:
+                    managers_to_check.append((league, manager))
+            else:
+                # Combined mode - check all enabled leagues
+                if mode_type == 'live':
+                    if self.nfl_enabled:
+                        nfl_manager = self._get_manager_for_league_mode('nfl', 'live')
+                        if nfl_manager:
+                            managers_to_check.append(('nfl', nfl_manager))
+                    if self.ncaa_fb_enabled:
+                        ncaa_fb_manager = self._get_manager_for_league_mode('ncaa_fb', 'live')
+                        if ncaa_fb_manager:
+                            managers_to_check.append(('ncaa_fb', ncaa_fb_manager))
+                elif mode_type == 'recent':
+                    if self.nfl_enabled:
+                        nfl_manager = self._get_manager_for_league_mode('nfl', 'recent')
+                        if nfl_manager:
+                            managers_to_check.append(('nfl', nfl_manager))
+                    if self.ncaa_fb_enabled:
+                        ncaa_fb_manager = self._get_manager_for_league_mode('ncaa_fb', 'recent')
+                        if ncaa_fb_manager:
+                            managers_to_check.append(('ncaa_fb', ncaa_fb_manager))
+                elif mode_type == 'upcoming':
+                    if self.nfl_enabled:
+                        nfl_manager = self._get_manager_for_league_mode('nfl', 'upcoming')
+                        if nfl_manager:
+                            managers_to_check.append(('nfl', nfl_manager))
+                    if self.ncaa_fb_enabled:
+                        ncaa_fb_manager = self._get_manager_for_league_mode('ncaa_fb', 'upcoming')
+                        if ncaa_fb_manager:
+                            managers_to_check.append(('ncaa_fb', ncaa_fb_manager))
             
             # CRITICAL: Update managers BEFORE checking game counts!
             self.logger.info(f"get_cycle_duration: updating {len(managers_to_check)} manager(s) before counting games")
@@ -944,31 +2008,23 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
                 if manager:
                     self._ensure_manager_updated(manager)
             
-            # Count games from all applicable managers
+            # Count games from all applicable managers and get duration
             for league_name, manager in managers_to_check:
                 if not manager:
                     continue
                 
                 # Get the appropriate game list based on mode type
-                games = []
                 if mode_type == 'live':
                     games = getattr(manager, 'live_games', [])
-                    # Get league-specific live_game_duration if configured
-                    league_config = self.config.get(league_name, {})
-                    per_game_duration = league_config.get('live_game_duration', 
-                                                         self.game_display_duration)
                 elif mode_type == 'recent':
                     games = getattr(manager, 'recent_games', [])
-                    # Get league-specific recent_game_duration if configured
-                    league_config = self.config.get(league_name, {})
-                    per_game_duration = league_config.get('recent_game_duration', 
-                                                         self.game_display_duration)
                 elif mode_type == 'upcoming':
                     games = getattr(manager, 'upcoming_games', [])
-                    # Get league-specific upcoming_game_duration if configured
-                    league_config = self.config.get(league_name, {})
-                    per_game_duration = league_config.get('upcoming_game_duration', 
-                                                         self.game_display_duration)
+                else:
+                    games = []
+                
+                # Get duration for this league/mode combination
+                per_game_duration = self._get_game_duration(league_name, mode_type, manager)
                 
                 # Filter out invalid games
                 if games:
@@ -1104,6 +2160,16 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
         """Report whether the plugin has shown a full cycle of content."""
         if not self._dynamic_feature_enabled():
             return True
+        
+        # Check if scroll mode is active for the current display mode
+        if self._current_active_display_mode:
+            mode_type = self._extract_mode_type(self._current_active_display_mode)
+            if mode_type and self._should_use_scroll_mode(mode_type) and self._scroll_manager:
+                # For scroll mode, check ScrollHelper's completion status
+                is_complete = self._scroll_manager.is_complete(mode_type)
+                self.logger.info(f"is_cycle_complete() [scroll mode]: display_mode={self._current_active_display_mode}, returning {is_complete}")
+                return is_complete
+        
         # Pass the current active display mode to evaluate completion for the right mode
         self._evaluate_dynamic_cycle_completion(display_mode=self._current_active_display_mode)
         self.logger.info(f"is_cycle_complete() called: display_mode={self._current_active_display_mode}, returning {self._dynamic_cycle_complete}")
@@ -1209,6 +2275,240 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
                 return getattr(self, "ncaa_fb_upcoming", None)
         return None
 
+    def _get_manager_for_league_mode(self, league: str, mode_type: str):
+        """Get manager instance for a league and mode type combination.
+        
+        Args:
+            league: 'nfl' or 'ncaa_fb'
+            mode_type: 'live', 'recent', or 'upcoming'
+            
+        Returns:
+            Manager instance or None if not available/enabled
+        """
+        if league == 'nfl' and not self.nfl_enabled:
+            return None
+        if league == 'ncaa_fb' and not self.ncaa_fb_enabled:
+            return None
+        
+        attr_name = f"{league}_{mode_type}"
+        return getattr(self, attr_name, None) if hasattr(self, attr_name) else None
+
+    def _has_live_games_for_manager(self, manager) -> bool:
+        """Check if a manager has valid live games (for favorite teams if configured).
+        
+        Args:
+            manager: Manager instance to check
+            
+        Returns:
+            True if manager has live games that should be displayed
+        """
+        if not manager:
+            return False
+        
+        live_games = getattr(manager, 'live_games', [])
+        if not live_games:
+            return False
+        
+        # Filter out games that are final or appear over
+        live_games = [g for g in live_games if not g.get('is_final', False)]
+        if hasattr(manager, '_is_game_really_over'):
+            live_games = [g for g in live_games if not manager._is_game_really_over(g)]
+        
+        if not live_games:
+            return False
+        
+        # If favorite teams are configured, only return True if there are live games for favorite teams
+        favorite_teams = getattr(manager, 'favorite_teams', [])
+        if favorite_teams:
+            has_favorite_live = any(
+                game.get('home_abbr') in favorite_teams
+                or game.get('away_abbr') in favorite_teams
+                for game in live_games
+            )
+            return has_favorite_live
+        
+        # No favorite teams configured, any live game counts
+        return True
+
+    def _filter_managers_by_live_content(self, managers: list, mode_type: str) -> list:
+        """Filter managers based on live content when in live mode.
+        
+        Args:
+            managers: List of manager instances
+            mode_type: 'live', 'recent', or 'upcoming'
+            
+        Returns:
+            Filtered list of managers with live content (for live mode) or original list
+        """
+        if mode_type != 'live':
+            return managers
+        
+        # For live mode, only include managers with actual live games
+        filtered = []
+        for manager in managers:
+            if self._has_live_games_for_manager(manager):
+                filtered.append(manager)
+        
+        return filtered
+
+    def _resolve_managers_for_mode(self, mode_type: str) -> list:
+        """
+        Resolve ordered list of managers to try for a given mode type.
+        
+        This method uses the league registry to get managers in priority order,
+        respecting both league-level and mode-level enabling/disabling.
+        
+        For live mode, it also respects live_priority settings and filters
+        to only include managers with actual live games.
+        
+        Args:
+            mode_type: 'live', 'recent', or 'upcoming'
+            
+        Returns:
+            Ordered list of manager instances to try (in priority order)
+            Managers are filtered based on:
+            - League enabled state
+            - Mode enabled state for that league (show_live, show_recent, show_upcoming)
+            - For live mode: live_priority and actual live games availability
+        """
+        managers_to_try = []
+        
+        # Get enabled leagues for this mode type in priority order
+        # This already respects league-level and mode-level enabling
+        enabled_leagues = self._get_enabled_leagues_for_mode(mode_type)
+        
+        if mode_type == 'live':
+            # For live mode, update managers first to get current live games
+            # This ensures we have fresh data before checking for live content
+            for league_id in enabled_leagues:
+                manager = self._get_league_manager_for_mode(league_id, 'live')
+                if manager:
+                    try:
+                        manager.update()
+                    except Exception as e:
+                        self.logger.debug(f"Error updating {league_id} live manager: {e}")
+            
+            # For live mode, respect live_priority settings
+            # Only include managers with live_priority enabled AND actual live games
+            for league_id in enabled_leagues:
+                league_data = self._league_registry.get(league_id, {})
+                live_priority = league_data.get('live_priority', False)
+                
+                manager = self._get_league_manager_for_mode(league_id, 'live')
+                if not manager:
+                    continue
+                
+                # If live_priority is enabled, only include if manager has live games
+                if live_priority:
+                    if self._has_live_games_for_manager(manager):
+                        managers_to_try.append(manager)
+                        self.logger.debug(
+                            f"{league_id} has live games and live_priority - adding to list"
+                        )
+                else:
+                    # No live_priority - include manager anyway (fallback)
+                    managers_to_try.append(manager)
+                    self.logger.debug(
+                        f"{league_id} live manager added (no live_priority requirement)"
+                    )
+            
+            # If no managers found with live_priority, fall back to all enabled managers
+            # This ensures we always have something to show if leagues are enabled
+            if not managers_to_try:
+                for league_id in enabled_leagues:
+                    manager = self._get_league_manager_for_mode(league_id, 'live')
+                    if manager:
+                        managers_to_try.append(manager)
+                        self.logger.debug(
+                            f"Fallback: added {league_id} live manager (no live_priority managers found)"
+                        )
+        else:
+            # For recent and upcoming modes, use standard priority order
+            # Get managers for each enabled league in priority order
+            for league_id in enabled_leagues:
+                manager = self._get_league_manager_for_mode(league_id, mode_type)
+                if manager:
+                    managers_to_try.append(manager)
+                    self.logger.debug(
+                        f"Added {league_id} {mode_type} manager to list "
+                        f"(priority: {self._league_registry[league_id].get('priority', 999)})"
+                    )
+        
+        self.logger.debug(
+            f"Resolved {len(managers_to_try)} manager(s) for {mode_type} mode: "
+            f"{[m.__class__.__name__ for m in managers_to_try]}"
+        )
+        
+        return managers_to_try
+
+    def _extract_mode_type(self, display_mode: str) -> Optional[str]:
+        """Extract mode type (live, recent, upcoming) from display mode string.
+        
+        Args:
+            display_mode: Display mode string (e.g., 'football_live', 'nfl_recent')
+            
+        Returns:
+            Mode type string ('live', 'recent', 'upcoming') or None
+        """
+        if display_mode.endswith('_live'):
+            return 'live'
+        elif display_mode.endswith('_recent'):
+            return 'recent'
+        elif display_mode.endswith('_upcoming'):
+            return 'upcoming'
+        return None
+
+    def _set_display_context_from_manager(self, manager, mode_type: str) -> None:
+        """Set current display league and mode type based on manager instance.
+        
+        Args:
+            manager: Manager instance
+            mode_type: 'live', 'recent', or 'upcoming'
+        """
+        self._current_display_mode_type = mode_type
+        
+        if manager in (getattr(self, 'nfl_live', None), 
+                      getattr(self, 'nfl_recent', None), 
+                      getattr(self, 'nfl_upcoming', None)):
+            self._current_display_league = 'nfl'
+        elif manager in (getattr(self, 'ncaa_fb_live', None), 
+                        getattr(self, 'ncaa_fb_recent', None), 
+                        getattr(self, 'ncaa_fb_upcoming', None)):
+            self._current_display_league = 'ncaa_fb'
+
+    def _track_single_game_progress(self, manager_key: str, manager, league: str, mode_type: str) -> None:
+        """Track progress for a manager with a single game (or no games).
+        
+        Args:
+            manager_key: Unique key identifying this manager
+            manager: Manager instance
+            league: League name ('nfl' or 'ncaa_fb')
+            mode_type: Mode type ('live', 'recent', or 'upcoming')
+        """
+        current_time = time.time()
+        
+        if manager_key not in self._single_game_manager_start_times:
+            # First time seeing this single-game manager (in this cycle) - record start time
+            self._single_game_manager_start_times[manager_key] = current_time
+            game_duration = self._get_game_duration(league, mode_type, manager) if league and mode_type else getattr(manager, 'game_display_duration', 15)
+            self.logger.info(f"Single-game manager {manager_key} first seen at {current_time:.2f}, will complete after {game_duration}s")
+        else:
+            # Check if enough time has passed
+            start_time = self._single_game_manager_start_times[manager_key]
+            game_duration = self._get_game_duration(league, mode_type, manager) if league and mode_type else getattr(manager, 'game_display_duration', 15)
+            elapsed = current_time - start_time
+            if elapsed >= game_duration:
+                # Enough time has passed - mark as complete
+                if manager_key not in self._dynamic_managers_completed:
+                    self._dynamic_managers_completed.add(manager_key)
+                    self.logger.info(f"Single-game manager {manager_key} completed after {elapsed:.2f}s (required: {game_duration}s)")
+                    # Clean up start time now that manager has completed
+                    if manager_key in self._single_game_manager_start_times:
+                        del self._single_game_manager_start_times[manager_key]
+            else:
+                # Still waiting
+                self.logger.debug(f"Single-game manager {manager_key} waiting: {elapsed:.2f}s/{game_duration}s (start_time={start_time:.2f}, current_time={current_time:.2f})")
+
     def _record_dynamic_progress(self, current_manager, actual_mode: str = None, display_mode: str = None) -> None:
         """Track progress through managers/games for dynamic duration."""
         if not self._dynamic_feature_enabled() or not self.modes:
@@ -1229,6 +2529,17 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
 
         manager_key = self._build_manager_key(current_mode, current_manager)
         self._dynamic_mode_to_manager_key[current_mode] = manager_key
+        
+        # Extract league and mode_type from current_mode for duration lookups
+        league = None
+        mode_type = None
+        if current_mode:
+            if current_mode.startswith('nfl_'):
+                league = 'nfl'
+                mode_type = current_mode.split('_', 1)[1]
+            elif current_mode.startswith('ncaa_fb_'):
+                league = 'ncaa_fb'
+                mode_type = current_mode.split('_', 2)[2]
         
         # Log for debugging
         self.logger.debug(f"_record_dynamic_progress: current_mode={current_mode}, display_mode={display_mode}, manager={current_manager.__class__.__name__}, manager_key={manager_key}, _last_display_mode={self._last_display_mode}")
@@ -1292,12 +2603,6 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
                 if manager_key in self._dynamic_manager_progress:
                     self.logger.info(f"New cycle for {display_mode}: clearing progress for {manager_key}")
                     self._dynamic_manager_progress[manager_key].clear()
-                
-                # Clear sticky manager for this mode since we're starting fresh
-                if display_mode in self._sticky_manager_per_mode:
-                    self.logger.info(f"New cycle for {display_mode}: clearing sticky manager")
-                    self._sticky_manager_per_mode.pop(display_mode, None)
-                    self._sticky_manager_start_time.pop(display_mode, None)
         
         # Now add to tracking AFTER checking for new cycle
         if display_mode and display_mode != current_mode:
@@ -1306,30 +2611,7 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
         
         if total_games <= 1:
             # Single (or no) game - wait for full game display duration before marking complete
-            current_time = time.time()
-            
-            if manager_key not in self._single_game_manager_start_times:
-                # First time seeing this single-game manager (in this cycle) - record start time
-                self._single_game_manager_start_times[manager_key] = current_time
-                # Get game display duration from manager config
-                game_duration = getattr(current_manager, 'game_display_duration', 15)
-                self.logger.info(f"Single-game manager {manager_key} first seen at {current_time:.2f}, will complete after {game_duration}s")
-            else:
-                # Check if enough time has passed
-                start_time = self._single_game_manager_start_times[manager_key]
-                game_duration = getattr(current_manager, 'game_display_duration', 15)
-                elapsed = current_time - start_time
-                if elapsed >= game_duration:
-                    # Enough time has passed - mark as complete
-                    if manager_key not in self._dynamic_managers_completed:
-                        self._dynamic_managers_completed.add(manager_key)
-                        self.logger.info(f"Single-game manager {manager_key} completed after {elapsed:.2f}s (required: {game_duration}s)")
-                        # Clean up start time now that manager has completed
-                        if manager_key in self._single_game_manager_start_times:
-                            del self._single_game_manager_start_times[manager_key]
-                else:
-                    # Still waiting
-                    self.logger.debug(f"Single-game manager {manager_key} waiting: {elapsed:.2f}s/{game_duration}s (start_time={start_time:.2f}, current_time={current_time:.2f})")
+            self._track_single_game_progress(manager_key, current_manager, league, mode_type)
             return
 
         # Get current game to extract its ID for tracking
@@ -1364,13 +2646,13 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
         if game_id not in game_times:
             # First time seeing this game - record start time
             game_times[game_id] = time.time()
-            game_duration = getattr(current_manager, 'game_display_duration', 15)
+            game_duration = self._get_game_duration(league, mode_type, current_manager) if league and mode_type else getattr(current_manager, 'game_display_duration', 15)
             game_display = f"{current_game.get('away_abbr', '?')}@{current_game.get('home_abbr', '?')}"
             self.logger.info(f"Game {game_display} (ID: {game_id}) in manager {manager_key} first seen, will complete after {game_duration}s")
         
         # Check if this game has been shown for full duration
         start_time = game_times[game_id]
-        game_duration = getattr(current_manager, 'game_display_duration', 15)
+        game_duration = self._get_game_duration(league, mode_type, current_manager) if league and mode_type else getattr(current_manager, 'game_display_duration', 15)
         elapsed = time.time() - start_time
         
         if elapsed >= game_duration:
@@ -1419,7 +2701,21 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
                 self.logger.debug(f"Manager {manager_key} completed - no games to display")
 
     def _evaluate_dynamic_cycle_completion(self, display_mode: str = None) -> None:
-        """Determine whether all enabled modes have completed their cycles."""
+        """
+        Determine whether all enabled leagues have completed their cycles for a display mode.
+        
+        For sequential block display, a display mode cycle is complete when:
+        - All enabled leagues for that mode type have completed showing all their games
+        - Each league is tracked separately via manager keys
+        
+        This method checks completion status for all leagues that were used for
+        the given display mode, ensuring both NFL and NCAA FB (and future leagues)
+        have completed before marking the cycle as complete.
+        
+        Args:
+            display_mode: External display mode name (e.g., 'football_recent')
+                         If None, checks internal mode cycling completion
+        """
         if not self._dynamic_feature_enabled():
             self._dynamic_cycle_complete = True
             return
@@ -1429,6 +2725,7 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
             return
 
         # If display_mode is provided, check all managers used for that display mode
+        # This handles multi-league scenarios where we need all leagues to complete
         if display_mode and display_mode in self._display_mode_to_managers:
             used_manager_keys = self._display_mode_to_managers[display_mode]
             if not used_manager_keys:
@@ -1437,7 +2734,15 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
                 self.logger.debug(f"Display mode {display_mode} has no managers tracked yet - cycle incomplete")
                 return
             
-            self.logger.info(f"_evaluate_dynamic_cycle_completion for {display_mode}: checking {len(used_manager_keys)} manager(s): {used_manager_keys}")
+            # Extract mode type to get enabled leagues for comparison
+            mode_type = self._extract_mode_type(display_mode)
+            enabled_leagues = self._get_enabled_leagues_for_mode(mode_type) if mode_type else []
+            
+            self.logger.info(
+                f"_evaluate_dynamic_cycle_completion for {display_mode}: "
+                f"checking {len(used_manager_keys)} manager(s): {used_manager_keys}, "
+                f"enabled leagues: {enabled_leagues}"
+            )
             
             # Check if all managers used for this display mode have completed
             incomplete_managers = []
@@ -1456,7 +2761,10 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
                                 # Single-game manager - check time
                                 if manager_key in self._single_game_manager_start_times:
                                     start_time = self._single_game_manager_start_times[manager_key]
-                                    game_duration = getattr(manager, 'game_display_duration', 15)
+                                    # Extract league and mode_type from mode_name
+                                    league = 'nfl' if mode_name.startswith('nfl_') else ('ncaa_fb' if mode_name.startswith('ncaa_fb_') else None)
+                                    mode_type = mode_name.split('_')[-1] if mode_name else None
+                                    game_duration = self._get_game_duration(league, mode_type, manager) if league and mode_type else getattr(manager, 'game_display_duration', 15)
                                     current_time = time.time()
                                     elapsed = current_time - start_time
                                     if elapsed >= game_duration:
@@ -1505,7 +2813,10 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
                             manager = self._get_manager_for_mode(mode_name)
                             if manager and manager.__class__.__name__ == manager_class_name:
                                 start_time = self._single_game_manager_start_times[manager_key]
-                                game_duration = getattr(manager, 'game_display_duration', 15)
+                                # Extract league and mode_type from mode_name
+                                league = 'nfl' if mode_name.startswith('nfl_') else ('ncaa_fb' if mode_name.startswith('ncaa_fb_') else None)
+                                mode_type = mode_name.split('_')[-1] if mode_name else None
+                                game_duration = self._get_game_duration(league, mode_type, manager) if league and mode_type else getattr(manager, 'game_display_duration', 15)
                                 elapsed = time.time() - start_time
                                 if elapsed < game_duration:
                                     # Not enough time has passed - not truly completed
@@ -1516,6 +2827,12 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
                 if all_truly_completed:
                     self._dynamic_cycle_complete = True
                     self.logger.info(f"Display mode {display_mode} cycle complete - all {len(used_manager_keys)} manager(s) completed")
+                    
+                    # Reset mode start time since full cycle is complete
+                    # This ensures next cycle starts timing from beginning
+                    if display_mode in self._mode_start_time:
+                        del self._mode_start_time[display_mode]
+                        self.logger.debug(f"Reset mode start time for {display_mode} (full cycle complete)")
                 else:
                     # Some managers aren't truly completed - keep cycle incomplete
                     self._dynamic_cycle_complete = False
@@ -1548,7 +2865,10 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
                     # For single-game managers, check if enough time has passed
                     if manager_key in self._single_game_manager_start_times:
                         start_time = self._single_game_manager_start_times[manager_key]
-                        game_duration = getattr(manager, 'game_display_duration', 15) if manager else 15
+                        # Extract league and mode_type from mode_name
+                        league = 'nfl' if mode_name.startswith('nfl_') else ('ncaa_fb' if mode_name.startswith('ncaa_fb_') else None)
+                        mode_type = mode_name.split('_')[-1] if mode_name else None
+                        game_duration = self._get_game_duration(league, mode_type, manager) if (league and mode_type and manager) else (getattr(manager, 'game_display_duration', 15) if manager else 15)
                         elapsed = time.time() - start_time
                         if elapsed >= game_duration:
                             self._dynamic_managers_completed.add(manager_key)

@@ -1,3 +1,16 @@
+-----------------------------------------------------------------------------------
+### Connect with ChuckBuilds
+
+- Show support on Youtube: https://www.youtube.com/@ChuckBuilds
+- Stay in touch on Instagram: https://www.instagram.com/ChuckBuilds/
+- Want to chat or need support? Reach out on the ChuckBuilds Discord: https://discord.com/invite/uW36dVAtcT
+- Feeling Generous? Support the project:
+  - Github Sponsorship: https://github.com/sponsors/ChuckBuilds
+  - Buy Me a Coffee: https://buymeacoffee.com/chuckbuilds
+  - Ko-fi: https://ko-fi.com/chuckbuilds/ 
+
+-----------------------------------------------------------------------------------
+
 # Football Scoreboard Plugin
 
 A production-ready plugin for LEDMatrix that displays live, recent, and upcoming football games across NFL and NCAA Football leagues. This plugin reuses the proven, battle-tested code from the main LEDMatrix project for maximum reliability and feature completeness.
@@ -55,11 +68,159 @@ This will show games for all AP Top 25 teams plus Georgia and Alabama (duplicate
 
 ## 📺 Display Modes
 
-The plugin supports three display modes that cycle automatically:
+The plugin registers granular display modes directly in `manifest.json`. The display controller rotates through these modes automatically:
 
-1. **Live Games**: Currently active games with real-time updates
-2. **Recent Games**: Recently completed games with final scores
-3. **Upcoming Games**: Scheduled games with start times and odds
+**NFL Modes:**
+- `nfl_recent`: Recently completed NFL games with final scores
+- `nfl_upcoming`: Scheduled NFL games with start times and odds
+- `nfl_live`: Currently active NFL games with real-time updates
+
+**NCAA FB Modes:**
+- `ncaa_fb_recent`: Recently completed NCAA Football games with final scores
+- `ncaa_fb_upcoming`: Scheduled NCAA Football games with start times and odds
+- `ncaa_fb_live`: Currently active NCAA Football games with real-time updates
+
+### How Rotation Works
+
+The display controller rotates through all registered modes in the order they appear in `manifest.json`. Each mode can have its own `display_duration` configured in the plugin config.
+
+**Default Rotation Order:**
+1. `nfl_recent`
+2. `nfl_upcoming`
+3. `nfl_live`
+4. `ncaa_fb_recent`
+5. `ncaa_fb_upcoming`
+6. `ncaa_fb_live`
+
+**Customizing Rotation Order:**
+You can reorder modes in `manifest.json` to change the rotation sequence. For example, to show all Recent games before Upcoming:
+
+```json
+"display_modes": [
+  "nfl_recent",
+  "ncaa_fb_recent",
+  "nfl_upcoming",
+  "ncaa_fb_upcoming",
+  "nfl_live",
+  "ncaa_fb_live"
+]
+```
+
+### Disabled Leagues/Modes
+
+If a league or mode is disabled in the config, the plugin returns `False` for that mode, and the display controller automatically skips it. This allows you to:
+
+- Disable entire leagues (e.g., disable NCAA FB to show only NFL)
+- Disable specific modes per league (e.g., disable `nfl_upcoming` but keep `nfl_recent` and `nfl_live`)
+- Mix and match enabled/disabled modes as needed
+
+### Mode Durations
+
+Each granular mode respects its own mode duration settings:
+- `nfl_recent` uses `nfl.mode_durations.recent_mode_duration` or top-level `recent_mode_duration`
+- `ncaa_fb_upcoming` uses `ncaa_fb.mode_durations.upcoming_mode_duration` or top-level `upcoming_mode_duration`
+- Each mode can have independent duration configuration
+
+### Live Priority
+
+When live games are available, the display controller prioritizes live modes (`nfl_live`, `ncaa_fb_live`) based on the `has_live_content()` and `get_live_modes()` methods. The plugin returns only the granular live modes that actually have live content.
+
+## ⏱️ Duration Configuration
+
+The plugin offers flexible duration control at multiple levels to fine-tune your display experience:
+
+### Per-Game Duration
+
+Controls how long each individual game displays before rotating to the next game **within the same mode**.
+
+**Configuration:**
+- `live_game_duration`: Seconds per live game (default: 30s)
+- `recent_game_duration`: Seconds per recent game (default: 15s)
+- `upcoming_game_duration`: Seconds per upcoming game (default: 15s)
+
+**Example:** With `recent_game_duration: 15`, each recent game shows for 15 seconds before moving to the next.
+
+### Per-Mode Duration
+
+Controls the **total time** a mode displays before rotating to the next mode, regardless of how many games are available.
+
+**Configuration:**
+- `recent_mode_duration`: Total seconds for Recent mode (default: dynamic)
+- `upcoming_mode_duration`: Total seconds for Upcoming mode (default: dynamic)
+- `live_mode_duration`: Total seconds for Live mode (default: dynamic)
+
+**Example:** With `recent_mode_duration: 60` and `recent_game_duration: 15`, Recent mode shows 4 games (60s ÷ 15s = 4) before rotating to Upcoming mode.
+
+### How They Work Together
+
+**Per-game duration** + **Per-mode duration**:
+```
+Recent Mode (60s total):
+  ├─ Game 1: 15s
+  ├─ Game 2: 15s
+  ├─ Game 3: 15s
+  └─ Game 4: 15s
+  → Rotate to Upcoming Mode
+
+Upcoming Mode (60s total):
+  ├─ Game 1: 15s
+  └─ ... (continues)
+```
+
+### Resume Functionality
+
+When a mode times out before showing all games, it **resumes from where it left off** on the next cycle:
+
+```
+Cycle 1: Recent Mode (60s, 10 games available)
+  ├─ Game 1-4 shown ✓
+  └─ Time expires → Rotate
+
+Cycle 2: Recent Mode resumes
+  ├─ Game 5-8 shown ✓ (continues from Game 4, no repetition)
+  └─ Time expires → Rotate
+
+Cycle 3: Recent Mode resumes
+  ├─ Game 9-10 shown ✓
+  └─ All games shown → Full cycle complete → Reset progress
+```
+
+### Dynamic Duration (Fallback)
+
+If per-mode durations are **not** configured, the plugin uses **dynamic calculation**:
+- **Formula**: `total_duration = number_of_games × per_game_duration`
+- **Example**: 24 games @ 15s each = 360 seconds for the mode
+
+This ensures all games are shown but may result in very long mode durations if you have many games.
+
+### Per-League Overrides
+
+You can set different durations per league using the `mode_durations` section:
+
+```json
+{
+  "nfl": {
+    "mode_durations": {
+      "recent_mode_duration": 45,
+      "upcoming_mode_duration": 30
+    }
+  },
+  "ncaa_fb": {
+    "mode_durations": {
+      "recent_mode_duration": 60
+    }
+  }
+}
+```
+
+When multiple leagues are enabled with different durations, the system uses the **maximum** to ensure all leagues get their time.
+
+### Integration with Dynamic Duration Caps
+
+If you have dynamic duration caps configured (e.g., `max_duration_seconds: 120`), the system uses the **minimum** of:
+- Per-mode duration (e.g., 180s)
+- Dynamic duration cap (e.g., 120s)
+- **Result**: 120s (ensures cap is respected)
 
 ## 🎨 Visual Features
 

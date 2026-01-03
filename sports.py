@@ -109,7 +109,7 @@ class SportsCore(ABC):
         self.fonts = self._load_fonts()
 
         # Initialize dynamic team resolver and resolve favorite teams
-        self.dynamic_resolver = DynamicTeamResolver()
+        self.dynamic_resolver = DynamicTeamResolver(cache_manager=cache_manager)
         raw_favorite_teams = self.mode_config.get("favorite_teams", [])
         self.favorite_teams = self.dynamic_resolver.resolve_teams(
             raw_favorite_teams, sport_key
@@ -202,39 +202,102 @@ class SportsCore(ABC):
             )
             return False
 
-    def _load_fonts(self):
-        """Load fonts used by the scoreboard."""
-        fonts = {}
+    def _load_custom_font_from_element_config(self, element_config: Dict[str, Any], default_size: int = 8) -> ImageFont.FreeTypeFont:
+        """
+        Load a custom font from an element configuration dictionary.
+        
+        Args:
+            element_config: Configuration dict for a single element containing 'font' and 'font_size' keys
+            default_size: Default font size if not specified in config
+            
+        Returns:
+            PIL ImageFont object
+        """
+        # Get font name and size, with defaults
+        font_name = element_config.get('font', 'PressStart2P-Regular.ttf')
+        font_size = int(element_config.get('font_size', default_size))  # Ensure integer for PIL
+        
+        # Build font path
+        font_path = os.path.join('assets', 'fonts', font_name)
+        
+        # Try to load the font
         try:
-            fonts["score"] = ImageFont.truetype(
-                "assets/fonts/PressStart2P-Regular.ttf", 10
-            )
-            fonts["time"] = ImageFont.truetype(
-                "assets/fonts/PressStart2P-Regular.ttf", 8
-            )
-            fonts["team"] = ImageFont.truetype(
-                "assets/fonts/PressStart2P-Regular.ttf", 8
-            )
-            fonts["status"] = ImageFont.truetype(
-                "assets/fonts/4x6-font.ttf", 6
-            )  # Using 4x6 for status
-            fonts["detail"] = ImageFont.truetype(
-                "assets/fonts/4x6-font.ttf", 6
-            )  # Added detail font
-            fonts["rank"] = ImageFont.truetype(
-                "assets/fonts/PressStart2P-Regular.ttf", 10
-            )
-            logging.info("Successfully loaded fonts")  # Changed log prefix
-        except IOError:
-            logging.warning(
-                "Fonts not found, using default PIL font."
-            )  # Changed log prefix
-            fonts["score"] = ImageFont.load_default()
-            fonts["time"] = ImageFont.load_default()
-            fonts["team"] = ImageFont.load_default()
-            fonts["status"] = ImageFont.load_default()
-            fonts["detail"] = ImageFont.load_default()
-            fonts["rank"] = ImageFont.load_default()
+            if os.path.exists(font_path):
+                # Try loading as TTF first (works for both TTF and some BDF files with PIL)
+                if font_path.lower().endswith('.ttf'):
+                    font = ImageFont.truetype(font_path, font_size)
+                    self.logger.debug(f"Loaded font: {font_name} at size {font_size}")
+                    return font
+                elif font_path.lower().endswith('.bdf'):
+                    # PIL's ImageFont.truetype() can sometimes handle BDF files
+                    # If it fails, we'll fall through to the default font
+                    try:
+                        font = ImageFont.truetype(font_path, font_size)
+                        self.logger.debug(f"Loaded BDF font: {font_name} at size {font_size}")
+                        return font
+                    except Exception:
+                        self.logger.warning(f"Could not load BDF font {font_name} with PIL, using default")
+                        # Fall through to default
+                else:
+                    self.logger.warning(f"Unknown font file type: {font_name}, using default")
+            else:
+                self.logger.warning(f"Font file not found: {font_path}, using default")
+        except Exception as e:
+            self.logger.error(f"Error loading font {font_name}: {e}, using default")
+        
+        # Fall back to default font
+        default_font_path = os.path.join('assets', 'fonts', 'PressStart2P-Regular.ttf')
+        try:
+            if os.path.exists(default_font_path):
+                return ImageFont.truetype(default_font_path, font_size)
+            else:
+                self.logger.warning("Default font not found, using PIL default")
+                return ImageFont.load_default()
+        except Exception as e:
+            self.logger.error(f"Error loading default font: {e}")
+            return ImageFont.load_default()
+    
+    def _load_fonts(self):
+        """Load fonts used by the scoreboard from config or use defaults."""
+        fonts = {}
+        
+        # Get customization config, with backward compatibility
+        customization = self.config.get('customization', {})
+        
+        # Load fonts from config with defaults for backward compatibility
+        score_config = customization.get('score_text', {})
+        period_config = customization.get('period_text', {})
+        team_config = customization.get('team_name', {})
+        status_config = customization.get('status_text', {})
+        detail_config = customization.get('detail_text', {})
+        rank_config = customization.get('rank_text', {})
+        
+        try:
+            fonts["score"] = self._load_custom_font_from_element_config(score_config, default_size=10)
+            fonts["time"] = self._load_custom_font_from_element_config(period_config, default_size=8)
+            fonts["team"] = self._load_custom_font_from_element_config(team_config, default_size=8)
+            fonts["status"] = self._load_custom_font_from_element_config(status_config, default_size=6)
+            fonts["detail"] = self._load_custom_font_from_element_config(detail_config, default_size=6)
+            fonts["rank"] = self._load_custom_font_from_element_config(rank_config, default_size=10)
+            self.logger.info("Successfully loaded fonts from config")
+        except Exception as e:
+            self.logger.error(f"Error loading fonts: {e}, using defaults")
+            # Fallback to hardcoded defaults
+            try:
+                fonts["score"] = ImageFont.truetype("assets/fonts/PressStart2P-Regular.ttf", 10)
+                fonts["time"] = ImageFont.truetype("assets/fonts/PressStart2P-Regular.ttf", 8)
+                fonts["team"] = ImageFont.truetype("assets/fonts/PressStart2P-Regular.ttf", 8)
+                fonts["status"] = ImageFont.truetype("assets/fonts/4x6-font.ttf", 6)
+                fonts["detail"] = ImageFont.truetype("assets/fonts/4x6-font.ttf", 6)
+                fonts["rank"] = ImageFont.truetype("assets/fonts/PressStart2P-Regular.ttf", 10)
+            except IOError:
+                self.logger.warning("Fonts not found, using default PIL font.")
+                fonts["score"] = ImageFont.load_default()
+                fonts["time"] = ImageFont.load_default()
+                fonts["team"] = ImageFont.load_default()
+                fonts["status"] = ImageFont.load_default()
+                fonts["detail"] = ImageFont.load_default()
+                fonts["rank"] = ImageFont.load_default()
         return fonts
 
     def _draw_dynamic_odds(
@@ -865,9 +928,9 @@ class SportsUpcoming(SportsCore):
                 # Filter criteria: must be upcoming ('pre' state)
                 if game and game["is_upcoming"]:
                     # Only fetch odds for games that will be displayed
-                    if self.show_favorite_teams_only:
-                        if not self.favorite_teams:
-                            continue
+                    # If show_favorite_teams_only is True, filter by favorite teams
+                    # But if no favorite teams are configured, show all games (fallback)
+                    if self.show_favorite_teams_only and self.favorite_teams:
                         if (
                             game["home_abbr"] not in self.favorite_teams
                             and game["away_abbr"] not in self.favorite_teams
@@ -901,8 +964,8 @@ class SportsUpcoming(SportsCore):
                     f"Found {favorite_games_found} favorite team upcoming games"
                 )
 
-            # Filter for favorite teams only if the config is set
-            if self.show_favorite_teams_only:
+            # Filter for favorite teams only if the config is set AND favorite teams exist
+            if self.show_favorite_teams_only and self.favorite_teams:
                 # Select N games per favorite team (where N = upcoming_games_to_show)
                 # Example: upcoming_games_to_show=2 with 3 favorite teams = 6 games total
                 team_games = []
@@ -936,16 +999,49 @@ class SportsUpcoming(SportsCore):
                         unique_team_games.append(game)
                 team_games = unique_team_games
             else:
-                # No favorite teams: apply total limit (not per-team)
-                # Example: upcoming_games_to_show=1 shows the next 1 game total (earliest)
-                team_games = processed_games
-                # Sort by game time, earliest first
+                # No favorite teams: apply per-team limit to ALL teams
+                # Example: upcoming_games_to_show=1 with 32 teams = up to 32 games total (1 per team)
+                # Extract all unique teams from processed games
+                all_teams = set()
+                for game in processed_games:
+                    home_abbr = game.get("home_abbr")
+                    away_abbr = game.get("away_abbr")
+                    if home_abbr:
+                        all_teams.add(home_abbr)
+                    if away_abbr:
+                        all_teams.add(away_abbr)
+                
+                # Apply per-team limit to all teams
+                team_games = []
+                for team in all_teams:
+                    # Find games where this team is playing
+                    team_specific_games = [
+                        game
+                        for game in processed_games
+                        if game.get("home_abbr") == team or game.get("away_abbr") == team
+                    ]
+                    if team_specific_games:
+                        # Sort by game time and take the earliest N games
+                        team_specific_games.sort(
+                            key=lambda g: g.get("start_time_utc")
+                            or datetime.max.replace(tzinfo=timezone.utc)
+                        )
+                        # Take up to upcoming_games_to_show games for this team
+                        team_games.extend(team_specific_games[: self.upcoming_games_to_show])
+                
+                # Sort the final list by game time (earliest first)
                 team_games.sort(
                     key=lambda g: g.get("start_time_utc")
                     or datetime.max.replace(tzinfo=timezone.utc)
                 )
-                # Limit to the specified number of upcoming games (total, not per-team)
-                team_games = team_games[: self.upcoming_games_to_show]
+                # Remove duplicates (in case a game involves multiple teams)
+                seen_ids = set()
+                unique_team_games = []
+                for game in team_games:
+                    if game.get("id") not in seen_ids:
+                        seen_ids.add(game.get("id"))
+                        unique_team_games.append(game)
+                team_games = unique_team_games
 
             # Log changes or periodically
             should_log = (
@@ -1458,20 +1554,55 @@ class SportsRecent(SportsCore):
                         f"Game {i+1} for display: {game['away_abbr']} @ {game['home_abbr']} - {game.get('start_time_utc')} - Score: {game['away_score']}-{game['home_score']}"
                     )
             else:
-                # No favorite teams: apply total limit (not per-team)
-                # Example: recent_games_to_show=5 shows the 5 most recent games total
-                team_games = processed_games
+                # No favorite teams: apply per-team limit to ALL teams
+                # Example: recent_games_to_show=1 with 32 teams = up to 32 games total (1 per team)
+                # Extract all unique teams from processed games
+                all_teams = set()
+                for game in processed_games:
+                    home_abbr = game.get("home_abbr")
+                    away_abbr = game.get("away_abbr")
+                    if home_abbr:
+                        all_teams.add(home_abbr)
+                    if away_abbr:
+                        all_teams.add(away_abbr)
+                
                 self.logger.info(
-                    f"Found {len(processed_games)} total final games within last 21 days (no favorite teams configured)"
+                    f"Found {len(processed_games)} total final games within last 21 days (no favorite teams configured, applying per-team limits to {len(all_teams)} teams)"
                 )
-                # Sort by game time, most recent first
+                
+                # Apply per-team limit to all teams
+                team_games = []
+                for team in all_teams:
+                    # Find games where this team is playing
+                    team_specific_games = [
+                        game
+                        for game in processed_games
+                        if game.get("home_abbr") == team or game.get("away_abbr") == team
+                    ]
+                    if team_specific_games:
+                        # Sort by game time and take the most recent N games
+                        team_specific_games.sort(
+                            key=lambda g: g.get("start_time_utc")
+                            or datetime.min.replace(tzinfo=timezone.utc),
+                            reverse=True,
+                        )
+                        # Take up to recent_games_to_show games for this team
+                        team_games.extend(team_specific_games[: self.recent_games_to_show])
+                
+                # Sort the final list by game time (most recent first)
                 team_games.sort(
                     key=lambda g: g.get("start_time_utc")
                     or datetime.min.replace(tzinfo=timezone.utc),
                     reverse=True,
                 )
-                # Limit to the specified number of recent games (total, not per-team)
-                team_games = team_games[: self.recent_games_to_show]
+                # Remove duplicates (in case a game involves multiple teams)
+                seen_ids = set()
+                unique_team_games = []
+                for game in team_games:
+                    if game.get("id") not in seen_ids:
+                        seen_ids.add(game.get("id"))
+                        unique_team_games.append(game)
+                team_games = unique_team_games
 
             # Check if the list of games to display has changed
             new_game_ids = {g["id"] for g in team_games}
@@ -1583,16 +1714,28 @@ class SportsRecent(SportsCore):
             # Draw Text Elements on Overlay
             # Note: Rankings are now handled in the records/rankings section below
 
-            # Final Scores (Centered, same position as live)
+            # Final Scores (Centered vertically, same position as live)
             home_score = str(game.get("home_score", "0"))
             away_score = str(game.get("away_score", "0"))
             score_text = f"{away_score}-{home_score}"
             score_width = draw_overlay.textlength(score_text, font=self.fonts["score"])
             score_x = (display_width - score_width) // 2
-            score_y = display_height - 14
+            score_y = (display_height // 2) - 3  # Centered vertically, same as live games
             self._draw_text_with_outline(
                 draw_overlay, score_text, (score_x, score_y), self.fonts["score"]
             )
+
+            # Game date (Bottom of display, one line above bottom edge, centered)
+            # Use same font as upcoming games (time font) for consistency
+            game_date = game.get("game_date", "")
+            if game_date:
+                date_width = draw_overlay.textlength(game_date, font=self.fonts["time"])
+                date_x = (display_width - date_width) // 2
+                # Position date at bottom of display, one line above the bottom edge
+                date_y = display_height - 7  # One line above bottom edge
+                self._draw_text_with_outline(
+                    draw_overlay, game_date, (date_x, date_y), self.fonts["time"]
+                )
 
             # "Final" text (Top center)
             status_text = game.get(
