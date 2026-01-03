@@ -213,6 +213,11 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
         self._last_display_mode_time: float = 0.0  # When we last saw this mode
         self._current_active_display_mode: Optional[str] = None  # Currently active external display mode
         
+        # Track current game for transition detection
+        # Format: {display_mode: {'game_id': str, 'league': str, 'last_log_time': float}}
+        self._current_game_tracking: Dict[str, Dict[str, Any]] = {}
+        self._game_transition_log_interval: float = 1.0  # Minimum seconds between game transition logs
+        
         # Note: Sticky manager tracking has been removed in favor of sequential block display
         # Sequential block display shows all games from one league before moving to the next,
         # which is simpler and more predictable than the sticky manager approach
@@ -911,14 +916,6 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
         # Manager returns True if it has content to show, False if no content
         result = manager.display(force_clear)
         
-        # Debug logging
-        manager_class_name = manager.__class__.__name__
-        has_current_game = hasattr(manager, 'current_game') and manager.current_game is not None
-        self.logger.info(
-            f"Manager {manager_class_name} display() returned {result}, "
-            f"has_current_game={has_current_game}"
-        )
-        
         # Build the actual mode name from league and mode_type for accurate tracking
         # This is used to track progress per league separately
         # Example: 'nfl_recent' or 'ncaa_fb_live'
@@ -927,6 +924,64 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
             if self._current_display_league and mode_type 
             else display_mode
         )
+        
+        # Track game transitions for logging
+        # Only log at DEBUG level for frequent calls, INFO for game transitions
+        manager_class_name = manager.__class__.__name__
+        has_current_game = hasattr(manager, 'current_game') and manager.current_game is not None
+        current_game = getattr(manager, 'current_game', None) if has_current_game else None
+        
+        # Get current game ID for transition detection
+        current_game_id = None
+        if current_game:
+            current_game_id = current_game.get('id') or current_game.get('game_id')
+            if not current_game_id:
+                # Fallback: create ID from team abbreviations
+                away = current_game.get('away_abbr', '')
+                home = current_game.get('home_abbr', '')
+                if away and home:
+                    current_game_id = f"{away}@{home}"
+        
+        # Check for game transition
+        game_tracking = self._current_game_tracking.get(display_mode, {})
+        last_game_id = game_tracking.get('game_id')
+        last_league = game_tracking.get('league')
+        last_log_time = game_tracking.get('last_log_time', 0.0)
+        current_time = time.time()
+        
+        # Detect game transition or league change
+        game_changed = (current_game_id and current_game_id != last_game_id)
+        league_changed = (self._current_display_league and self._current_display_league != last_league)
+        time_since_last_log = current_time - last_log_time
+        
+        # Log game transitions at INFO level (but throttle to avoid spam)
+        if (game_changed or league_changed) and time_since_last_log >= self._game_transition_log_interval:
+            if game_changed and current_game_id:
+                away_abbr = current_game.get('away_abbr', '?') if current_game else '?'
+                home_abbr = current_game.get('home_abbr', '?') if current_game else '?'
+                self.logger.info(
+                    f"Game transition in {display_mode}: "
+                    f"{away_abbr} @ {home_abbr} "
+                    f"({self._current_display_league or 'unknown'} {mode_type})"
+                )
+            elif league_changed and self._current_display_league:
+                self.logger.info(
+                    f"League transition in {display_mode}: "
+                    f"switched to {self._current_display_league} {mode_type}"
+                )
+            
+            # Update tracking
+            self._current_game_tracking[display_mode] = {
+                'game_id': current_game_id,
+                'league': self._current_display_league,
+                'last_log_time': current_time
+            }
+        else:
+            # Frequent calls - only log at DEBUG level
+            self.logger.debug(
+                f"Manager {manager_class_name} display() returned {result}, "
+                f"has_current_game={has_current_game}, game_id={current_game_id}"
+            )
         
         if result is True:
             # Manager successfully displayed content
@@ -1071,7 +1126,8 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
             if success:
                 # Successfully displayed content from this league
                 # Stay on this league until it completes all games
-                self.logger.info(
+                # Only log at DEBUG level - game transitions are logged separately
+                self.logger.debug(
                     f"Plugin display() returning True for {display_mode} "
                     f"(showing {league_id} {mode_type})"
                 )
