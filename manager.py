@@ -1225,26 +1225,6 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
         # Create display mode name for tracking
         display_mode = f"{league}_{mode_type}"
         
-        # Track mode start time for per-mode duration enforcement
-        if display_mode not in self._mode_start_time:
-            self._mode_start_time[display_mode] = time.time()
-            self.logger.debug(f"Started tracking time for {display_mode}")
-        
-        # Check if mode-level duration has expired
-        effective_mode_duration = self._get_effective_mode_duration(display_mode, mode_type)
-        if effective_mode_duration is not None:
-            elapsed_time = time.time() - self._mode_start_time[display_mode]
-            if elapsed_time >= effective_mode_duration:
-                # Mode duration expired - time to rotate
-                self.logger.info(
-                    f"Mode duration expired for {display_mode}: "
-                    f"{elapsed_time:.1f}s >= {effective_mode_duration}s. "
-                    f"Rotating to next mode (progress preserved for resume)."
-                )
-                # Reset mode start time for next cycle
-                self._mode_start_time[display_mode] = time.time()
-                return False
-        
         # Set display context for dynamic duration tracking
         self._current_display_league = league
         self._current_display_mode_type = mode_type
@@ -1254,11 +1234,37 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
             manager, force_clear, display_mode, mode_type, None
         )
         
+        # Only track mode start time and check duration if we actually have content to display
         if success:
+            # Track mode start time for per-mode duration enforcement (only when content exists)
+            if display_mode not in self._mode_start_time:
+                self._mode_start_time[display_mode] = time.time()
+                self.logger.debug(f"Started tracking time for {display_mode}")
+            
+            # Check if mode-level duration has expired (only check if we have content)
+            effective_mode_duration = self._get_effective_mode_duration(display_mode, mode_type)
+            if effective_mode_duration is not None:
+                elapsed_time = time.time() - self._mode_start_time[display_mode]
+                if elapsed_time >= effective_mode_duration:
+                    # Mode duration expired - time to rotate
+                    self.logger.info(
+                        f"Mode duration expired for {display_mode}: "
+                        f"{elapsed_time:.1f}s >= {effective_mode_duration}s. "
+                        f"Rotating to next mode (progress preserved for resume)."
+                    )
+                    # Reset mode start time for next cycle
+                    self._mode_start_time[display_mode] = time.time()
+                    return False
+            
             self.logger.debug(
                 f"Displayed content from {league} {mode_type} (mode: {display_mode})"
             )
         else:
+            # No content - clear any existing start time so mode can start fresh when content becomes available
+            if display_mode in self._mode_start_time:
+                del self._mode_start_time[display_mode]
+                self.logger.debug(f"Cleared mode start time for {display_mode} (no content available)")
+            
             self.logger.debug(
                 f"No content available for {league} {mode_type} (mode: {display_mode})"
             )
