@@ -802,6 +802,7 @@
     },
     "x-propertyOrder": ["score_text", "period_text", "team_name", "status_text", "detail_text", "rank_text"],
     "additionalProperties": false
+    }
   },
   "additionalProperties": false,
   "required": ["enabled"]
