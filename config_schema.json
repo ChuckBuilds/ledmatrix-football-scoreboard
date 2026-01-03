@@ -292,24 +292,24 @@
           "properties": {
             "recent_mode_duration": {
               "type": ["number", "null"],
-              "default": null,
+              "default": 30,
               "minimum": 10,
               "maximum": 600,
-              "description": "Total duration in seconds for Recent mode before rotating to next mode. If not set, uses dynamic calculation. When mode cycles back, continues from last game shown (no repetition)."
+              "description": "Total duration in seconds for Recent mode before rotating to next mode. Default: 30 seconds. Set to null to use dynamic calculation. When mode cycles back, continues from last game shown (no repetition)."
             },
             "upcoming_mode_duration": {
               "type": ["number", "null"],
-              "default": null,
+              "default": 30,
               "minimum": 10,
               "maximum": 600,
-              "description": "Total duration in seconds for Upcoming mode before rotating to next mode. If not set, uses dynamic calculation. When mode cycles back, continues from last game shown (no repetition)."
+              "description": "Total duration in seconds for Upcoming mode before rotating to next mode. Default: 30 seconds. Set to null to use dynamic calculation. When mode cycles back, continues from last game shown (no repetition)."
             },
             "live_mode_duration": {
               "type": ["number", "null"],
-              "default": null,
+              "default": 30,
               "minimum": 10,
               "maximum": 600,
-              "description": "Total duration in seconds for Live mode before rotating to next mode. If not set, uses dynamic calculation. When mode cycles back, continues from last game shown (no repetition)."
+              "description": "Total duration in seconds for Live mode before rotating to next mode. Default: 30 seconds. Set to null to use dynamic calculation. When mode cycles back, continues from last game shown (no repetition)."
             }
           }
         }
@@ -584,24 +584,24 @@
           "properties": {
             "recent_mode_duration": {
               "type": ["number", "null"],
-              "default": null,
+              "default": 30,
               "minimum": 10,
               "maximum": 600,
-              "description": "Total duration in seconds for Recent mode before rotating to next mode. If not set, uses dynamic calculation. When mode cycles back, continues from last game shown (no repetition)."
+              "description": "Total duration in seconds for Recent mode before rotating to next mode. Default: 30 seconds. Set to null to use dynamic calculation. When mode cycles back, continues from last game shown (no repetition)."
             },
             "upcoming_mode_duration": {
               "type": ["number", "null"],
-              "default": null,
+              "default": 30,
               "minimum": 10,
               "maximum": 600,
-              "description": "Total duration in seconds for Upcoming mode before rotating to next mode. If not set, uses dynamic calculation. When mode cycles back, continues from last game shown (no repetition)."
+              "description": "Total duration in seconds for Upcoming mode before rotating to next mode. Default: 30 seconds. Set to null to use dynamic calculation. When mode cycles back, continues from last game shown (no repetition)."
             },
             "live_mode_duration": {
               "type": ["number", "null"],
-              "default": null,
+              "default": 30,
               "minimum": 10,
               "maximum": 600,
-              "description": "Total duration in seconds for Live mode before rotating to next mode. If not set, uses dynamic calculation. When mode cycles back, continues from last game shown (no repetition)."
+              "description": "Total duration in seconds for Live mode before rotating to next mode. Default: 30 seconds. Set to null to use dynamic calculation. When mode cycles back, continues from last game shown (no repetition)."
             }
           }
         }
