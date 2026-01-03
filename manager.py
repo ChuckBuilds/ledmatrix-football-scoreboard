@@ -418,51 +418,22 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
                     valid_modes.append(mode_name)
                     continue
             
-            # Check if it's a combined mode (e.g., "football_recent", "football_upcoming", "football_live")
+            # Combined modes (football_recent, football_upcoming, football_live) are not allowed
+            # The display controller already handles rotation between these combined modes
+            # rotation_order only controls internal rotation within each combined mode
             elif mode_name.startswith("football_"):
-                mode_type = mode_name.replace("football_", "")
-                
-                if mode_type not in ['live', 'recent', 'upcoming']:
-                    self.logger.warning(
-                        f"Invalid combined mode in rotation_order: {mode_name}"
-                    )
-                    continue
-                
-                # Check if at least one enabled league has this mode enabled
-                has_enabled_league_mode = False
-                for league_id, league_data in self._league_registry.items():
-                    if not league_data.get('enabled', False):
-                        continue
-                    
-                    league_config = self.config.get(league_id, {})
-                    display_modes_config = league_config.get("display_modes", {})
-                    
-                    if mode_type == 'live':
-                        if display_modes_config.get("show_live", True):
-                            has_enabled_league_mode = True
-                            break
-                    elif mode_type == 'recent':
-                        if display_modes_config.get("show_recent", True):
-                            has_enabled_league_mode = True
-                            break
-                    elif mode_type == 'upcoming':
-                        if display_modes_config.get("show_upcoming", True):
-                            has_enabled_league_mode = True
-                            break
-                
-                if has_enabled_league_mode:
-                    valid_modes.append(mode_name)
-                else:
-                    self.logger.debug(
-                        f"Skipping combined mode with no enabled leagues: {mode_name}"
-                    )
+                self.logger.warning(
+                    f"Combined modes (football_*) are not allowed in rotation_order: {mode_name}. "
+                    f"Only granular modes (nfl_*, ncaa_fb_*) are supported. "
+                    f"The display controller already rotates between combined modes."
+                )
                 continue
             
             # Invalid mode format
             else:
                 self.logger.warning(
                     f"Invalid mode format in rotation_order: {mode_name} "
-                    "(must be 'nfl_recent', 'ncaa_fb_upcoming', 'football_recent', etc.)"
+                    "(must be granular mode: 'nfl_recent', 'ncaa_fb_upcoming', 'nfl_live', etc.)"
                 )
                 continue
         

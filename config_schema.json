@@ -53,8 +53,8 @@
     },
     "rotation_order": {
       "type": "array",
-      "default": ["football_recent", "football_upcoming", "football_live"],
-      "description": "Order in which league/mode combinations rotate. Options: nfl_recent, nfl_upcoming, nfl_live, ncaa_fb_recent, ncaa_fb_upcoming, ncaa_fb_live, football_recent (combined), football_upcoming (combined), football_live (combined). Use combined modes for backward compatibility or granular modes for precise control. Examples: ['nfl_recent', 'nfl_upcoming', 'ncaa_fb_recent', 'ncaa_fb_upcoming'] for league-first rotation, or ['nfl_recent', 'ncaa_fb_recent', 'nfl_upcoming', 'ncaa_fb_upcoming'] for mode-first rotation. When rotation_order contains granular modes, the plugin rotates through them internally when display controller calls combined modes. Each granular mode respects its own mode duration settings. Disabled leagues/modes are automatically filtered out. If rotation_order is empty or not configured, uses default sequential block behavior (all NFL games, then all NCAA FB games).",
+      "default": [],
+      "description": "Order in which league/mode combinations rotate within each combined mode. Only granular modes are allowed: nfl_recent, nfl_upcoming, nfl_live, ncaa_fb_recent, ncaa_fb_upcoming, ncaa_fb_live. The display controller already handles rotation between combined modes (football_recent → football_upcoming → football_live). This setting controls the internal rotation WITHIN each combined mode. Examples: ['nfl_recent', 'ncaa_fb_recent'] for football_recent mode, or ['nfl_upcoming', 'ncaa_fb_upcoming'] for football_upcoming mode. When rotation_order contains granular modes, the plugin rotates through them internally when display controller calls combined modes. Each granular mode respects its own mode duration settings. Disabled leagues/modes are automatically filtered out. If rotation_order is empty or not configured, uses default sequential block behavior (all NFL games, then all NCAA FB games).",
       "items": {
         "type": "string",
         "enum": [
@@ -63,10 +63,7 @@
           "nfl_live",
           "ncaa_fb_recent",
           "ncaa_fb_upcoming",
-          "ncaa_fb_live",
-          "football_recent",
-          "football_upcoming",
-          "football_live"
+          "ncaa_fb_live"
         ]
       }
     },
@@ -202,7 +199,7 @@
           "properties": {
             "recent_games_to_show": {
               "type": "integer",
-              "default": 5,
+              "default": 1,
               "minimum": 1,
               "maximum": 20,
               "description": "With favorite teams: Number of recent games PER team (e.g., 1 with 2 teams = 2 games). Without favorite teams: Total number of most recent games to show (e.g., 5 = show 5 most recent games total)."
