@@ -1400,27 +1400,30 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
                 
                 # Parse granular mode name: {league}_{mode_type}
                 # e.g., "nfl_recent" -> league="nfl", mode_type="recent"
-                parts = display_mode.split("_", 1)
-                if len(parts) != 2:
+                # e.g., "ncaa_fb_recent" -> league="ncaa_fb", mode_type="recent"
+                # Parse from the end since mode types are always: live, recent, or upcoming
+                mode_type_str = None
+                league = None
+                
+                # Check each known mode type suffix
+                for mode_suffix in ['_live', '_recent', '_upcoming']:
+                    if display_mode.endswith(mode_suffix):
+                        mode_type_str = mode_suffix[1:]  # Remove leading underscore
+                        league = display_mode[:-len(mode_suffix)]  # Everything before the suffix
+                        break
+                
+                if not mode_type_str or not league:
                     self.logger.warning(
                         f"Invalid granular display_mode format: {display_mode} "
-                        "(expected format: {league}_{mode_type}, e.g., 'nfl_recent')"
+                        "(expected format: {league}_{mode_type}, e.g., 'nfl_recent' or 'ncaa_fb_recent')"
                     )
                     return False
-                
-                league, mode_type_str = parts
                 
                 # Validate league exists in registry
                 if league not in self._league_registry:
                     self.logger.warning(
-                        f"Invalid league in display_mode: {league} (mode: {display_mode})"
-                    )
-                    return False
-                
-                # Validate mode_type is valid
-                if mode_type_str not in ['live', 'recent', 'upcoming']:
-                    self.logger.warning(
-                        f"Invalid mode_type in display_mode: {mode_type_str} (mode: {display_mode})"
+                        f"Invalid league in display_mode: {league} (mode: {display_mode}). "
+                        f"Valid leagues: {list(self._league_registry.keys())}"
                     )
                     return False
                 
