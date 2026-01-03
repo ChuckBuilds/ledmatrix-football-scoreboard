@@ -1714,23 +1714,24 @@ class SportsRecent(SportsCore):
             # Draw Text Elements on Overlay
             # Note: Rankings are now handled in the records/rankings section below
 
-            # Final Scores (Centered, same position as live)
+            # Final Scores (Centered vertically, same position as live)
             home_score = str(game.get("home_score", "0"))
             away_score = str(game.get("away_score", "0"))
             score_text = f"{away_score}-{home_score}"
             score_width = draw_overlay.textlength(score_text, font=self.fonts["score"])
             score_x = (display_width - score_width) // 2
-            score_y = display_height - 14
+            score_y = (display_height // 2) - 3  # Centered vertically, same as live games
             self._draw_text_with_outline(
                 draw_overlay, score_text, (score_x, score_y), self.fonts["score"]
             )
 
-            # Game date (Below score, centered)
+            # Game date (Below centered score, centered)
             game_date = game.get("game_date", "")
             if game_date:
                 date_width = draw_overlay.textlength(game_date, font=self.fonts["detail"])
                 date_x = (display_width - date_width) // 2
-                date_y = display_height - 7  # Position below score, similar to scroll mode
+                # Position date below the centered score (score is at center_y - 3, date goes below)
+                date_y = (display_height // 2) + 8  # Position below centered score
                 self._draw_text_with_outline(
                     draw_overlay, game_date, (date_x, date_y), self.fonts["detail"]
                 )
