@@ -928,9 +928,9 @@ class SportsUpcoming(SportsCore):
                 # Filter criteria: must be upcoming ('pre' state)
                 if game and game["is_upcoming"]:
                     # Only fetch odds for games that will be displayed
-                    if self.show_favorite_teams_only:
-                        if not self.favorite_teams:
-                            continue
+                    # If show_favorite_teams_only is True, filter by favorite teams
+                    # But if no favorite teams are configured, show all games (fallback)
+                    if self.show_favorite_teams_only and self.favorite_teams:
                         if (
                             game["home_abbr"] not in self.favorite_teams
                             and game["away_abbr"] not in self.favorite_teams
@@ -964,8 +964,8 @@ class SportsUpcoming(SportsCore):
                     f"Found {favorite_games_found} favorite team upcoming games"
                 )
 
-            # Filter for favorite teams only if the config is set
-            if self.show_favorite_teams_only:
+            # Filter for favorite teams only if the config is set AND favorite teams exist
+            if self.show_favorite_teams_only and self.favorite_teams:
                 # Select N games per favorite team (where N = upcoming_games_to_show)
                 # Example: upcoming_games_to_show=2 with 3 favorite teams = 6 games total
                 team_games = []
