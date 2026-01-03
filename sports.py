@@ -1726,14 +1726,15 @@ class SportsRecent(SportsCore):
             )
 
             # Game date (Bottom of display, one line above bottom edge, centered)
+            # Use same font as upcoming games (time font) for consistency
             game_date = game.get("game_date", "")
             if game_date:
-                date_width = draw_overlay.textlength(game_date, font=self.fonts["detail"])
+                date_width = draw_overlay.textlength(game_date, font=self.fonts["time"])
                 date_x = (display_width - date_width) // 2
                 # Position date at bottom of display, one line above the bottom edge
                 date_y = display_height - 7  # One line above bottom edge
                 self._draw_text_with_outline(
-                    draw_overlay, game_date, (date_x, date_y), self.fonts["detail"]
+                    draw_overlay, game_date, (date_x, date_y), self.fonts["time"]
                 )
 
             # "Final" text (Top center)
