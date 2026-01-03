@@ -119,7 +119,6 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
 
         # Global settings
         self.display_duration = float(config.get("display_duration", 30))
-        self.game_display_duration = float(config.get("game_display_duration", 15))
 
         # Live priority per league
         self.nfl_live_priority = self.config.get("nfl", {}).get("live_priority", False)
@@ -544,11 +543,11 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
                 "live_game_duration": league_config.get("live_game_duration", 20),
                 "recent_game_duration": league_config.get(
                     "recent_game_duration",
-                    self.config.get("game_display_duration", 15)
+                    15  # Default per-game duration for recent games
                 ),
                 "upcoming_game_duration": league_config.get(
                     "upcoming_game_duration",
-                    self.config.get("game_display_duration", 15)
+                    15  # Default per-game duration for upcoming games
                 ),
                 "live_priority": league_config.get("live_priority", False),
                 "show_favorite_teams_only": show_favorites_only,
@@ -1661,7 +1660,7 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
         Resolves duration using the following hierarchy:
         1. Manager's game_display_duration attribute (if manager provided)
         2. League-specific mode duration (e.g., nfl.live_game_duration)
-        3. Global game_display_duration fallback
+        3. League-specific default (15 seconds)
         
         Args:
             league: League name ('nfl' or 'ncaa_fb')
@@ -1684,8 +1683,8 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
         if mode_duration is not None:
             return float(mode_duration)
         
-        # Fallback to global game_display_duration
-        return float(self.game_display_duration)
+        # Fallback to league-specific default (15 seconds)
+        return 15.0
 
     def _get_mode_duration(self, mode_type: str, league: Optional[str] = None) -> Optional[float]:
         """Get mode-level duration for a specific mode type, optionally for a specific league.
@@ -1693,8 +1692,7 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
         Resolves mode-level duration using the following hierarchy:
         1. Per-league mode duration override (if league specified, only check that league)
         2. Per-league mode duration overrides (if all enabled leagues have same value, or max if different)
-        3. Top-level mode duration setting
-        4. None (triggers dynamic calculation based on game count)
+        3. None (triggers dynamic calculation based on game count)
         
         Args:
             mode_type: Mode type ('live', 'recent', or 'upcoming')
@@ -1726,15 +1724,6 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
                     f"_get_mode_duration({mode_type}, {league}): using per-league duration={league_duration}s"
                 )
                 return float(league_duration)
-            
-            # Fall back to top-level mode duration
-            mode_duration_key = f"{mode_type}_mode_duration"
-            top_level_duration = self.config.get(mode_duration_key)
-            if top_level_duration is not None:
-                self.logger.debug(
-                    f"_get_mode_duration({mode_type}, {league}): using top-level duration={top_level_duration}s"
-                )
-                return float(top_level_duration)
             
             # No mode duration configured for this league
             self.logger.debug(
@@ -1771,15 +1760,6 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
                 f"_get_mode_duration({mode_type}): per-league durations={league_durations}, using max={max_duration}s"
             )
             return max_duration
-        
-        # Check top-level mode duration
-        mode_duration_key = f"{mode_type}_mode_duration"  # e.g., 'recent_mode_duration'
-        top_level_duration = self.config.get(mode_duration_key)
-        if top_level_duration is not None:
-            self.logger.debug(
-                f"_get_mode_duration({mode_type}): using top-level duration={top_level_duration}s"
-            )
-            return float(top_level_duration)
         
         # No mode duration configured - return None to trigger dynamic calculation
         self.logger.debug(
