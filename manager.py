@@ -573,10 +573,14 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
         if not display_config and hasattr(self.cache_manager, 'config_manager'):
             display_config = self.cache_manager.config_manager.get_display_config()
         
+        # Get customization config from main config (shared across all leagues)
+        customization_config = self.config.get("customization", {})
+        
         manager_config.update(
             {
                 "timezone": timezone_str,
                 "display": display_config,
+                "customization": customization_config,
             }
         )
         
