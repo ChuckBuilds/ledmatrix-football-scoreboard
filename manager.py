@@ -1401,25 +1401,51 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
                 # Parse granular mode name: {league}_{mode_type}
                 # e.g., "nfl_recent" -> league="nfl", mode_type="recent"
                 # e.g., "ncaa_fb_recent" -> league="ncaa_fb", mode_type="recent"
-                # Parse from the end since mode types are always: live, recent, or upcoming
+                # e.g., "uefa.champions_recent" -> league="uefa.champions", mode_type="recent" (for soccer)
+                # 
+                # Scalable approach: Check league registry first, then extract mode type
+                # This works for any league naming convention (underscores, dots, etc.)
                 mode_type_str = None
                 league = None
                 
-                # Check each known mode type suffix
-                for mode_suffix in ['_live', '_recent', '_upcoming']:
-                    if display_mode.endswith(mode_suffix):
-                        mode_type_str = mode_suffix[1:]  # Remove leading underscore
-                        league = display_mode[:-len(mode_suffix)]  # Everything before the suffix
+                # Known mode type suffixes (standardized across all sports plugins)
+                mode_suffixes = ['_live', '_recent', '_upcoming']
+                
+                # Try to match against league registry first (most reliable)
+                # Check each league ID in registry to see if display_mode starts with it
+                for league_id in self._league_registry.keys():
+                    for mode_suffix in mode_suffixes:
+                        expected_mode = f"{league_id}{mode_suffix}"
+                        if display_mode == expected_mode:
+                            league = league_id
+                            mode_type_str = mode_suffix[1:]  # Remove leading underscore
+                            break
+                    if league:
                         break
+                
+                # Fallback: If no registry match, parse from the end (for backward compatibility)
+                if not league:
+                    for mode_suffix in mode_suffixes:
+                        if display_mode.endswith(mode_suffix):
+                            mode_type_str = mode_suffix[1:]  # Remove leading underscore
+                            league = display_mode[:-len(mode_suffix)]  # Everything before the suffix
+                            # Validate it's a known league
+                            if league in self._league_registry:
+                                break
+                            else:
+                                # Not a known league, try next suffix
+                                league = None
+                                mode_type_str = None
                 
                 if not mode_type_str or not league:
                     self.logger.warning(
                         f"Invalid granular display_mode format: {display_mode} "
-                        "(expected format: {league}_{mode_type}, e.g., 'nfl_recent' or 'ncaa_fb_recent')"
+                        f"(expected format: {{league}}_{{mode_type}}, e.g., 'nfl_recent' or 'ncaa_fb_recent'). "
+                        f"Valid leagues: {list(self._league_registry.keys())}"
                     )
                     return False
                 
-                # Validate league exists in registry
+                # Validate league exists in registry (double-check)
                 if league not in self._league_registry:
                     self.logger.warning(
                         f"Invalid league in display_mode: {league} (mode: {display_mode}). "
