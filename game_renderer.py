@@ -14,8 +14,13 @@ This module provides:
 import logging
 import os
 from pathlib import Path
-from typing import Dict, Any, Optional, Tuple
+from typing import Dict, Any, Optional, Tuple, Union
 from PIL import Image, ImageDraw, ImageFont
+try:
+    import freetype
+    FREETYPE_AVAILABLE = True
+except ImportError:
+    FREETYPE_AVAILABLE = False
 
 logger = logging.getLogger(__name__)
 
@@ -66,8 +71,14 @@ class GameRenderer:
         # Rankings cache (populated externally)
         self._team_rankings_cache: Dict[str, int] = {}
         
-    def _load_fonts(self) -> Dict[str, ImageFont.FreeTypeFont]:
-        """Load fonts used by the scoreboard from config or use defaults."""
+    def _load_fonts(self) -> Dict[str, Union[ImageFont.FreeTypeFont, Any]]:
+        """
+        Load fonts used by the scoreboard from config or use defaults.
+        
+        Returns:
+            Dictionary mapping font names to font objects (ImageFont.FreeTypeFont for TTF/OTF,
+            freetype.Face for BDF fonts)
+        """
         fonts = {}
         
         # Get customization config
@@ -106,32 +117,65 @@ class GameRenderer:
         
         return fonts
     
-    def _load_custom_font(self, element_config: Dict[str, Any], default_size: int = 8) -> ImageFont.FreeTypeFont:
-        """Load a custom font from an element configuration dictionary."""
+    def _load_custom_font(self, element_config: Dict[str, Any], default_size: int = 8) -> Union[ImageFont.FreeTypeFont, Any]:
+        """
+        Load a custom font from an element configuration dictionary.
+        
+        Supports TTF/OTF fonts via ImageFont.truetype() and BDF fonts via freetype.Face().
+        
+        Returns:
+            ImageFont.FreeTypeFont for TTF/OTF fonts, freetype.Face for BDF fonts, or fallback font
+        """
         font_name = element_config.get('font', 'PressStart2P-Regular.ttf')
         font_size = int(element_config.get('font_size', default_size))
         font_path = os.path.join('assets', 'fonts', font_name)
         
         try:
             if os.path.exists(font_path):
-                if font_path.lower().endswith('.ttf'):
+                if font_path.lower().endswith('.ttf') or font_path.lower().endswith('.otf'):
+                    # TTF/OTF fonts - use ImageFont.truetype()
                     return ImageFont.truetype(font_path, font_size)
                 elif font_path.lower().endswith('.bdf'):
-                    try:
-                        return ImageFont.truetype(font_path, font_size)
-                    except Exception:
-                        self.logger.warning(f"Could not load BDF font {font_name}, using default")
+                    # BDF fonts - ImageFont.truetype() does NOT support BDF files
+                    # Try to load pre-converted .pil/.pbm file first (if available)
+                    pil_font_path = font_path.rsplit('.', 1)[0] + '.pil'
+                    if os.path.exists(pil_font_path):
+                        try:
+                            font = ImageFont.load(pil_font_path)
+                            self.logger.debug(f"Loaded BDF font from pre-converted PIL file: {pil_font_path}")
+                            return font
+                        except Exception as e:
+                            self.logger.debug(f"Could not load pre-converted PIL font {pil_font_path}: {e}, trying freetype")
+                    
+                    # If no pre-converted file, use freetype.Face() for BDF fonts
+                    if FREETYPE_AVAILABLE:
+                        try:
+                            face = freetype.Face(font_path)
+                            # Set character size (width, height) in 1/64th of points
+                            face.set_char_size(font_size * 64, font_size * 64, 72, 72)
+                            self.logger.debug(f"Loaded BDF font with freetype: {font_name} at size {font_size}")
+                            return face
+                        except Exception as e:
+                            self.logger.warning(f"Could not load BDF font {font_name} with freetype: {e}, trying fallback")
+                    else:
+                        self.logger.warning(f"freetype not available and no pre-converted PIL file found, cannot load BDF font {font_name}, trying fallback")
+                else:
+                    self.logger.warning(f"Unknown font file type: {font_name}, trying fallback")
+            else:
+                self.logger.warning(f"Font file not found: {font_path}, trying fallback")
         except Exception as e:
-            self.logger.error(f"Error loading font {font_name}: {e}")
+            self.logger.error(f"Error loading font {font_name}: {e}, trying fallback")
         
         # Fallback to default font
         default_font_path = os.path.join('assets', 'fonts', 'PressStart2P-Regular.ttf')
         try:
             if os.path.exists(default_font_path):
                 return ImageFont.truetype(default_font_path, font_size)
-        except Exception:
-            pass
+        except Exception as e:
+            self.logger.warning(f"Could not load default font: {e}")
         
+        # Final fallback
+        self.logger.warning(f"Using PIL default font as final fallback for {font_name}")
         return ImageFont.load_default()
     
     def set_rankings_cache(self, rankings: Dict[str, int]) -> None:
@@ -201,11 +245,23 @@ class GameRenderer:
         draw: ImageDraw.Draw, 
         text: str, 
         position: Tuple[int, int], 
-        font: ImageFont.FreeTypeFont, 
+        font: Union[ImageFont.FreeTypeFont, Any], 
         fill: Tuple[int, int, int] = (255, 255, 255), 
         outline_color: Tuple[int, int, int] = (0, 0, 0)
     ) -> None:
-        """Draw text with a black outline for better readability."""
+        """
+        Draw text with a black outline for better readability.
+        
+        Note: BDF fonts loaded via freetype.Face() are not directly compatible with
+        ImageDraw.text(). If a BDF font is passed, it will fall back to default font.
+        """
+        # Check if this is a freetype.Face (BDF font) - ImageDraw.text() doesn't support it
+        if FREETYPE_AVAILABLE and hasattr(font, 'set_char_size'):
+            # This is a freetype.Face (BDF font) - ImageDraw.text() won't work
+            # Fall back to default font for rendering
+            self.logger.warning(f"BDF font detected but ImageDraw.text() doesn't support freetype.Face - using default font for rendering")
+            font = ImageFont.load_default()
+        
         x, y = position
         for dx, dy in [(-1, -1), (-1, 0), (-1, 1), (0, -1), (0, 1), (1, -1), (1, 0), (1, 1)]:
             draw.text((x + dx, y + dy), text, font=font, fill=outline_color)
