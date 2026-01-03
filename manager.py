@@ -1776,7 +1776,8 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
             (self.nfl_enabled and self.nfl_live_priority)
             or (self.ncaa_fb_enabled and self.ncaa_fb_live_priority)
         )
-        self.logger.info(f"has_live_priority() called: nfl_enabled={self.nfl_enabled}, nfl_live_priority={self.nfl_live_priority}, ncaa_fb_enabled={self.ncaa_fb_enabled}, ncaa_fb_live_priority={self.ncaa_fb_live_priority}, result={result}")
+        # Log at DEBUG level since this is called frequently and the result rarely changes
+        self.logger.debug(f"has_live_priority() called: nfl_enabled={self.nfl_enabled}, nfl_live_priority={self.nfl_live_priority}, ncaa_fb_enabled={self.ncaa_fb_enabled}, ncaa_fb_live_priority={self.ncaa_fb_live_priority}, result={result}")
         return result
 
     def has_live_content(self) -> bool:
