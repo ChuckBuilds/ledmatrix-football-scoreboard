@@ -291,21 +291,21 @@
           "description": "Control total duration for each mode type for this league. If not set, uses dynamic calculation (total_games × per_game_duration).",
           "properties": {
             "recent_mode_duration": {
-              "type": "number",
+              "type": ["number", "null"],
               "default": null,
               "minimum": 10,
               "maximum": 600,
               "description": "Total duration in seconds for Recent mode before rotating to next mode. If not set, uses dynamic calculation. When mode cycles back, continues from last game shown (no repetition)."
             },
             "upcoming_mode_duration": {
-              "type": "number",
+              "type": ["number", "null"],
               "default": null,
               "minimum": 10,
               "maximum": 600,
               "description": "Total duration in seconds for Upcoming mode before rotating to next mode. If not set, uses dynamic calculation. When mode cycles back, continues from last game shown (no repetition)."
             },
             "live_mode_duration": {
-              "type": "number",
+              "type": ["number", "null"],
               "default": null,
               "minimum": 10,
               "maximum": 600,
@@ -583,21 +583,21 @@
           "description": "Control total duration for each mode type for this league. If not set, uses dynamic calculation (total_games × per_game_duration).",
           "properties": {
             "recent_mode_duration": {
-              "type": "number",
+              "type": ["number", "null"],
               "default": null,
               "minimum": 10,
               "maximum": 600,
               "description": "Total duration in seconds for Recent mode before rotating to next mode. If not set, uses dynamic calculation. When mode cycles back, continues from last game shown (no repetition)."
             },
             "upcoming_mode_duration": {
-              "type": "number",
+              "type": ["number", "null"],
               "default": null,
               "minimum": 10,
               "maximum": 600,
               "description": "Total duration in seconds for Upcoming mode before rotating to next mode. If not set, uses dynamic calculation. When mode cycles back, continues from last game shown (no repetition)."
             },
             "live_mode_duration": {
-              "type": "number",
+              "type": ["number", "null"],
               "default": null,
               "minimum": 10,
               "maximum": 600,
