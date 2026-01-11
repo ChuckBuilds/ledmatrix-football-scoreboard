@@ -748,8 +748,10 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
     def _display_external_mode(self, display_mode: str, force_clear: bool) -> bool:
         """Handle display for external display_mode calls (from display controller).
         
+        Handles both combined modes (football_live) and granular modes (nfl_live, ncaa_fb_recent).
+        
         Args:
-            display_mode: External mode name (e.g., 'football_live', 'football_recent')
+            display_mode: External mode name (e.g., 'football_live', 'nfl_recent', 'ncaa_fb_upcoming')
             force_clear: Whether to force clear display
             
         Returns:
@@ -763,10 +765,26 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
             self.logger.warning(f"Unknown display_mode: {display_mode}")
             return False
         
+        # Check if this is a granular mode (league-specific) or combined mode
+        # Granular modes: nfl_live, ncaa_fb_recent, etc.
+        # Combined modes: football_live, football_recent, etc.
+        league = None
+        if display_mode.startswith('nfl_'):
+            league = 'nfl'
+        elif display_mode.startswith('ncaa_fb_'):
+            league = 'ncaa_fb'
+        # If no league prefix, it's a combined mode - keep league=None
+        
         self.logger.debug(
-            f"Mode type: {mode_type}, NFL enabled: {self.nfl_enabled}, "
-            f"NCAA FB enabled: {self.ncaa_fb_enabled}"
+            f"Mode: {display_mode}, League: {league}, Mode type: {mode_type}, "
+            f"NFL enabled: {self.nfl_enabled}, NCAA FB enabled: {self.ncaa_fb_enabled}"
         )
+        
+        # If granular mode (league-specific), display only that league
+        if league:
+            return self._display_league_mode(league, mode_type, force_clear)
+        
+        # Combined mode - display across all enabled leagues
         
         # Check if we should use scroll mode for this game type
         if self._should_use_scroll_mode(mode_type):
@@ -1166,21 +1184,71 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
         """
         Return the registered plugin mode name(s) that have live content.
         
-        This should return the mode names as registered in manifest.json, not internal
-        mode names. The plugin is registered with "football_live", "football_recent", "football_upcoming".
+        Returns granular live modes (nfl_live, ncaa_fb_live) that actually have live content.
+        The plugin is now registered with granular modes in manifest.json.
         """
         if not self.is_enabled:
             return []
 
-        # Check if any league has live content
-        has_any_live = self.has_live_content()
+        live_modes = []
         
-        if has_any_live:
-            # Return the registered plugin mode name, not internal mode names
-            # The plugin is registered with "football_live" in manifest.json
-            return ["football_live"]
+        # Check NFL live content
+        if (
+            self.nfl_enabled
+            and self.nfl_live_priority
+            and hasattr(self, "nfl_live")
+        ):
+            live_games = getattr(self.nfl_live, "live_games", [])
+            if live_games:
+                # Filter out any games that are final or appear over
+                live_games = [g for g in live_games if not g.get("is_final", False)]
+                # Additional validation using helper method if available
+                if hasattr(self.nfl_live, "_is_game_really_over"):
+                    live_games = [g for g in live_games if not self.nfl_live._is_game_really_over(g)]
+                
+                if live_games:
+                    # If favorite teams are configured, only return if there are live games for favorite teams
+                    favorite_teams = getattr(self.nfl_live, "favorite_teams", [])
+                    if favorite_teams:
+                        if any(
+                            game.get("home_abbr") in favorite_teams
+                            or game.get("away_abbr") in favorite_teams
+                            for game in live_games
+                        ):
+                            live_modes.append("nfl_live")
+                    else:
+                        # No favorite teams configured, include if any live games exist
+                        live_modes.append("nfl_live")
         
-        return []
+        # Check NCAA FB live content
+        if (
+            self.ncaa_fb_enabled
+            and self.ncaa_fb_live_priority
+            and hasattr(self, "ncaa_fb_live")
+        ):
+            live_games = getattr(self.ncaa_fb_live, "live_games", [])
+            if live_games:
+                # Filter out any games that are final or appear over
+                live_games = [g for g in live_games if not g.get("is_final", False)]
+                # Additional validation using helper method if available
+                if hasattr(self.ncaa_fb_live, "_is_game_really_over"):
+                    live_games = [g for g in live_games if not self.ncaa_fb_live._is_game_really_over(g)]
+                
+                if live_games:
+                    # If favorite teams are configured, only return if there are live games for favorite teams
+                    favorite_teams = getattr(self.ncaa_fb_live, "favorite_teams", [])
+                    if favorite_teams:
+                        if any(
+                            game.get("home_abbr") in favorite_teams
+                            or game.get("away_abbr") in favorite_teams
+                            for game in live_games
+                        ):
+                            live_modes.append("ncaa_fb_live")
+                    else:
+                        # No favorite teams configured, include if any live games exist
+                        live_modes.append("ncaa_fb_live")
+        
+        return live_modes
 
     def _get_game_duration(self, league: str, mode_type: str, manager=None) -> float:
         """Get game duration for a league and mode type combination.
