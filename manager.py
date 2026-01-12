@@ -1074,6 +1074,10 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
         try:
             # Track the current active display mode for use in is_cycle_complete()
             if display_mode:
+                # Early exit: Skip if this mode is not in our available modes (disabled league)
+                if display_mode not in self.modes:
+                    self.logger.debug(f"Skipping disabled mode: {display_mode} (not in available modes: {self.modes})")
+                    return False
                 self._current_active_display_mode = display_mode
             
             # Route to appropriate display handler
