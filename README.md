@@ -46,7 +46,11 @@ Recent Game (NCAA FB):
 ### Advanced Features
 - **Background Data Service**: Non-blocking API calls with intelligent caching
 - **Smart Filtering**: Show favorite teams only or all games
-- **Mode Cycling**: Automatic rotation between live, recent, and upcoming games
+- **Granular Mode Control**: Enable/disable specific league/mode combinations independently
+- **Dual Display Styles**: Switch mode (one game at a time) or scroll mode (all games scrolling)
+- **High-FPS Scrolling**: Smooth 100+ FPS horizontal scrolling for scroll mode
+- **Font Customization**: Customize fonts, sizes, and styles for all text elements
+- **Layout Customization**: Adjust X/Y positioning offsets for all display elements
 - **Error Recovery**: Graceful handling of API failures and missing data
 - **Memory Optimized**: Efficient resource usage for Raspberry Pi deployment
 
@@ -68,11 +72,36 @@ This will show games for all AP Top 25 teams plus Georgia and Alabama (duplicate
 
 ## 📺 Display Modes
 
-The plugin supports three display modes that cycle automatically:
+### Granular Mode Control
 
-1. **Live Games**: Currently active games with real-time updates
-2. **Recent Games**: Recently completed games with final scores
-3. **Upcoming Games**: Scheduled games with start times and odds
+The plugin supports **granular display modes** that give you precise control over what's shown:
+
+- **NFL Modes**: `nfl_live`, `nfl_recent`, `nfl_upcoming`
+- **NCAA FB Modes**: `ncaa_fb_live`, `ncaa_fb_recent`, `ncaa_fb_upcoming`
+
+Each league and game type can be independently enabled or disabled. This allows you to:
+- Show only NFL live games
+- Show only NCAA FB recent games
+- Mix and match any combination of modes
+- Control exactly which content appears on your display
+
+### Display Style Options
+
+The plugin supports two display styles for each game type:
+
+1. **Switch Mode** (Default): Display one game at a time with timed transitions
+   - Shows each game for a configurable duration
+   - Smooth transitions between games
+   - Best for focused viewing of individual games
+
+2. **Scroll Mode**: High-FPS horizontal scrolling of all games
+   - All games scroll horizontally in a continuous stream
+   - League separator icons between different leagues
+   - Dynamic duration based on total content width
+   - Supports 100+ FPS smooth scrolling
+   - Best for seeing all games at once
+
+You can configure the display mode separately for live, recent, and upcoming games in each league.
 
 ## 🎨 Visual Features
 
@@ -80,10 +109,13 @@ The plugin supports three display modes that cycle automatically:
 - **Team Logos**: High-quality team logos positioned on left and right sides
 - **Scores**: Centered score display with outlined text for visibility
 - **Game Status**: Quarter/time display at top center
+- **Date Display**: Recent games show date underneath score
 - **Down & Distance**: Live game situation information (NFL only)
 - **Possession Indicator**: Visual indicators for ball possession
 - **Odds Display**: Spread and over/under betting lines
 - **Rankings**: AP Top 25 rankings for NCAA Football
+- **Customizable Layout**: Adjust positioning of all elements via X/Y offsets
+- **Customizable Fonts**: Configure font family and size for each text element
 
 ### Color Coding
 - **Live Games**: Green text for active status
@@ -133,6 +165,37 @@ This plugin reuses the proven code from the main LEDMatrix project:
 5. Configure your favorite teams and preferences
 
 
+## ⚙️ Configuration
+
+### Display Mode Settings
+
+Each league (NFL, NCAA FB) can be configured with:
+- **Enable/Disable**: Turn entire leagues on or off
+- **Mode Toggles**: Enable/disable live, recent, or upcoming games independently
+- **Display Style**: Choose "switch" (one game at a time) or "scroll" (all games scrolling) for each game type
+- **Scroll Settings**: Configure scroll speed, frame delay, gap between games, and league separators
+
+### Customization Options
+
+- **Font Customization**: Adjust font family and size for:
+  - Score text
+  - Period/time text
+  - Team names
+  - Status text
+  - Detail text (down/distance, etc.)
+  - Ranking text
+
+- **Layout Customization**: Fine-tune positioning with X/Y offsets for:
+  - Team logos (home/away)
+  - Score display
+  - Status/period text
+  - Date and time
+  - Down & distance
+  - Timeouts
+  - Possession indicator
+  - Records/rankings
+  - Betting odds
+
 ## 🐛 Troubleshooting
 
 ### Common Issues
@@ -141,11 +204,19 @@ This plugin reuses the proven code from the main LEDMatrix project:
 - **Slow updates**: Adjust the `live_update_interval` in league configuration
 - **API errors**: Check your internet connection and ESPN API availability
 - **Dynamic teams not working**: Ensure you're using exact patterns like `AP_TOP_25`
+- **Scroll mode not working**: Verify `scroll_display_mode` is set to "scroll" in config
+- **Modes not appearing**: Check that specific modes (e.g., `nfl_live`) are enabled in display_modes settings
 
 
 ## 📊 Version History
 
-### v2.0.5 (Current)
+### v2.0.7 (Current)
+- ✅ **Granular Display Modes**: Independent control of NFL/NCAA FB live/recent/upcoming modes
+- ✅ **Scroll Display Mode**: High-FPS horizontal scrolling of all games with league separators
+- ✅ **Switch Display Mode**: One game at a time with timed transitions (default)
+- ✅ **Font Customization**: Customize fonts and sizes for all text elements
+- ✅ **Layout Customization**: Adjust X/Y positioning offsets for all display elements
+- ✅ **Date Display**: Recent games show date underneath score
 - ✅ Production-ready with real ESPN API integration
 - ✅ Dynamic team resolution (AP_TOP_25, AP_TOP_10, AP_TOP_5)
 - ✅ Real-time odds display with spread and over/under
@@ -155,6 +226,8 @@ This plugin reuses the proven code from the main LEDMatrix project:
 - ✅ Memory-optimized for Raspberry Pi deployment
 
 ### Previous Versions
+- v2.0.6: Bug fixes and improvements
+- v2.0.5: Production-ready release with ESPN API integration
 - v2.0.4: Initial refactoring to reuse LEDMatrix core code
 - v1.x: Original modular implementation
 
