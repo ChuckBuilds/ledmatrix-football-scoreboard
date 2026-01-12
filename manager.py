@@ -18,7 +18,7 @@ one league are shown before moving to the next league. This provides:
 4. Granular Control: Support for enabling/disabling at league and mode levels
 
 The sequential block flow:
-- For a display mode (e.g., 'football_recent'), get enabled leagues in priority order
+- For a display mode (e.g., 'nfl_recent' or 'ncaa_fb_recent'), get enabled leagues in priority order
 - Show all games from the first league (NFL) until complete
 - Then show all games from the next league (NCAA FB) until complete
 - When all enabled leagues complete, the display mode cycle is complete
@@ -899,7 +899,7 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
         Args:
             manager: Manager instance to try
             force_clear: Whether to force clear display
-            display_mode: External display mode name (e.g., 'football_recent')
+            display_mode: External display mode name (e.g., 'nfl_recent' or 'ncaa_fb_recent')
             mode_type: Mode type ('live', 'recent', or 'upcoming')
             sticky_manager: Deprecated parameter (kept for compatibility, ignored)
             
@@ -1046,10 +1046,10 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
         NOTE: This method is legacy support. With granular modes, display() now
         handles modes directly. This method should not be called for granular modes.
         
-        Handles both combined modes (football_live) and granular modes (nfl_live, ncaa_fb_recent).
+        Handles granular modes (nfl_live, ncaa_fb_recent, etc.).
         
         Args:
-            display_mode: External mode name (e.g., 'football_live', 'nfl_recent', 'ncaa_fb_upcoming')
+            display_mode: External mode name (e.g., 'nfl_live', 'nfl_recent', 'ncaa_fb_upcoming')
             force_clear: Whether to force clear display
             
         Returns:
@@ -1063,9 +1063,8 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
             self.logger.warning(f"Unknown display_mode: {display_mode}")
             return False
         
-        # Check if this is a granular mode (league-specific) or combined mode
+        # Check if this is a granular mode (league-specific)
         # Granular modes: nfl_live, ncaa_fb_recent, etc.
-        # Combined modes: football_live, football_recent, etc.
         league = None
         if display_mode.startswith('nfl_'):
             league = 'nfl'
@@ -1139,7 +1138,7 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
         """Handle display for scroll mode.
         
         Args:
-            display_mode: External mode name (e.g., 'football_live')
+            display_mode: External mode name (e.g., 'nfl_live' or 'ncaa_fb_live')
             mode_type: Game type ('live', 'recent', 'upcoming')
             force_clear: Whether to force clear display
             
@@ -1432,9 +1431,8 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
             
             # Route to appropriate display handler
             if display_mode:
-                # Handle legacy combined modes (football_recent, football_upcoming, football_live)
-                # These should not be called with new architecture, but handle gracefully
-                # for backward compatibility during transition
+                # Handle granular modes (nfl_recent, ncaa_fb_upcoming, nfl_live, etc.)
+                # All modes are now league-specific granular modes
                 if display_mode.startswith("football_"):
                     # Legacy combined mode - extract mode_type and show all enabled leagues
                     mode_type_str = display_mode.replace("football_", "")
@@ -1837,18 +1835,18 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
         This method combines mode-level durations with dynamic duration caps to determine
         the actual duration the display controller should use for a mode.
         
-        Supports both combined modes (football_recent) and granular modes (nfl_recent).
+        Supports granular modes (nfl_recent, ncaa_fb_upcoming, etc.).
         
         Resolution logic:
-        1. Parse display_mode to extract league if granular mode
-        2. Get base mode duration from _get_mode_duration() (with league if granular)
+        1. Parse display_mode to extract league from granular mode
+        2. Get base mode duration from _get_mode_duration() (with league)
         3. Check if dynamic duration is enabled for this mode
         4. If both mode duration and dynamic cap are set, use minimum
         5. If only one is set, use that value
         6. If neither is set, return None (triggers dynamic calculation)
         
         Args:
-            display_mode: External display mode name (e.g., 'football_recent', 'nfl_recent', 'ncaa_fb_upcoming')
+            display_mode: External display mode name (e.g., 'nfl_recent', 'ncaa_fb_upcoming', 'nfl_live')
             mode_type: Mode type ('live', 'recent', or 'upcoming')
             
         Returns:
@@ -1969,7 +1967,7 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
         3. Dynamic duration cap applies to both if enabled
         
         Args:
-            display_mode: The display mode to calculate duration for (e.g., 'football_live', 'football_recent')
+            display_mode: The display mode to calculate duration for (e.g., 'nfl_live', 'nfl_recent', 'ncaa_fb_upcoming')
         
         Returns:
             Total expected duration in seconds, or None if not applicable
@@ -2499,7 +2497,7 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
         """Extract mode type (live, recent, upcoming) from display mode string.
         
         Args:
-            display_mode: Display mode string (e.g., 'football_live', 'nfl_recent')
+            display_mode: Display mode string (e.g., 'nfl_live', 'nfl_recent', 'ncaa_fb_upcoming')
             
         Returns:
             Mode type string ('live', 'recent', 'upcoming') or None
@@ -2767,7 +2765,7 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
         have completed before marking the cycle as complete.
         
         Args:
-            display_mode: External display mode name (e.g., 'football_recent')
+            display_mode: External display mode name (e.g., 'nfl_recent' or 'ncaa_fb_recent')
                          If None, checks internal mode cycling completion
         """
         if not self._dynamic_feature_enabled():
