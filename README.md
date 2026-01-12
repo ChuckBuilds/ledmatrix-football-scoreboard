@@ -103,6 +103,146 @@ The plugin supports two display styles for each game type:
 
 You can configure the display mode separately for live, recent, and upcoming games in each league.
 
+### How Rotation Works
+
+The plugin registers granular display modes directly in `manifest.json`. The display controller rotates through these modes automatically in the order they appear. Each mode can have its own `display_duration` configured in the plugin config.
+
+**Default Rotation Order:**
+1. `nfl_recent`
+2. `nfl_upcoming`
+3. `nfl_live`
+4. `ncaa_fb_recent`
+5. `ncaa_fb_upcoming`
+6. `ncaa_fb_live`
+
+**Customizing Rotation Order:**
+You can reorder modes in `manifest.json` to change the rotation sequence. For example, to show all Recent games before Upcoming:
+
+```json
+"display_modes": [
+  "nfl_recent",
+  "ncaa_fb_recent",
+  "nfl_upcoming",
+  "ncaa_fb_upcoming",
+  "nfl_live",
+  "ncaa_fb_live"
+]
+```
+
+**Disabled Leagues/Modes:**
+If a league or mode is disabled in the config, the plugin returns `False` for that mode, and the display controller automatically skips it. This allows you to:
+- Disable entire leagues (e.g., disable NCAA FB to show only NFL)
+- Disable specific modes per league (e.g., disable `nfl_upcoming` but keep `nfl_recent` and `nfl_live`)
+- Mix and match enabled/disabled modes as needed
+
+### Mode Durations
+
+Each granular mode respects its own mode duration settings:
+- `nfl_recent` uses `nfl.mode_durations.recent_mode_duration` or top-level `recent_mode_duration`
+- `ncaa_fb_upcoming` uses `ncaa_fb.mode_durations.upcoming_mode_duration` or top-level `upcoming_mode_duration`
+- Each mode can have independent duration configuration
+
+### Live Priority
+
+When live games are available, the display controller prioritizes live modes (`nfl_live`, `ncaa_fb_live`) based on the `has_live_content()` and `get_live_modes()` methods. The plugin returns only the granular live modes that actually have live content.
+
+## ⏱️ Duration Configuration
+
+The plugin offers flexible duration control at multiple levels to fine-tune your display experience:
+
+### Per-Game Duration
+
+Controls how long each individual game displays before rotating to the next game **within the same mode**.
+
+**Configuration:**
+- `live_game_duration`: Seconds per live game (default: 30s)
+- `recent_game_duration`: Seconds per recent game (default: 15s)
+- `upcoming_game_duration`: Seconds per upcoming game (default: 15s)
+
+**Example:** With `recent_game_duration: 15`, each recent game shows for 15 seconds before moving to the next.
+
+### Per-Mode Duration
+
+Controls the **total time** a mode displays before rotating to the next mode, regardless of how many games are available.
+
+**Configuration:**
+- `recent_mode_duration`: Total seconds for Recent mode (default: dynamic)
+- `upcoming_mode_duration`: Total seconds for Upcoming mode (default: dynamic)
+- `live_mode_duration`: Total seconds for Live mode (default: dynamic)
+
+**Example:** With `recent_mode_duration: 60` and `recent_game_duration: 15`, Recent mode shows 4 games (60s ÷ 15s = 4) before rotating to Upcoming mode.
+
+### How They Work Together
+
+**Per-game duration** + **Per-mode duration**:
+```
+Recent Mode (60s total):
+  ├─ Game 1: 15s
+  ├─ Game 2: 15s
+  ├─ Game 3: 15s
+  └─ Game 4: 15s
+  → Rotate to Upcoming Mode
+
+Upcoming Mode (60s total):
+  ├─ Game 1: 15s
+  └─ ... (continues)
+```
+
+### Resume Functionality
+
+When a mode times out before showing all games, it **resumes from where it left off** on the next cycle:
+
+```
+Cycle 1: Recent Mode (60s, 10 games available)
+  ├─ Game 1-4 shown ✓
+  └─ Time expires → Rotate
+
+Cycle 2: Recent Mode resumes
+  ├─ Game 5-8 shown ✓ (continues from Game 4, no repetition)
+  └─ Time expires → Rotate
+
+Cycle 3: Recent Mode resumes
+  ├─ Game 9-10 shown ✓
+  └─ All games shown → Full cycle complete → Reset progress
+```
+
+### Dynamic Duration (Fallback)
+
+If per-mode durations are **not** configured, the plugin uses **dynamic calculation**:
+- **Formula**: `total_duration = number_of_games × per_game_duration`
+- **Example**: 24 games @ 15s each = 360 seconds for the mode
+
+This ensures all games are shown but may result in very long mode durations if you have many games.
+
+### Per-League Overrides
+
+You can set different durations per league using the `mode_durations` section:
+
+```json
+{
+  "nfl": {
+    "mode_durations": {
+      "recent_mode_duration": 45,
+      "upcoming_mode_duration": 30
+    }
+  },
+  "ncaa_fb": {
+    "mode_durations": {
+      "recent_mode_duration": 60
+    }
+  }
+}
+```
+
+When multiple leagues are enabled with different durations, the system uses the **maximum** to ensure all leagues get their time.
+
+### Integration with Dynamic Duration Caps
+
+If you have dynamic duration caps configured (e.g., `max_duration_seconds: 120`), the system uses the **minimum** of:
+- Per-mode duration (e.g., 180s)
+- Dynamic duration cap (e.g., 120s)
+- **Result**: 120s (ensures cap is respected)
+
 ## 🎨 Visual Features
 
 ### Professional Scorebug Display
@@ -116,6 +256,73 @@ You can configure the display mode separately for live, recent, and upcoming gam
 - **Rankings**: AP Top 25 rankings for NCAA Football
 - **Customizable Layout**: Adjust positioning of all elements via X/Y offsets
 - **Customizable Fonts**: Configure font family and size for each text element
+
+### Layout Customization
+
+The plugin supports fine-tuning element positioning for custom display sizes. All offsets are relative to the default calculated positions, allowing you to adjust elements without breaking the layout.
+
+#### Accessing Layout Settings
+
+Layout customization is available in the web UI under the plugin configuration section:
+1. Navigate to **Plugins** → **Football Scoreboard** → **Configuration**
+2. Expand the **Customization** section
+3. Find the **Layout Positioning** subsection
+
+#### Offset Values
+
+- **Positive values**: Move element right (x_offset) or down (y_offset)
+- **Negative values**: Move element left (x_offset) or up (y_offset)
+- **Default (0)**: No change from calculated position
+
+#### Available Elements
+
+- **home_logo**: Home team logo position (x_offset, y_offset)
+- **away_logo**: Away team logo position (x_offset, y_offset)
+- **score**: Game score position (x_offset, y_offset)
+- **status_text**: Status/period text position (x_offset, y_offset)
+- **date**: Game date position (x_offset, y_offset)
+- **time**: Game time position (x_offset, y_offset)
+- **records**: Team records/rankings position (away_x_offset, home_x_offset, y_offset)
+
+#### Example Adjustments
+
+**Move logos inward for smaller displays:**
+```json
+{
+  "customization": {
+    "layout": {
+      "home_logo": { "x_offset": -5 },
+      "away_logo": { "x_offset": 5 }
+    }
+  }
+}
+```
+
+**Adjust score position:**
+```json
+{
+  "customization": {
+    "layout": {
+      "score": { "x_offset": 0, "y_offset": -2 }
+    }
+  }
+}
+```
+
+**Shift records upward:**
+```json
+{
+  "customization": {
+    "layout": {
+      "records": { "y_offset": -3 }
+    }
+  }
+}
+```
+
+#### Display Size Compatibility
+
+Layout offsets work across different display sizes. The plugin calculates default positions based on your display dimensions, and offsets are applied relative to those defaults. This ensures compatibility with various LED matrix configurations.
 
 ### Color Coding
 - **Live Games**: Green text for active status

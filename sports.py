@@ -257,6 +257,42 @@ class SportsCore(ABC):
             self.logger.error(f"Error loading default font: {e}")
             return ImageFont.load_default()
     
+    def _get_layout_offset(self, element: str, axis: str, default: int = 0) -> int:
+        """
+        Get layout offset for a specific element and axis.
+        
+        Args:
+            element: Element name (e.g., 'home_logo', 'score', 'status_text')
+            axis: 'x_offset' or 'y_offset' (or 'away_x_offset', 'home_x_offset' for records)
+            default: Default value if not configured (default: 0)
+        
+        Returns:
+            Offset value from config or default (always returns int)
+        """
+        try:
+            layout_config = self.config.get('customization', {}).get('layout', {})
+            element_config = layout_config.get(element, {})
+            offset_value = element_config.get(axis, default)
+            
+            # Ensure we return an integer (handle float/string from config)
+            if isinstance(offset_value, (int, float)):
+                return int(offset_value)
+            elif isinstance(offset_value, str):
+                # Try to convert string to int
+                try:
+                    return int(float(offset_value))
+                except (ValueError, TypeError):
+                    self.logger.warning(
+                        f"Invalid layout offset value for {element}.{axis}: '{offset_value}', using default {default}"
+                    )
+                    return default
+            else:
+                return default
+        except Exception as e:
+            # Gracefully handle any config access errors
+            self.logger.debug(f"Error reading layout offset for {element}.{axis}: {e}, using default {default}")
+            return default
+    
     def _load_fonts(self):
         """Load fonts used by the scoreboard from config or use defaults."""
         fonts = {}
@@ -928,9 +964,9 @@ class SportsUpcoming(SportsCore):
                 # Filter criteria: must be upcoming ('pre' state)
                 if game and game["is_upcoming"]:
                     # Only fetch odds for games that will be displayed
-                    if self.show_favorite_teams_only:
-                        if not self.favorite_teams:
-                            continue
+                    # If show_favorite_teams_only is True, filter by favorite teams
+                    # But if no favorite teams are configured, show all games (fallback)
+                    if self.show_favorite_teams_only and self.favorite_teams:
                         if (
                             game["home_abbr"] not in self.favorite_teams
                             and game["away_abbr"] not in self.favorite_teams
@@ -964,8 +1000,8 @@ class SportsUpcoming(SportsCore):
                     f"Found {favorite_games_found} favorite team upcoming games"
                 )
 
-            # Filter for favorite teams only if the config is set
-            if self.show_favorite_teams_only:
+            # Filter for favorite teams only if the config is set AND favorite teams exist
+            if self.show_favorite_teams_only and self.favorite_teams:
                 # Select N games per favorite team (where N = upcoming_games_to_show)
                 # Example: upcoming_games_to_show=2 with 3 favorite teams = 6 games total
                 team_games = []
@@ -999,16 +1035,49 @@ class SportsUpcoming(SportsCore):
                         unique_team_games.append(game)
                 team_games = unique_team_games
             else:
-                # No favorite teams: apply total limit (not per-team)
-                # Example: upcoming_games_to_show=1 shows the next 1 game total (earliest)
-                team_games = processed_games
-                # Sort by game time, earliest first
+                # No favorite teams: apply per-team limit to ALL teams
+                # Example: upcoming_games_to_show=1 with 32 teams = up to 32 games total (1 per team)
+                # Extract all unique teams from processed games
+                all_teams = set()
+                for game in processed_games:
+                    home_abbr = game.get("home_abbr")
+                    away_abbr = game.get("away_abbr")
+                    if home_abbr:
+                        all_teams.add(home_abbr)
+                    if away_abbr:
+                        all_teams.add(away_abbr)
+                
+                # Apply per-team limit to all teams
+                team_games = []
+                for team in all_teams:
+                    # Find games where this team is playing
+                    team_specific_games = [
+                        game
+                        for game in processed_games
+                        if game.get("home_abbr") == team or game.get("away_abbr") == team
+                    ]
+                    if team_specific_games:
+                        # Sort by game time and take the earliest N games
+                        team_specific_games.sort(
+                            key=lambda g: g.get("start_time_utc")
+                            or datetime.max.replace(tzinfo=timezone.utc)
+                        )
+                        # Take up to upcoming_games_to_show games for this team
+                        team_games.extend(team_specific_games[: self.upcoming_games_to_show])
+                
+                # Sort the final list by game time (earliest first)
                 team_games.sort(
                     key=lambda g: g.get("start_time_utc")
                     or datetime.max.replace(tzinfo=timezone.utc)
                 )
-                # Limit to the specified number of upcoming games (total, not per-team)
-                team_games = team_games[: self.upcoming_games_to_show]
+                # Remove duplicates (in case a game involves multiple teams)
+                seen_ids = set()
+                unique_team_games = []
+                for game in team_games:
+                    if game.get("id") not in seen_ids:
+                        seen_ids.add(game.get("id"))
+                        unique_team_games.append(game)
+                team_games = unique_team_games
 
             # Log changes or periodically
             should_log = (
@@ -1126,13 +1195,13 @@ class SportsUpcoming(SportsCore):
 
             center_y = display_height // 2
 
-            # MLB-style logo positions
-            home_x = display_width - home_logo.width + 2
-            home_y = center_y - (home_logo.height // 2)
+            # MLB-style logo positions with layout offsets
+            home_x = display_width - home_logo.width + 2 + self._get_layout_offset('home_logo', 'x_offset')
+            home_y = center_y - (home_logo.height // 2) + self._get_layout_offset('home_logo', 'y_offset')
             main_img.paste(home_logo, (home_x, home_y), home_logo)
 
-            away_x = -2
-            away_y = center_y - (away_logo.height // 2)
+            away_x = -2 + self._get_layout_offset('away_logo', 'x_offset')
+            away_y = center_y - (away_logo.height // 2) + self._get_layout_offset('away_logo', 'y_offset')
             main_img.paste(away_logo, (away_x, away_y), away_logo)
 
             # Draw Text Elements on Overlay
@@ -1141,31 +1210,31 @@ class SportsUpcoming(SportsCore):
 
             # Note: Rankings are now handled in the records/rankings section below
 
-            # "Next Game" at the top (use smaller status font)
+            # "Next Game" at the top (use smaller status font) with layout offsets
             status_font = self.fonts["status"]
             if display_width > 128:
                 status_font = self.fonts["time"]
             status_text = "Next Game"
             status_width = draw_overlay.textlength(status_text, font=status_font)
-            status_x = (display_width - status_width) // 2
-            status_y = 1  # Changed from 2
+            status_x = (display_width - status_width) // 2 + self._get_layout_offset('status_text', 'x_offset')
+            status_y = 1 + self._get_layout_offset('status_text', 'y_offset')  # Changed from 2
             self._draw_text_with_outline(
                 draw_overlay, status_text, (status_x, status_y), status_font
             )
 
-            # Date text (centered, below "Next Game")
+            # Date text (centered, below "Next Game") with layout offsets
             date_width = draw_overlay.textlength(game_date, font=self.fonts["time"])
-            date_x = (display_width - date_width) // 2
+            date_x = (display_width - date_width) // 2 + self._get_layout_offset('date', 'x_offset')
             # Adjust Y position to stack date and time nicely
-            date_y = center_y - 7  # Raise date slightly
+            date_y = center_y - 7 + self._get_layout_offset('date', 'y_offset')  # Raise date slightly
             self._draw_text_with_outline(
                 draw_overlay, game_date, (date_x, date_y), self.fonts["time"]
             )
 
-            # Time text (centered, below Date)
+            # Time text (centered, below Date) with layout offsets
             time_width = draw_overlay.textlength(game_time, font=self.fonts["time"])
-            time_x = (display_width - time_width) // 2
-            time_y = date_y + 9  # Place time below date
+            time_x = (display_width - time_width) // 2 + self._get_layout_offset('time', 'x_offset')
+            time_y = date_y + 9 + self._get_layout_offset('time', 'y_offset')  # Place time below date
             self._draw_text_with_outline(
                 draw_overlay, game_time, (time_x, time_y), self.fonts["time"]
             )
@@ -1193,7 +1262,7 @@ class SportsUpcoming(SportsCore):
 
                 record_bbox = draw_overlay.textbbox((0, 0), "0-0", font=record_font)
                 record_height = record_bbox[3] - record_bbox[1]
-                record_y = self.display_height - record_height
+                record_y = self.display_height - record_height + self._get_layout_offset('records', 'y_offset')
                 self.logger.debug(
                     f"Record positioning: height={record_height}, record_y={record_y}, display_height={self.display_height}"
                 )
@@ -1222,7 +1291,7 @@ class SportsUpcoming(SportsCore):
                         away_text = ""
 
                     if away_text:
-                        away_record_x = 0
+                        away_record_x = 0 + self._get_layout_offset('records', 'away_x_offset')
                         self.logger.debug(
                             f"Drawing away ranking '{away_text}' at ({away_record_x}, {record_y}) with font size {record_font.size if hasattr(record_font, 'size') else 'unknown'}"
                         )
@@ -1261,7 +1330,7 @@ class SportsUpcoming(SportsCore):
                             (0, 0), home_text, font=record_font
                         )
                         home_record_width = home_record_bbox[2] - home_record_bbox[0]
-                        home_record_x = self.display_width - home_record_width
+                        home_record_x = self.display_width - home_record_width + self._get_layout_offset('records', 'home_x_offset')
                         self.logger.debug(
                             f"Drawing home ranking '{home_text}' at ({home_record_x}, {record_y}) with font size {record_font.size if hasattr(record_font, 'size') else 'unknown'}"
                         )
@@ -1521,20 +1590,55 @@ class SportsRecent(SportsCore):
                         f"Game {i+1} for display: {game['away_abbr']} @ {game['home_abbr']} - {game.get('start_time_utc')} - Score: {game['away_score']}-{game['home_score']}"
                     )
             else:
-                # No favorite teams: apply total limit (not per-team)
-                # Example: recent_games_to_show=5 shows the 5 most recent games total
-                team_games = processed_games
+                # No favorite teams: apply per-team limit to ALL teams
+                # Example: recent_games_to_show=1 with 32 teams = up to 32 games total (1 per team)
+                # Extract all unique teams from processed games
+                all_teams = set()
+                for game in processed_games:
+                    home_abbr = game.get("home_abbr")
+                    away_abbr = game.get("away_abbr")
+                    if home_abbr:
+                        all_teams.add(home_abbr)
+                    if away_abbr:
+                        all_teams.add(away_abbr)
+                
                 self.logger.info(
-                    f"Found {len(processed_games)} total final games within last 21 days (no favorite teams configured)"
+                    f"Found {len(processed_games)} total final games within last 21 days (no favorite teams configured, applying per-team limits to {len(all_teams)} teams)"
                 )
-                # Sort by game time, most recent first
+                
+                # Apply per-team limit to all teams
+                team_games = []
+                for team in all_teams:
+                    # Find games where this team is playing
+                    team_specific_games = [
+                        game
+                        for game in processed_games
+                        if game.get("home_abbr") == team or game.get("away_abbr") == team
+                    ]
+                    if team_specific_games:
+                        # Sort by game time and take the most recent N games
+                        team_specific_games.sort(
+                            key=lambda g: g.get("start_time_utc")
+                            or datetime.min.replace(tzinfo=timezone.utc),
+                            reverse=True,
+                        )
+                        # Take up to recent_games_to_show games for this team
+                        team_games.extend(team_specific_games[: self.recent_games_to_show])
+                
+                # Sort the final list by game time (most recent first)
                 team_games.sort(
                     key=lambda g: g.get("start_time_utc")
                     or datetime.min.replace(tzinfo=timezone.utc),
                     reverse=True,
                 )
-                # Limit to the specified number of recent games (total, not per-team)
-                team_games = team_games[: self.recent_games_to_show]
+                # Remove duplicates (in case a game involves multiple teams)
+                seen_ids = set()
+                unique_team_games = []
+                for game in team_games:
+                    if game.get("id") not in seen_ids:
+                        seen_ids.add(game.get("id"))
+                        unique_team_games.append(game)
+                team_games = unique_team_games
 
             # Check if the list of games to display has changed
             new_game_ids = {g["id"] for g in team_games}
@@ -1634,46 +1738,48 @@ class SportsRecent(SportsCore):
 
             center_y = display_height // 2
 
-            # MLB-style logo positioning (closer to edges)
-            home_x = display_width - home_logo.width + 2
-            home_y = center_y - (home_logo.height // 2)
+            # MLB-style logo positioning (closer to edges) with layout offsets
+            home_x = display_width - home_logo.width + 2 + self._get_layout_offset('home_logo', 'x_offset')
+            home_y = center_y - (home_logo.height // 2) + self._get_layout_offset('home_logo', 'y_offset')
             main_img.paste(home_logo, (home_x, home_y), home_logo)
 
-            away_x = -2
-            away_y = center_y - (away_logo.height // 2)
+            away_x = -2 + self._get_layout_offset('away_logo', 'x_offset')
+            away_y = center_y - (away_logo.height // 2) + self._get_layout_offset('away_logo', 'y_offset')
             main_img.paste(away_logo, (away_x, away_y), away_logo)
 
             # Draw Text Elements on Overlay
             # Note: Rankings are now handled in the records/rankings section below
 
-            # Final Scores (Centered, same position as live)
+            # Final Scores (Centered vertically, same position as live) with layout offsets
             home_score = str(game.get("home_score", "0"))
             away_score = str(game.get("away_score", "0"))
             score_text = f"{away_score}-{home_score}"
             score_width = draw_overlay.textlength(score_text, font=self.fonts["score"])
-            score_x = (display_width - score_width) // 2
-            score_y = display_height - 14
+            score_x = (display_width - score_width) // 2 + self._get_layout_offset('score', 'x_offset')
+            score_y = (display_height // 2) - 3 + self._get_layout_offset('score', 'y_offset')  # Centered vertically, same as live games
             self._draw_text_with_outline(
                 draw_overlay, score_text, (score_x, score_y), self.fonts["score"]
             )
 
-            # Game date (Below score, centered)
+            # Game date (Bottom of display, one line above bottom edge, centered) with layout offsets
+            # Use same font as upcoming games (time font) for consistency
             game_date = game.get("game_date", "")
             if game_date:
-                date_width = draw_overlay.textlength(game_date, font=self.fonts["detail"])
-                date_x = (display_width - date_width) // 2
-                date_y = display_height - 7  # Position below score, similar to scroll mode
+                date_width = draw_overlay.textlength(game_date, font=self.fonts["time"])
+                date_x = (display_width - date_width) // 2 + self._get_layout_offset('date', 'x_offset')
+                # Position date at bottom of display, one line above the bottom edge
+                date_y = display_height - 7 + self._get_layout_offset('date', 'y_offset')  # One line above bottom edge
                 self._draw_text_with_outline(
-                    draw_overlay, game_date, (date_x, date_y), self.fonts["detail"]
+                    draw_overlay, game_date, (date_x, date_y), self.fonts["time"]
                 )
 
-            # "Final" text (Top center)
+            # "Final" text (Top center) with layout offsets
             status_text = game.get(
                 "period_text", "Final"
             )  # Use formatted period text (e.g., "Final/OT") or default "Final"
             status_width = draw_overlay.textlength(status_text, font=self.fonts["time"])
-            status_x = (display_width - status_width) // 2
-            status_y = 1
+            status_x = (display_width - status_width) // 2 + self._get_layout_offset('status_text', 'x_offset')
+            status_y = 1 + self._get_layout_offset('status_text', 'y_offset')
             self._draw_text_with_outline(
                 draw_overlay, status_text, (status_x, status_y), self.fonts["time"]
             )
@@ -1769,7 +1875,7 @@ class SportsRecent(SportsCore):
                             (0, 0), home_text, font=record_font
                         )
                         home_record_width = home_record_bbox[2] - home_record_bbox[0]
-                        home_record_x = display_width - home_record_width
+                        home_record_x = display_width - home_record_width + self._get_layout_offset('records', 'home_x_offset')
                         self.logger.debug(
                             f"Drawing home ranking '{home_text}' at ({home_record_x}, {record_y}) with font size {record_font.size if hasattr(record_font, 'size') else 'unknown'}"
                         )
@@ -2005,32 +2111,63 @@ class SportsLive(SportsCore):
                 for game in data["events"]:
                     details = self._extract_game_details(game)
                     if details:
-                        # Log game status for debugging
+                        # Log game status for debugging - use INFO level to see what's happening
                         status_state = game.get("competitions", [{}])[0].get("status", {}).get("type", {}).get("state", "unknown")
-                        self.logger.debug(
-                            f"Game {details.get('away_abbr', '?')}@{details.get('home_abbr', '?')}: "
-                            f"state={status_state}, is_live={details.get('is_live')}, "
-                            f"is_halftime={details.get('is_halftime')}, is_final={details.get('is_final')}"
+                        status_name = game.get("competitions", [{}])[0].get("status", {}).get("type", {}).get("name", "unknown")
+                        self.logger.info(
+                            f"[{self.sport_key.upper()} Live] Game {details.get('away_abbr', '?')}@{details.get('home_abbr', '?')}: "
+                            f"state={status_state}, name={status_name}, is_live={details.get('is_live')}, "
+                            f"is_halftime={details.get('is_halftime')}, is_final={details.get('is_final')}, "
+                            f"clock={details.get('clock', 'N/A')}, period={details.get('period', 'N/A')}, "
+                            f"status_text={details.get('status_text', 'N/A')}"
                         )
                         
                         # Filter out final games and games that appear to be over
                         if details.get("is_final", False):
-                            self.logger.debug(
-                                f"Filtered out final game: {details.get('away_abbr')}@{details.get('home_abbr')} "
+                            self.logger.info(
+                                f"[{self.sport_key.upper()} Live] Filtered out final game: {details.get('away_abbr')}@{details.get('home_abbr')} "
                                 f"(is_final={details.get('is_final')}, clock={details.get('clock')}, period={details.get('period')})"
                             )
                             continue
                         
                         # Additional validation: check if game appears to be over
                         if self._is_game_really_over(details):
-                            self.logger.debug(
-                                f"Skipping game that appears final: {details.get('away_abbr')}@{details.get('home_abbr')} "
+                            self.logger.info(
+                                f"[{self.sport_key.upper()} Live] Skipping game that appears final: {details.get('away_abbr')}@{details.get('home_abbr')} "
                                 f"(clock={details.get('clock')}, period={details.get('period')}, period_text={details.get('period_text')})"
                             )
                             continue
                         
-                        if details["is_live"] or details["is_halftime"]:
+                        # Check if game should be considered live
+                        # First check explicit flags
+                        is_explicitly_live = details["is_live"] or details["is_halftime"]
+                        
+                        # Also check if game appears to be live based on status even if not explicitly marked
+                        # Some APIs may mark games differently (e.g., "in progress" vs "in")
+                        status_text = details.get("status_text", "").upper()
+                        appears_live_by_status = (
+                            (status_state == "in" and not details.get("is_final", False))
+                            or (status_name and "in" in status_name.lower() and "progress" in status_name.lower())
+                            or (status_text and ("Q1" in status_text or "Q2" in status_text or "Q3" in status_text or "Q4" in status_text or "OT" in status_text))
+                            or (details.get("clock") and details.get("clock") != "" and details.get("clock") != "0:00" and details.get("clock") != ":00")
+                        )
+                        
+                        is_actually_live = is_explicitly_live or appears_live_by_status
+                        
+                        if is_actually_live:
+                            if appears_live_by_status and not is_explicitly_live:
+                                # Game appears to be live but wasn't explicitly marked as such - log this
+                                self.logger.warning(
+                                    f"[{self.sport_key.upper()} Live] Game {details.get('away_abbr')}@{details.get('home_abbr')} "
+                                    f"appears live (state={status_state}, name={status_name}, clock={details.get('clock')}) "
+                                    f"but is_live={details.get('is_live')}, is_halftime={details.get('is_halftime')} - treating as live"
+                                )
                             live_or_halftime_count += 1
+                            self.logger.info(
+                                f"[{self.sport_key.upper()} Live] Found live/halftime game: {details.get('away_abbr')}@{details.get('home_abbr')} "
+                                f"(is_live={details.get('is_live')}, is_halftime={details.get('is_halftime')}, "
+                                f"state={status_state}, appears_live_by_status={appears_live_by_status})"
+                            )
                             
                             # Track game timestamps for stale detection
                             game_id = details.get("id")
@@ -2052,24 +2189,30 @@ class SportsLive(SportsCore):
                                     timestamps["last_score"] = current_score
                                     timestamps["score_changed_at"] = time.time()
                             
-                            # If show_favorite_teams_only is true, only add if it's a favorite.
-                            # Otherwise, add all games.
-                            should_include = (
-                                self.show_all_live
-                                or not self.show_favorite_teams_only
-                                or (
-                                    self.show_favorite_teams_only
-                                    and (
-                                        details["home_abbr"] in self.favorite_teams
-                                        or details["away_abbr"] in self.favorite_teams
-                                    )
+                            # Determine if this game should be included based on filtering settings
+                            # Priority: show_all_live > favorite_teams_only (if favorites exist) > show all
+                            if self.show_all_live:
+                                # Always show all live games if show_all_live is enabled
+                                should_include = True
+                            elif not self.show_favorite_teams_only:
+                                # If favorite teams filtering is disabled, show all games
+                                should_include = True
+                            elif not self.favorite_teams:
+                                # If favorite teams filtering is enabled but no favorites are configured,
+                                # show all games (same behavior as SportsUpcoming)
+                                should_include = True
+                            else:
+                                # Favorite teams filtering is enabled AND favorites are configured
+                                # Only show games involving favorite teams
+                                should_include = (
+                                    details["home_abbr"] in self.favorite_teams
+                                    or details["away_abbr"] in self.favorite_teams
                                 )
-                            )
                             
                             if not should_include:
                                 filtered_out_count += 1
-                                self.logger.debug(
-                                    f"Filtered out live game {details.get('away_abbr')}@{details.get('home_abbr')}: "
+                                self.logger.info(
+                                    f"[{self.sport_key.upper()} Live] Filtered out live game {details.get('away_abbr')}@{details.get('home_abbr')}: "
                                     f"show_all_live={self.show_all_live}, "
                                     f"show_favorite_teams_only={self.show_favorite_teams_only}, "
                                     f"favorite_teams={self.favorite_teams}"
@@ -2080,11 +2223,14 @@ class SportsLive(SportsCore):
                                     self._fetch_odds(details)
                                 new_live_games.append(details)
                 
-                self.logger.debug(
-                    f"Live game filtering: {total_events} total events, "
+                self.logger.info(
+                    f"[{self.sport_key.upper()} Live] Live game filtering: {total_events} total events, "
                     f"{live_or_halftime_count} live/halftime, "
                     f"{filtered_out_count} filtered out, "
-                    f"{len(new_live_games)} included"
+                    f"{len(new_live_games)} included | "
+                    f"show_all_live={self.show_all_live}, "
+                    f"show_favorite_teams_only={self.show_favorite_teams_only}, "
+                    f"favorite_teams={self.favorite_teams if self.favorite_teams else '[] (showing all)'}"
                 )
                 
                 # Detect and remove stale games

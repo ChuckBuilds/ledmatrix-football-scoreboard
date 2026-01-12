@@ -14,8 +14,13 @@ This module provides:
 import logging
 import os
 from pathlib import Path
-from typing import Dict, Any, Optional, Tuple
+from typing import Dict, Any, Optional, Tuple, Union
 from PIL import Image, ImageDraw, ImageFont
+try:
+    import freetype
+    FREETYPE_AVAILABLE = True
+except ImportError:
+    FREETYPE_AVAILABLE = False
 
 logger = logging.getLogger(__name__)
 
@@ -57,16 +62,23 @@ class GameRenderer:
         # Load fonts
         self.fonts = self._load_fonts()
         
-        # Display options
-        self.show_odds = config.get("show_odds", False)
-        self.show_records = config.get("show_records", False)
-        self.show_ranking = config.get("show_ranking", False)
+        # Display options are read dynamically per league (stored in config under league.display_options)
+        # These defaults are kept for backward compatibility but should not be used
+        self._default_show_odds = config.get("show_odds", False)
+        self._default_show_records = config.get("show_records", False)
+        self._default_show_ranking = config.get("show_ranking", False)
         
         # Rankings cache (populated externally)
         self._team_rankings_cache: Dict[str, int] = {}
         
-    def _load_fonts(self) -> Dict[str, ImageFont.FreeTypeFont]:
-        """Load fonts used by the scoreboard from config or use defaults."""
+    def _load_fonts(self) -> Dict[str, Union[ImageFont.FreeTypeFont, Any]]:
+        """
+        Load fonts used by the scoreboard from config or use defaults.
+        
+        Returns:
+            Dictionary mapping font names to font objects (ImageFont.FreeTypeFont for TTF/OTF,
+            freetype.Face for BDF fonts)
+        """
         fonts = {}
         
         # Get customization config
@@ -105,31 +117,75 @@ class GameRenderer:
         
         return fonts
     
-    def _load_custom_font(self, element_config: Dict[str, Any], default_size: int = 8) -> ImageFont.FreeTypeFont:
-        """Load a custom font from an element configuration dictionary."""
+    def _load_custom_font(self, element_config: Dict[str, Any], default_size: int = 8) -> Union[ImageFont.FreeTypeFont, Any]:
+        """
+        Load a custom font from an element configuration dictionary.
+        
+        Supports TTF/OTF fonts via ImageFont.truetype() and BDF fonts via freetype.Face().
+        
+        Returns:
+            ImageFont.FreeTypeFont for TTF/OTF fonts, freetype.Face for BDF fonts, or fallback font
+        """
         font_name = element_config.get('font', 'PressStart2P-Regular.ttf')
         font_size = int(element_config.get('font_size', default_size))
         font_path = os.path.join('assets', 'fonts', font_name)
         
         try:
             if os.path.exists(font_path):
-                if font_path.lower().endswith('.ttf'):
+                if font_path.lower().endswith('.ttf') or font_path.lower().endswith('.otf'):
+                    # TTF/OTF fonts - use ImageFont.truetype()
                     return ImageFont.truetype(font_path, font_size)
                 elif font_path.lower().endswith('.bdf'):
-                    try:
-                        return ImageFont.truetype(font_path, font_size)
-                    except Exception:
-                        self.logger.warning(f"Could not load BDF font {font_name}, using default")
+                    # BDF fonts - ImageFont.truetype() does NOT support BDF files
+                    # Option (b): Try to load pre-converted .pil/.pbm file (recommended approach)
+                    # Use pilfont.py to convert: pilfont.py font.bdf (creates font.pil and font.pbm)
+                    pil_font_path = font_path.rsplit('.', 1)[0] + '.pil'
+                    if os.path.exists(pil_font_path):
+                        try:
+                            font = ImageFont.load(pil_font_path)
+                            self.logger.debug(f"Loaded BDF font from pre-converted PIL file: {pil_font_path}")
+                            return font
+                        except Exception as e:
+                            # Pre-converted file exists but failed to load - will fall through to fallback
+                            pass
+                    
+                    # If no pre-converted file or loading failed, BDF cannot be loaded directly
+                    # Note: PIL.BdfFontFile doesn't exist in standard Pillow, so pre-conversion is required
+                    # The warning will be logged only if fallback also fails (see below)
+                else:
+                    self.logger.warning(f"Unknown font file type: {font_name}, trying fallback")
+            else:
+                self.logger.warning(f"Font file not found: {font_path}, trying fallback")
         except Exception as e:
-            self.logger.error(f"Error loading font {font_name}: {e}")
+            self.logger.error(f"Error loading font {font_name}: {e}, trying fallback")
         
         # Fallback to default font
         default_font_path = os.path.join('assets', 'fonts', 'PressStart2P-Regular.ttf')
         try:
             if os.path.exists(default_font_path):
                 return ImageFont.truetype(default_font_path, font_size)
-        except Exception:
-            pass
+        except Exception as e:
+            # Default font also failed - log clear warning about BDF handling failure if this was a BDF font
+            if font_path.lower().endswith('.bdf'):
+                pil_font_path = font_path.rsplit('.', 1)[0] + '.pil'
+                self.logger.warning(
+                    f"BDF font loading failed for {font_name}: "
+                    f"No pre-converted .pil file found at {pil_font_path}. "
+                    f"Convert BDF to PIL format using: pilfont.py {font_path}. "
+                    f"Default font fallback also failed: {e}. Using PIL default font."
+                )
+            else:
+                self.logger.warning(f"Could not load default font: {e}, using PIL default font")
+        
+        # Final fallback - only log warning for BDF fonts if we haven't already warned above
+        if font_path.lower().endswith('.bdf'):
+            # Check if we already logged a warning (if default font path didn't exist, we need to warn here)
+            if not os.path.exists(default_font_path):
+                pil_font_path = font_path.rsplit('.', 1)[0] + '.pil'
+                self.logger.warning(
+                    f"BDF font {font_name} could not be loaded (no pre-converted .pil file found at {pil_font_path}). "
+                    f"Using PIL default font. To fix: run 'pilfont.py {font_path}' to create {pil_font_path}"
+                )
         
         return ImageFont.load_default()
     
@@ -200,11 +256,23 @@ class GameRenderer:
         draw: ImageDraw.Draw, 
         text: str, 
         position: Tuple[int, int], 
-        font: ImageFont.FreeTypeFont, 
+        font: Union[ImageFont.FreeTypeFont, Any], 
         fill: Tuple[int, int, int] = (255, 255, 255), 
         outline_color: Tuple[int, int, int] = (0, 0, 0)
     ) -> None:
-        """Draw text with a black outline for better readability."""
+        """
+        Draw text with a black outline for better readability.
+        
+        Note: BDF fonts loaded via freetype.Face() are not directly compatible with
+        ImageDraw.text(). If a BDF font is passed, it will fall back to default font.
+        """
+        # Check if this is a freetype.Face (BDF font) - ImageDraw.text() doesn't support it
+        if FREETYPE_AVAILABLE and hasattr(font, 'set_char_size'):
+            # This is a freetype.Face (BDF font) - ImageDraw.text() won't work
+            # Fall back to default font for rendering
+            self.logger.warning(f"BDF font detected but ImageDraw.text() doesn't support freetype.Face - using default font for rendering")
+            font = ImageFont.load_default()
+        
         x, y = position
         for dx, dy in [(-1, -1), (-1, 0), (-1, 1), (0, -1), (0, 1), (1, -1), (1, 0), (1, 1)]:
             draw.text((x + dx, y + dy), text, font=font, fill=outline_color)
@@ -283,13 +351,19 @@ class GameRenderer:
         elif game_type == "upcoming":
             self._draw_upcoming_game_status(draw_overlay, game)
         
+        # Get display options for this game's league
+        game_league = game.get("league", "nfl")
+        show_odds = self._get_display_option(game_league, "show_odds")
+        show_records = self._get_display_option(game_league, "show_records")
+        show_ranking = self._get_display_option(game_league, "show_ranking")
+        
         # Draw odds if enabled
-        if self.show_odds and 'odds' in game and game['odds']:
+        if show_odds and 'odds' in game and game['odds']:
             self._draw_dynamic_odds(draw_overlay, game['odds'])
         
         # Draw records or rankings if enabled
-        if self.show_records or self.show_ranking:
-            self._draw_records_or_rankings(draw_overlay, game)
+        if show_records or show_ranking:
+            self._draw_records_or_rankings(draw_overlay, game, show_records, show_ranking)
         
         # Composite the overlay onto main image
         main_img = Image.alpha_composite(main_img, overlay)
@@ -519,7 +593,29 @@ class GameRenderer:
         except Exception as e:
             self.logger.error(f"Error drawing odds: {e}")
     
-    def _draw_records_or_rankings(self, draw: ImageDraw.Draw, game: Dict) -> None:
+    def _get_display_option(self, league: str, option: str) -> bool:
+        """
+        Get a display option for a specific league from the nested config structure.
+        
+        Args:
+            league: League identifier ('nfl', 'ncaa_fb', etc.)
+            option: Option name ('show_odds', 'show_records', 'show_ranking')
+            
+        Returns:
+            Boolean value of the option, or False if not found
+        """
+        # Read from nested path: config[league]["display_options"][option]
+        league_config = self.config.get(league, {})
+        display_options = league_config.get("display_options", {})
+        value = display_options.get(option, False)
+        
+        # Fallback to root-level config for backward compatibility
+        if value is False and option in self.config:
+            value = self.config.get(option, False)
+        
+        return bool(value)
+    
+    def _draw_records_or_rankings(self, draw: ImageDraw.Draw, game: Dict, show_records: bool, show_ranking: bool) -> None:
         """Draw team records or rankings."""
         try:
             record_font = ImageFont.truetype("assets/fonts/4x6-font.ttf", 6)
@@ -535,34 +631,34 @@ class GameRenderer:
         
         # Away team info
         if away_abbr:
-            away_text = self._get_team_display_text(away_abbr, game.get('away_record', ''))
+            away_text = self._get_team_display_text(away_abbr, game.get('away_record', ''), show_records, show_ranking)
             if away_text:
                 away_record_x = 3
                 self._draw_text_with_outline(draw, away_text, (away_record_x, record_y), record_font)
         
         # Home team info
         if home_abbr:
-            home_text = self._get_team_display_text(home_abbr, game.get('home_record', ''))
+            home_text = self._get_team_display_text(home_abbr, game.get('home_record', ''), show_records, show_ranking)
             if home_text:
                 home_record_bbox = draw.textbbox((0, 0), home_text, font=record_font)
                 home_record_width = home_record_bbox[2] - home_record_bbox[0]
                 home_record_x = self.display_width - home_record_width - 3
                 self._draw_text_with_outline(draw, home_text, (home_record_x, record_y), record_font)
     
-    def _get_team_display_text(self, abbr: str, record: str) -> str:
+    def _get_team_display_text(self, abbr: str, record: str, show_records: bool, show_ranking: bool) -> str:
         """Get the display text for a team (ranking or record)."""
-        if self.show_ranking and self.show_records:
+        if show_ranking and show_records:
             # Rankings replace records when both are enabled
             rank = self._team_rankings_cache.get(abbr, 0)
             if rank > 0:
                 return f"#{rank}"
             return ''
-        elif self.show_ranking:
+        elif show_ranking:
             rank = self._team_rankings_cache.get(abbr, 0)
             if rank > 0:
                 return f"#{rank}"
             return ''
-        elif self.show_records:
+        elif show_records:
             return record
         return ''
 
