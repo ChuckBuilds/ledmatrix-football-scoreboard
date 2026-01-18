@@ -119,6 +119,7 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
 
         # Global settings
         self.display_duration = float(config.get("display_duration", 30))
+        self.game_display_duration = float(config.get("game_display_duration", 15))
 
         # Live priority per league
         self.nfl_live_priority = self.config.get("nfl", {}).get("live_priority", False)
@@ -2011,7 +2012,7 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
         
         This implements dynamic duration scaling with support for mode-level durations:
         - Mode-level duration: Fixed total time for mode (recent_mode_duration, upcoming_mode_duration, live_mode_duration)
-        - Dynamic calculation: Total duration = num_games × per_game_duration
+        - Dynamic calculation: Total duration = num_games x per_game_duration
         - For scroll mode: Duration is calculated by ScrollHelper based on content width
         
         Priority order:
@@ -2156,7 +2157,7 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
                     total_duration += league_duration
 
                     duration_breakdown.append(
-                        f"{league_name}: {game_count} × {per_game_duration}s = {league_duration}s"
+                        f"{league_name}: {game_count} x {per_game_duration}s = {league_duration}s"
                     )
 
                     self.logger.debug(
@@ -2170,7 +2171,7 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
 
             if total_games == 0:
                 # If no games found yet, return a default duration
-                default_duration = 45.0  # 3 games × 15s per game
+                default_duration = 45.0  # 3 games x 15s per game
                 self.logger.info(
                     f"get_cycle_duration: {display_mode} has no games yet, "
                     f"returning default {default_duration}s"

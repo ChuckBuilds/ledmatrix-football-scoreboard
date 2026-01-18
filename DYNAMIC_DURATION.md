@@ -430,13 +430,13 @@ INFO - Mode duration expired for nfl_recent: 60.2s >= 60s. Rotating to next mode
 ```
 
 When min/max clamping occurs:
-```
+```text
 INFO - get_cycle_duration: clamped 15s up to min_duration=30s
 INFO - get_cycle_duration: clamped 160s down to max_duration=120s
 ```
 
 For mixed leagues:
-```
+```text
 INFO - get_cycle_duration(football_recent): mixed leagues - nfl: 2 × 15s = 30s, ncaa_fb: 3 × 12s = 36s = 66s total
 ```
 
