@@ -11,12 +11,12 @@ Controls how long each individual game displays **within a mode**.
 
 **Configuration Keys:**
 - `live_game_duration`: Seconds per live game (default: 30s)
-- `recent_game_duration`: Seconds per recent game (default: 15s)  
+- `recent_game_duration`: Seconds per recent game (default: 15s)
 - `upcoming_game_duration`: Seconds per upcoming game (default: 15s)
 
 **Example:** With `recent_game_duration: 15`, each recent game shows for 15 seconds before moving to the next.
 
-### 2. Per-Mode Duration (NEW)
+### 2. Per-Mode Duration
 Controls the **total time** a mode displays before rotating, regardless of game count.
 
 **Configuration Keys:**
@@ -31,8 +31,10 @@ When per-mode duration is **not set**, the plugin calculates duration dynamicall
 
 **Formula:**
 ```
-total_duration = number_of_games × per_game_duration
+total_duration = sum(games_per_league × per_game_duration_for_league)
 ```
+
+The duration is then clamped to configured min/max bounds if set.
 
 ## How Mode-Level Duration Works
 
@@ -56,7 +58,7 @@ Recent Mode (60s total, 10 games available):
      Games 5-10 NOT shown yet (progress preserved)
 ```
 
-### Resume Functionality (NEW)
+### Resume Functionality
 
 When a mode times out before showing all games, it **resumes from where it left off** on the next cycle:
 
@@ -103,7 +105,7 @@ Set the default per-game duration for all modes:
 }
 ```
 
-### Per-Mode Duration Configuration (NEW)
+### Per-Mode Duration Configuration
 Set explicit time limits for each mode:
 
 ```json
@@ -140,7 +142,7 @@ Override durations for specific leagues:
 }
 ```
 
-### Per-League Mode Duration Overrides (NEW)
+### Per-League Mode Duration Overrides
 Override mode-level durations per league:
 
 ```json
@@ -167,18 +169,66 @@ Override mode-level durations per league:
 - If multiple leagues have different mode durations, the system uses the **maximum**
 - Example: NFL=45s, NCAA FB=60s → uses 60s (ensures both leagues get their time)
 
+### Duration Constraints (Min/Max)
+
+You can set minimum and maximum duration constraints to ensure modes don't cycle too quickly (with few games) or stay too long (with many games):
+
+```json
+{
+  "nfl": {
+    "enabled": true,
+    "dynamic_duration": {
+      "enabled": true,
+      "min_duration_seconds": 30,
+      "max_duration_seconds": 180,
+      "modes": {
+        "live": {
+          "min_duration_seconds": 45,
+          "max_duration_seconds": 300
+        },
+        "recent": {
+          "min_duration_seconds": 30,
+          "max_duration_seconds": 120
+        },
+        "upcoming": {
+          "min_duration_seconds": 20,
+          "max_duration_seconds": 90
+        }
+      }
+    }
+  }
+}
+```
+
+#### Constraint Behavior
+
+| Setting | Description |
+|---------|-------------|
+| `min_duration_seconds` | Mode will display for at least this long, even with few games |
+| `max_duration_seconds` | Mode will not exceed this duration, even with many games |
+
+**Example with constraints:**
+- 1 game × 15s = 15s calculated
+- `min_duration_seconds: 30` configured
+- **Final duration: 30s** (clamped up to minimum)
+
 ### Configuration Hierarchy
 
 **For Per-Game Duration:**
 1. **Most Specific**: `config.nfl.live_game_duration`
 2. **Fallback**: `config.game_display_duration`
 
-**For Per-Mode Duration (NEW):**
+**For Per-Mode Duration:**
 1. **Most Specific**: `config.nfl.mode_durations.recent_mode_duration` (per-league override)
 2. **Top-Level**: `config.recent_mode_duration`
 3. **Fallback**: Dynamic calculation (games × per_game_duration)
 
-## Integration with Dynamic Duration Caps (NEW)
+**For Duration Constraints:**
+1. **Most Specific**: `config.nfl.dynamic_duration.modes.live.min_duration_seconds`
+2. **Per-League**: `config.nfl.dynamic_duration.min_duration_seconds`
+3. **Fallback**: No constraint (use calculated duration)
+
+## Integration with Dynamic Duration Caps
 
 If you have dynamic duration caps configured:
 
@@ -215,7 +265,7 @@ The plugin provides a `get_cycle_duration(display_mode)` method that the display
 ```python
 # Display controller calls this for granular modes
 duration = plugin.get_cycle_duration("nfl_recent")
-# Returns: 30.0 (for 2 games @ 15s each)
+# Returns: 30.0 (for 2 games @ 15s each, or min_duration if higher)
 
 duration = plugin.get_cycle_duration("ncaa_fb_upcoming")
 # Returns: 45.0 (for 3 games @ 15s each)
@@ -230,6 +280,7 @@ duration = plugin.get_cycle_duration("ncaa_fb_upcoming")
 5. **Flexible Configuration**: Set different durations per league and mode
 6. **Prevents Premature Cycling**: Mode stays active until time expires or all games shown
 7. **Dynamic Integration**: Mode durations work seamlessly with dynamic caps
+8. **Duration Bounds**: Min/max constraints prevent too-short or too-long displays
 
 ## Example Scenarios
 
@@ -261,24 +312,34 @@ duration = plugin.get_cycle_duration("ncaa_fb_upcoming")
 - **Cycle 4 (ncaa_fb_recent resumes)**: Shows NCAA FB games 5-8 → continues across cycles
 - **Total Cycles**: ~13 cycles to show all games (4 per 60s cycle per mode)
 
-### Scenario 5: Single Favorite Team
-- **Configuration**: TB as favorite, 15s per game
+### Scenario 5: Single Favorite Team with Min Duration
+- **Configuration**: TB as favorite, 15s per game, `min_duration_seconds: 30`
 - **Games Available**: 1 TB game in recent
-- **Total Duration**: 1 × 15s = **15 seconds** (dynamic)
+- **Calculated Duration**: 1 × 15s = 15 seconds
+- **Final Duration**: **30 seconds** (clamped up to minimum)
 
-### Scenario 6: Full League
-- **Configuration**: Show all NFL games, 10s per game, no mode duration
+### Scenario 6: Full League with Max Duration
+- **Configuration**: Show all NFL games, 10s per game, `max_duration_seconds: 120`
 - **Games Available**: 16 games this week
-- **Total Duration**: 16 × 10s = **160 seconds (2.67 minutes)** (dynamic)
+- **Calculated Duration**: 16 × 10s = 160 seconds
+- **Final Duration**: **120 seconds** (clamped down to maximum)
 
 ### Scenario 7: Per-League Mode Duration Overrides
-- **Configuration**: 
+- **Configuration**:
   - NFL: `mode_durations.recent_mode_duration: 45` (for `nfl_recent`)
   - NCAA FB: `mode_durations.recent_mode_duration: 60` (for `ncaa_fb_recent`)
-- **Behavior**: 
+- **Behavior**:
   - `nfl_recent` uses 45s
   - `ncaa_fb_recent` uses 60s
   - Each granular mode has its own independent duration
+
+### Scenario 8: Mixed Leagues (Weighted Calculation)
+- **Configuration**: NFL @ 15s/game, NCAA FB @ 12s/game
+- **Mode**: `football_recent`
+- **Games**: 2 NFL + 3 NCAA FB = 5 total
+- **Total Duration**: (2 × 15s) + (3 × 12s) = **66 seconds**
+
+This correctly weights each league's games by their configured duration, rather than applying a single duration to all games.
 
 ## Technical Details
 
@@ -287,17 +348,19 @@ duration = plugin.get_cycle_duration("ncaa_fb_upcoming")
 def get_cycle_duration(self, display_mode: str = None) -> Optional[float]:
     """
     Calculate the expected cycle duration for a display mode.
-    
+
     Priority order:
     1. Mode-level duration (if configured)
     2. Dynamic calculation (if no mode-level duration)
-    3. Dynamic duration cap applies to both if enabled
-    
+    3. Apply min/max duration constraints
+    4. Dynamic duration cap applies to both if enabled
+
     Args:
         display_mode: The granular mode name (e.g., 'nfl_live', 'nfl_recent', 'ncaa_fb_upcoming')
-    
+
     Returns:
-        Total duration in seconds, or None if no games available
+        Total duration in seconds (clamped to min/max if configured),
+        or None if not applicable
     """
 ```
 
@@ -317,7 +380,8 @@ def get_cycle_duration(self, display_mode: str = None) -> Optional[float]:
 1. Count games from the specific league (e.g., only NFL games for `nfl_recent`)
 2. Get per-game duration for that league
 3. Calculate: `total_games × per_game_duration`
-4. Apply dynamic duration cap if enabled
+4. Apply min/max duration constraints if configured
+5. Apply dynamic duration cap if enabled
 
 ### Progress Tracking
 
@@ -333,7 +397,7 @@ _dynamic_manager_progress: Dict[str, Set[str]] = {}
 - Progress persists across mode rotations (for resume functionality)
 - Progress resets when full cycle completes (all games shown)
 
-### Mode Start Time Tracking (NEW)
+### Mode Start Time Tracking
 
 The plugin tracks when each mode started displaying:
 
@@ -365,6 +429,17 @@ INFO - get_cycle_duration: nfl_recent = 2 games × 15s = 30s
 INFO - Mode duration expired for nfl_recent: 60.2s >= 60s. Rotating to next mode (progress preserved for resume).
 ```
 
+When min/max clamping occurs:
+```
+INFO - get_cycle_duration: clamped 15s up to min_duration=30s
+INFO - get_cycle_duration: clamped 160s down to max_duration=120s
+```
+
+For mixed leagues:
+```
+INFO - get_cycle_duration(football_recent): mixed leagues - nfl: 2 × 15s = 30s, ncaa_fb: 3 × 12s = 36s = 66s total
+```
+
 ## Migration from Fixed Duration
 
 ### Before (Fixed Duration)
@@ -374,14 +449,20 @@ INFO - Mode duration expired for nfl_recent: 60.2s >= 60s. Rotating to next mode
 }
 ```
 
-### After (Dynamic Duration)  
+### After (Dynamic Duration)
 ```json
 {
-  "game_display_duration": 15  // 15s per game, scales automatically
+  "game_display_duration": 15,  // 15s per game, scales automatically
+  "nfl": {
+    "dynamic_duration": {
+      "min_duration_seconds": 30,  // Never less than 30s
+      "max_duration_seconds": 180  // Never more than 3 minutes
+    }
+  }
 }
 ```
 
-### After (Fixed Mode Duration - NEW)
+### After (Fixed Mode Duration)
 ```json
 {
   "recent_mode_duration": 60,      // 60s total for Recent mode
@@ -420,3 +501,8 @@ The display controller's dynamic duration system will automatically use `get_cyc
 - **Symptom**: Not all games are shown
 - **Cause**: Mode duration too short for game count
 - **Solution**: Increase mode duration or decrease per-game duration
+
+### Duration Too Short
+- **Symptom**: Mode cycles away too quickly with few games
+- **Cause**: No minimum duration configured
+- **Solution**: Set `min_duration_seconds` in `dynamic_duration` config

@@ -2113,11 +2113,15 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
                 if manager:
                     self._ensure_manager_updated(manager)
             
-            # Count games from all applicable managers and get duration
+            # Count games from all applicable managers and calculate weighted duration
+            # Fix: Accumulate duration per-league instead of using last league's duration
+            total_duration = 0.0
+            duration_breakdown = []  # For logging
+
             for league_name, manager in managers_to_check:
                 if not manager:
                     continue
-                
+
                 # Get the appropriate game list based on mode type
                 if mode_type == 'live':
                     games = getattr(manager, 'live_games', [])
@@ -2127,45 +2131,84 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
                     games = getattr(manager, 'upcoming_games', [])
                 else:
                     games = []
-                
+
                 # Get duration for this league/mode combination
-                per_game_duration = self._get_game_duration(league_name, mode_type, manager)
-                
+                per_game_duration = self._get_game_duration(
+                    league_name, mode_type, manager
+                )
+
                 # Filter out invalid games
                 if games:
                     # For live games, filter out final games
                     if mode_type == 'live':
                         games = [g for g in games if not g.get('is_final', False)]
                         if hasattr(manager, '_is_game_really_over'):
-                            games = [g for g in games if not manager._is_game_really_over(g)]
-                    
+                            games = [
+                                g for g in games
+                                if not manager._is_game_really_over(g)
+                            ]
+
                     game_count = len(games)
                     total_games += game_count
-                    
-                    self.logger.debug(
-                        f"get_cycle_duration: {league_name} {mode_type} has {game_count} games, "
-                        f"per_game_duration={per_game_duration}s"
+
+                    # Calculate this league's contribution to total duration
+                    league_duration = game_count * per_game_duration
+                    total_duration += league_duration
+
+                    duration_breakdown.append(
+                        f"{league_name}: {game_count} × {per_game_duration}s = {league_duration}s"
                     )
-            
-            self.logger.info(f"get_cycle_duration: found {total_games} total games for {display_mode}")
-            
+
+                    self.logger.debug(
+                        f"get_cycle_duration: {league_name} {mode_type} has "
+                        f"{game_count} games, per_game_duration={per_game_duration}s"
+                    )
+
+            self.logger.info(
+                f"get_cycle_duration: found {total_games} total games for {display_mode}"
+            )
+
             if total_games == 0:
-                # If no games found yet (managers still fetching data), return a default duration
-                # This allows the display to start while data is loading
-                default_duration = 45.0  # 3 games × 15s per game (reasonable default)
-                self.logger.info(f"get_cycle_duration: {display_mode} has no games yet, returning default {default_duration}s")
+                # If no games found yet, return a default duration
+                default_duration = 45.0  # 3 games × 15s per game
+                self.logger.info(
+                    f"get_cycle_duration: {display_mode} has no games yet, "
+                    f"returning default {default_duration}s"
+                )
                 return default_duration
-            
-            # Calculate total duration: num_games × per_game_duration
-            total_duration = total_games * per_game_duration
-            self.logger.info(
-                f"get_cycle_duration({display_mode}): {total_games} games × {per_game_duration}s = {total_duration}s"
-            )
-            
-            self.logger.info(
-                f"get_cycle_duration: {display_mode} = {total_games} games × {per_game_duration}s = {total_duration}s"
-            )
-            
+
+            # Apply min/max duration constraints if configured
+            min_duration = self._get_duration_floor_for_mode(mode_type)
+            max_duration = self._get_duration_cap_for_mode(mode_type)
+
+            original_duration = total_duration
+
+            if min_duration is not None and total_duration < min_duration:
+                total_duration = min_duration
+                self.logger.info(
+                    f"get_cycle_duration: clamped {original_duration}s up to "
+                    f"min_duration={min_duration}s"
+                )
+
+            if max_duration is not None and total_duration > max_duration:
+                total_duration = max_duration
+                self.logger.info(
+                    f"get_cycle_duration: clamped {original_duration}s down to "
+                    f"max_duration={max_duration}s"
+                )
+
+            # Log the breakdown for mixed leagues
+            if len(duration_breakdown) > 1:
+                self.logger.info(
+                    f"get_cycle_duration({display_mode}): mixed leagues - "
+                    f"{', '.join(duration_breakdown)} = {total_duration}s total"
+                )
+            else:
+                self.logger.info(
+                    f"get_cycle_duration: {display_mode} = {total_games} games, "
+                    f"total_duration={total_duration}s"
+                )
+
             return total_duration
             
         except Exception as e:
@@ -2355,6 +2398,141 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
         
         # No global fallback - return None
         return None
+
+    def get_dynamic_duration_floor(self) -> Optional[float]:
+        """
+        Get dynamic duration minimum (floor) for the current display context.
+        Checks granular settings: per-league/per-mode > per-league > None.
+
+        Returns:
+            Minimum duration in seconds, or None if not configured.
+        """
+        if not self.is_enabled:
+            return None
+
+        # If no current display context, return None
+        if not self._current_display_league or not self._current_display_mode_type:
+            return None
+
+        league = self._current_display_league
+        mode_type = self._current_display_mode_type
+
+        # Check per-league/per-mode setting first (most specific)
+        league_config = self.config.get(league, {})
+        league_dynamic = league_config.get("dynamic_duration", {})
+        league_modes = league_dynamic.get("modes", {})
+        mode_config = league_modes.get(mode_type, {})
+        if "min_duration_seconds" in mode_config:
+            try:
+                floor = float(mode_config.get("min_duration_seconds"))
+                if floor > 0:
+                    return floor
+            except (TypeError, ValueError):
+                pass
+
+        # Check per-league setting
+        if "min_duration_seconds" in league_dynamic:
+            try:
+                floor = float(league_dynamic.get("min_duration_seconds"))
+                if floor > 0:
+                    return floor
+            except (TypeError, ValueError):
+                pass
+
+        # No global fallback - return None
+        return None
+
+    def _get_duration_floor_for_mode(self, mode_type: str) -> Optional[float]:
+        """
+        Get the minimum duration floor for a mode type across all enabled leagues.
+
+        When both NFL and NCAA FB are enabled, returns the highest min_duration
+        configured across the enabled leagues (most restrictive floor).
+
+        Args:
+            mode_type: Mode type ('live', 'recent', or 'upcoming')
+
+        Returns:
+            Minimum duration in seconds, or None if not configured.
+        """
+        floors = []
+
+        for league in ['nfl', 'ncaa_fb']:
+            league_config = self.config.get(league, {})
+            if not league_config.get('enabled', False):
+                continue
+
+            league_dynamic = league_config.get("dynamic_duration", {})
+            league_modes = league_dynamic.get("modes", {})
+            mode_config = league_modes.get(mode_type, {})
+
+            # Check per-mode setting first
+            if "min_duration_seconds" in mode_config:
+                try:
+                    floor = float(mode_config.get("min_duration_seconds"))
+                    if floor > 0:
+                        floors.append(floor)
+                        continue
+                except (TypeError, ValueError):
+                    pass
+
+            # Check per-league setting
+            if "min_duration_seconds" in league_dynamic:
+                try:
+                    floor = float(league_dynamic.get("min_duration_seconds"))
+                    if floor > 0:
+                        floors.append(floor)
+                except (TypeError, ValueError):
+                    pass
+
+        # Return the highest floor (most restrictive)
+        return max(floors) if floors else None
+
+    def _get_duration_cap_for_mode(self, mode_type: str) -> Optional[float]:
+        """
+        Get the maximum duration cap for a mode type across all enabled leagues.
+
+        When both NFL and NCAA FB are enabled, returns the lowest max_duration
+        configured across the enabled leagues (most restrictive cap).
+
+        Args:
+            mode_type: Mode type ('live', 'recent', or 'upcoming')
+
+        Returns:
+            Maximum duration in seconds, or None if not configured.
+        """
+        caps = []
+
+        for league in ['nfl', 'ncaa_fb']:
+            league_config = self.config.get(league, {})
+            if not league_config.get('enabled', False):
+                continue
+
+            league_dynamic = league_config.get("dynamic_duration", {})
+            league_modes = league_dynamic.get("modes", {})
+            mode_config = league_modes.get(mode_type, {})
+
+            # Check per-mode setting first
+            if "max_duration_seconds" in mode_config:
+                try:
+                    cap = float(mode_config.get("max_duration_seconds"))
+                    if cap > 0:
+                        caps.append(cap)
+                        continue
+                except (TypeError, ValueError):
+                    pass
+
+            # Check per-league setting
+            if "max_duration_seconds" in league_dynamic:
+                try:
+                    cap = float(league_dynamic.get("max_duration_seconds"))
+                    if cap > 0:
+                        caps.append(cap)
+                except (TypeError, ValueError):
+                    pass
+
+        # Return the lowest cap (most restrictive)
+        return min(caps) if caps else None
 
     def _get_manager_for_mode(self, mode_name: str):
         """Resolve manager instance for a given display mode."""
