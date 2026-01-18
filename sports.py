@@ -1992,25 +1992,53 @@ class SportsLive(SportsCore):
 
     def _is_game_really_over(self, game: Dict) -> bool:
         """Check if a game appears to be over even if API says it's live."""
+        game_str = f"{game.get('away_abbr')}@{game.get('home_abbr')}"
+
         # Check if period_text indicates final
         period_text = game.get("period_text", "").lower()
         if "final" in period_text:
+            self.logger.info(
+                f"[LIVE_PRIORITY_DEBUG] _is_game_really_over({game_str}): "
+                f"returning True - 'final' in period_text='{period_text}'"
+            )
             return True
-        
+
         # Check if clock is 0:00 in Q4 or OT
-        clock = game.get("clock", "0:00")
+        # Safely coerce clock to string to handle None or non-string values
+        raw_clock = game.get("clock")
+        if raw_clock is None or not isinstance(raw_clock, str):
+            clock = "0:00"
+        else:
+            clock = raw_clock
         period = game.get("period", 0)
         # Handle various clock formats: "0:00", ":00", "0", ":40" (stuck at :40)
         clock_normalized = clock.replace(":", "").strip()
+
+        self.logger.debug(
+            f"[LIVE_PRIORITY_DEBUG] _is_game_really_over({game_str}): "
+            f"raw_clock={raw_clock!r}, clock='{clock}', clock_normalized='{clock_normalized}', period={period}, period_text='{period_text}'"
+        )
+
         if period >= 4:
             # In Q4 or OT, if clock is 0:00 or appears stuck (like :40), consider it over
             if clock_normalized == "000" or clock_normalized == "00" or clock == "0:00" or clock == ":00":
+                self.logger.info(
+                    f"[LIVE_PRIORITY_DEBUG] _is_game_really_over({game_str}): "
+                    f"returning True - clock appears to be 0:00 (clock='{clock}', normalized='{clock_normalized}', period={period})"
+                )
                 return True
             # Also check if clock appears stuck (e.g., ":40" with no minutes)
             if clock.startswith(":") and len(clock) <= 3:
                 # Clock like ":40" or ":00" - likely stuck
+                self.logger.info(
+                    f"[LIVE_PRIORITY_DEBUG] _is_game_really_over({game_str}): "
+                    f"returning True - clock appears stuck (clock='{clock}' starts with ':' and len <= 3, period={period})"
+                )
                 return True
-        
+
+        self.logger.debug(
+            f"[LIVE_PRIORITY_DEBUG] _is_game_really_over({game_str}): returning False"
+        )
         return False
 
     def _detect_stale_games(self, games: List[Dict]) -> None:
@@ -2191,24 +2219,40 @@ class SportsLive(SportsCore):
                             
                             # Determine if this game should be included based on filtering settings
                             # Priority: show_all_live > favorite_teams_only (if favorites exist) > show all
+                            game_str = f"{details.get('away_abbr')}@{details.get('home_abbr')}"
+                            home_abbr = details.get("home_abbr")
+                            away_abbr = details.get("away_abbr")
+
                             if self.show_all_live:
                                 # Always show all live games if show_all_live is enabled
                                 should_include = True
+                                include_reason = "show_all_live=True"
                             elif not self.show_favorite_teams_only:
                                 # If favorite teams filtering is disabled, show all games
                                 should_include = True
+                                include_reason = "show_favorite_teams_only=False"
                             elif not self.favorite_teams:
                                 # If favorite teams filtering is enabled but no favorites are configured,
                                 # show all games (same behavior as SportsUpcoming)
                                 should_include = True
+                                include_reason = "favorite_teams is empty"
                             else:
                                 # Favorite teams filtering is enabled AND favorites are configured
                                 # Only show games involving favorite teams
-                                should_include = (
-                                    details["home_abbr"] in self.favorite_teams
-                                    or details["away_abbr"] in self.favorite_teams
+                                home_match = home_abbr in self.favorite_teams
+                                away_match = away_abbr in self.favorite_teams
+                                should_include = home_match or away_match
+                                include_reason = (
+                                    f"favorite_teams={self.favorite_teams}, "
+                                    f"home_abbr='{home_abbr}' in_favorites={home_match}, "
+                                    f"away_abbr='{away_abbr}' in_favorites={away_match}"
                                 )
-                            
+
+                            self.logger.info(
+                                f"[LIVE_PRIORITY_DEBUG] {self.sport_key.upper()} filter decision for {game_str}: "
+                                f"should_include={should_include}, reason: {include_reason}"
+                            )
+
                             if not should_include:
                                 filtered_out_count += 1
                                 self.logger.info(

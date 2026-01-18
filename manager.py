@@ -1510,6 +1510,7 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
 
     def has_live_content(self) -> bool:
         if not self.is_enabled:
+            self.logger.debug("[LIVE_PRIORITY_DEBUG] has_live_content: plugin not enabled, returning False")
             return False
 
         # Check NFL live content
@@ -1519,29 +1520,81 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
             and self.nfl_live_priority
             and hasattr(self, "nfl_live")
         ):
-            live_games = getattr(self.nfl_live, "live_games", [])
-            if live_games:
+            raw_live_games = getattr(self.nfl_live, "live_games", [])
+            self.logger.info(f"[LIVE_PRIORITY_DEBUG] NFL raw live_games count: {len(raw_live_games)}")
+
+            # Log each raw game for debugging
+            for i, game in enumerate(raw_live_games):
+                self.logger.info(
+                    f"[LIVE_PRIORITY_DEBUG] NFL raw game {i+1}: "
+                    f"{game.get('away_abbr')}@{game.get('home_abbr')} "
+                    f"is_final={game.get('is_final')}, is_live={game.get('is_live')}, "
+                    f"clock={game.get('clock')}, period={game.get('period')}, "
+                    f"period_text={game.get('period_text')}"
+                )
+
+            if raw_live_games:
                 # Filter out any games that are final or appear over
-                live_games = [g for g in live_games if not g.get("is_final", False)]
+                live_games = [g for g in raw_live_games if not g.get("is_final", False)]
+                games_after_final_filter = len(live_games)
+                self.logger.info(f"[LIVE_PRIORITY_DEBUG] NFL after is_final filter: {games_after_final_filter} games")
+
                 # Additional validation using helper method if available
                 if hasattr(self.nfl_live, "_is_game_really_over"):
-                    live_games = [g for g in live_games if not self.nfl_live._is_game_really_over(g)]
-                
+                    games_before_really_over = len(live_games)
+                    for game in live_games[:]:  # Iterate over copy
+                        is_really_over = self.nfl_live._is_game_really_over(game)
+                        if is_really_over:
+                            self.logger.info(
+                                f"[LIVE_PRIORITY_DEBUG] NFL _is_game_really_over=True for "
+                                f"{game.get('away_abbr')}@{game.get('home_abbr')} "
+                                f"(clock={game.get('clock')}, period={game.get('period')}, "
+                                f"period_text={game.get('period_text')})"
+                            )
+                            live_games.remove(game)
+                    self.logger.info(
+                        f"[LIVE_PRIORITY_DEBUG] NFL after _is_game_really_over filter: "
+                        f"{len(live_games)} games (removed {games_before_really_over - len(live_games)})"
+                    )
+
                 if live_games:
                     # If favorite teams are configured, only return True if there are live games for favorite teams
                     favorite_teams = getattr(self.nfl_live, "favorite_teams", [])
+                    self.logger.info(f"[LIVE_PRIORITY_DEBUG] NFL favorite_teams configured: {favorite_teams}")
+
                     if favorite_teams:
                         # Check if any live game involves a favorite team
+                        for game in live_games:
+                            home = game.get("home_abbr")
+                            away = game.get("away_abbr")
+                            home_match = home in favorite_teams
+                            away_match = away in favorite_teams
+                            self.logger.info(
+                                f"[LIVE_PRIORITY_DEBUG] NFL favorite check: {away}@{home} - "
+                                f"home_in_favorites={home_match}, away_in_favorites={away_match}"
+                            )
+
                         nfl_live = any(
                             game.get("home_abbr") in favorite_teams
                             or game.get("away_abbr") in favorite_teams
                             for game in live_games
                         )
+                        self.logger.info(f"[LIVE_PRIORITY_DEBUG] NFL favorite team match result: {nfl_live}")
                     else:
                         # No favorite teams configured, return True if any live games exist
                         nfl_live = True
-                    
+                        self.logger.info("[LIVE_PRIORITY_DEBUG] NFL no favorites configured, nfl_live=True")
+
                     self.logger.info(f"has_live_content: NFL live_games={len(live_games)}, filtered_live_games={len(live_games)}, nfl_live={nfl_live}")
+                else:
+                    self.logger.info("[LIVE_PRIORITY_DEBUG] NFL no live games after filtering")
+            else:
+                self.logger.info("[LIVE_PRIORITY_DEBUG] NFL raw live_games is empty")
+        else:
+            self.logger.debug(
+                f"[LIVE_PRIORITY_DEBUG] NFL check skipped: nfl_enabled={self.nfl_enabled}, "
+                f"nfl_live_priority={self.nfl_live_priority}, has_nfl_live={hasattr(self, 'nfl_live')}"
+            )
 
         # Check NCAA FB live content
         ncaa_live = False
@@ -1550,29 +1603,81 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
             and self.ncaa_fb_live_priority
             and hasattr(self, "ncaa_fb_live")
         ):
-            live_games = getattr(self.ncaa_fb_live, "live_games", [])
-            if live_games:
+            raw_live_games = getattr(self.ncaa_fb_live, "live_games", [])
+            self.logger.info(f"[LIVE_PRIORITY_DEBUG] NCAA FB raw live_games count: {len(raw_live_games)}")
+
+            # Log each raw game for debugging
+            for i, game in enumerate(raw_live_games):
+                self.logger.info(
+                    f"[LIVE_PRIORITY_DEBUG] NCAA FB raw game {i+1}: "
+                    f"{game.get('away_abbr')}@{game.get('home_abbr')} "
+                    f"is_final={game.get('is_final')}, is_live={game.get('is_live')}, "
+                    f"clock={game.get('clock')}, period={game.get('period')}, "
+                    f"period_text={game.get('period_text')}"
+                )
+
+            if raw_live_games:
                 # Filter out any games that are final or appear over
-                live_games = [g for g in live_games if not g.get("is_final", False)]
+                live_games = [g for g in raw_live_games if not g.get("is_final", False)]
+                games_after_final_filter = len(live_games)
+                self.logger.info(f"[LIVE_PRIORITY_DEBUG] NCAA FB after is_final filter: {games_after_final_filter} games")
+
                 # Additional validation using helper method if available
                 if hasattr(self.ncaa_fb_live, "_is_game_really_over"):
-                    live_games = [g for g in live_games if not self.ncaa_fb_live._is_game_really_over(g)]
-                
+                    games_before_really_over = len(live_games)
+                    for game in live_games[:]:  # Iterate over copy
+                        is_really_over = self.ncaa_fb_live._is_game_really_over(game)
+                        if is_really_over:
+                            self.logger.info(
+                                f"[LIVE_PRIORITY_DEBUG] NCAA FB _is_game_really_over=True for "
+                                f"{game.get('away_abbr')}@{game.get('home_abbr')} "
+                                f"(clock={game.get('clock')}, period={game.get('period')}, "
+                                f"period_text={game.get('period_text')})"
+                            )
+                            live_games.remove(game)
+                    self.logger.info(
+                        f"[LIVE_PRIORITY_DEBUG] NCAA FB after _is_game_really_over filter: "
+                        f"{len(live_games)} games (removed {games_before_really_over - len(live_games)})"
+                    )
+
                 if live_games:
                     # If favorite teams are configured, only return True if there are live games for favorite teams
                     favorite_teams = getattr(self.ncaa_fb_live, "favorite_teams", [])
+                    self.logger.info(f"[LIVE_PRIORITY_DEBUG] NCAA FB favorite_teams configured: {favorite_teams}")
+
                     if favorite_teams:
                         # Check if any live game involves a favorite team
+                        for game in live_games:
+                            home = game.get("home_abbr")
+                            away = game.get("away_abbr")
+                            home_match = home in favorite_teams
+                            away_match = away in favorite_teams
+                            self.logger.info(
+                                f"[LIVE_PRIORITY_DEBUG] NCAA FB favorite check: {away}@{home} - "
+                                f"home_in_favorites={home_match}, away_in_favorites={away_match}"
+                            )
+
                         ncaa_live = any(
                             game.get("home_abbr") in favorite_teams
                             or game.get("away_abbr") in favorite_teams
                             for game in live_games
                         )
+                        self.logger.info(f"[LIVE_PRIORITY_DEBUG] NCAA FB favorite team match result: {ncaa_live}")
                     else:
                         # No favorite teams configured, return True if any live games exist
                         ncaa_live = True
-                    
+                        self.logger.info("[LIVE_PRIORITY_DEBUG] NCAA FB no favorites configured, ncaa_live=True")
+
                     self.logger.info(f"has_live_content: NCAA FB live_games={len(live_games)}, filtered_live_games={len(live_games)}, ncaa_live={ncaa_live}")
+                else:
+                    self.logger.info("[LIVE_PRIORITY_DEBUG] NCAA FB no live games after filtering")
+            else:
+                self.logger.info("[LIVE_PRIORITY_DEBUG] NCAA FB raw live_games is empty")
+        else:
+            self.logger.debug(
+                f"[LIVE_PRIORITY_DEBUG] NCAA FB check skipped: ncaa_fb_enabled={self.ncaa_fb_enabled}, "
+                f"ncaa_fb_live_priority={self.ncaa_fb_live_priority}, has_ncaa_fb_live={hasattr(self, 'ncaa_fb_live')}"
+            )
 
         result = nfl_live or ncaa_live
         
@@ -2295,39 +2400,90 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
 
     def _has_live_games_for_manager(self, manager) -> bool:
         """Check if a manager has valid live games (for favorite teams if configured).
-        
+
         Args:
             manager: Manager instance to check
-            
+
         Returns:
             True if manager has live games that should be displayed
         """
+        manager_name = getattr(manager, 'sport_key', type(manager).__name__)
+
         if not manager:
+            self.logger.debug("[LIVE_PRIORITY_DEBUG] _has_live_games_for_manager: manager is None")
             return False
-        
-        live_games = getattr(manager, 'live_games', [])
-        if not live_games:
+
+        raw_live_games = getattr(manager, 'live_games', [])
+        self.logger.info(
+            f"[LIVE_PRIORITY_DEBUG] _has_live_games_for_manager({manager_name}): "
+            f"raw live_games count = {len(raw_live_games)}"
+        )
+
+        if not raw_live_games:
+            self.logger.info(
+                f"[LIVE_PRIORITY_DEBUG] _has_live_games_for_manager({manager_name}): "
+                f"returning False - no raw live games"
+            )
             return False
-        
+
         # Filter out games that are final or appear over
-        live_games = [g for g in live_games if not g.get('is_final', False)]
+        live_games = [g for g in raw_live_games if not g.get('is_final', False)]
+        games_after_final_filter = len(live_games)
+        self.logger.info(
+            f"[LIVE_PRIORITY_DEBUG] _has_live_games_for_manager({manager_name}): "
+            f"after is_final filter = {games_after_final_filter} games"
+        )
+
         if hasattr(manager, '_is_game_really_over'):
+            games_before = len(live_games)
             live_games = [g for g in live_games if not manager._is_game_really_over(g)]
-        
+            self.logger.info(
+                f"[LIVE_PRIORITY_DEBUG] _has_live_games_for_manager({manager_name}): "
+                f"after _is_game_really_over filter = {len(live_games)} games (removed {games_before - len(live_games)})"
+            )
+
         if not live_games:
+            self.logger.info(
+                f"[LIVE_PRIORITY_DEBUG] _has_live_games_for_manager({manager_name}): "
+                f"returning False - no live games after filtering"
+            )
             return False
-        
+
         # If favorite teams are configured, only return True if there are live games for favorite teams
         favorite_teams = getattr(manager, 'favorite_teams', [])
+        self.logger.info(
+            f"[LIVE_PRIORITY_DEBUG] _has_live_games_for_manager({manager_name}): "
+            f"favorite_teams = {favorite_teams}"
+        )
+
         if favorite_teams:
+            # Log each game's match status
+            for game in live_games:
+                home = game.get('home_abbr')
+                away = game.get('away_abbr')
+                home_match = home in favorite_teams
+                away_match = away in favorite_teams
+                self.logger.info(
+                    f"[LIVE_PRIORITY_DEBUG] _has_live_games_for_manager({manager_name}): "
+                    f"checking {away}@{home} - home_in_favorites={home_match}, away_in_favorites={away_match}"
+                )
+
             has_favorite_live = any(
                 game.get('home_abbr') in favorite_teams
                 or game.get('away_abbr') in favorite_teams
                 for game in live_games
             )
+            self.logger.info(
+                f"[LIVE_PRIORITY_DEBUG] _has_live_games_for_manager({manager_name}): "
+                f"returning {has_favorite_live} - has_favorite_live check"
+            )
             return has_favorite_live
-        
+
         # No favorite teams configured, any live game counts
+        self.logger.info(
+            f"[LIVE_PRIORITY_DEBUG] _has_live_games_for_manager({manager_name}): "
+            f"returning True - no favorites configured, {len(live_games)} live games exist"
+        )
         return True
 
     def _filter_managers_by_live_content(self, managers: list, mode_type: str) -> list:
