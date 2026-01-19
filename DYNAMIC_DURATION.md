@@ -271,6 +271,53 @@ duration = plugin.get_cycle_duration("ncaa_fb_upcoming")
 # Returns: 45.0 (for 3 games @ 15s each)
 ```
 
+## Architecture: Controller vs Internal Cycling
+
+### Recommended Architecture
+
+The football scoreboard plugin is designed for the LEDMatrix display controller to manage
+mode rotation. The controller:
+
+1. Calls `plugin.display(display_mode="nfl_live", force_clear=True)` with specific mode
+2. Queries `plugin.get_cycle_duration("nfl_live")` for timing
+3. Handles live priority via `has_live_priority()` and `has_live_content()`
+
+### Internal Cycling (Deprecated)
+
+When `display()` is called without `display_mode`, the plugin uses internal mode cycling.
+This is **deprecated** and exists only for legacy/testing support.
+
+**Why it's deprecated:**
+- Duplicates controller timing logic
+- Previously used fixed duration, ignoring dynamic calculations (fixed in v2.x)
+- Creates two competing timing systems
+
+### Live Priority vs Dynamic Duration
+
+These features serve different purposes and work together:
+
+| Feature | Purpose | Value Type |
+|---------|---------|------------|
+| `live_priority` | "Stay on live mode while content exists" | Boolean signal |
+| `get_cycle_duration()` | "How long content takes to display" | Numeric (seconds) |
+
+The controller uses both:
+- If `has_live_priority() and has_live_content()`: Don't rotate away from live mode
+- Query `get_cycle_duration()` for logging/metrics regardless of priority
+
+**Example interaction:**
+```python
+# Controller logic (simplified)
+if plugin.has_live_priority() and plugin.has_live_content():
+    # Don't rotate, but still query duration for logging
+    duration = plugin.get_cycle_duration("nfl_live")
+    logger.info(f"Live priority active, staying on nfl_live (duration={duration}s)")
+else:
+    # Normal rotation using dynamic duration
+    duration = plugin.get_cycle_duration(current_mode)
+    # Rotate after duration expires
+```
+
 ## Benefits
 
 1. **Automatic Scaling**: Duration adjusts based on available games (dynamic mode)

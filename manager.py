@@ -1274,13 +1274,25 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
 
     def _display_internal_cycling(self, force_clear: bool) -> bool:
         """Handle display for internal mode cycling (when no display_mode provided).
-        
+
+        .. deprecated::
+            This method exists for legacy/testing support. The display controller
+            should always provide display_mode parameter for proper timing behavior.
+
         Args:
             force_clear: Whether to force clear display
-            
+
         Returns:
             True if content was displayed, False otherwise
         """
+        # Log deprecation warning (once per session)
+        if not getattr(self, '_internal_cycling_warned', False):
+            self.logger.warning(
+                "Using deprecated internal mode cycling. "
+                "For proper dynamic duration support, use display(display_mode=...) instead."
+            )
+            self._internal_cycling_warned = True
+
         current_time = time.time()
         
         # Check if we should stay on live mode
@@ -1303,13 +1315,21 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
                         break
         
         # Handle mode cycling only if not staying on live
-        if not should_stay_on_live and current_time - self.last_mode_switch >= self.display_duration:
+        # Get dynamic duration for current mode (falls back to display_duration)
+        current_mode_for_duration = self.modes[self.current_mode_index] if self.modes else None
+        cycle_duration = self.display_duration  # Default fallback
+        if current_mode_for_duration:
+            dynamic_duration = self.get_cycle_duration(current_mode_for_duration)
+            if dynamic_duration is not None and dynamic_duration > 0:
+                cycle_duration = dynamic_duration
+
+        if not should_stay_on_live and current_time - self.last_mode_switch >= cycle_duration:
             self.current_mode_index = (self.current_mode_index + 1) % len(self.modes)
             self.last_mode_switch = current_time
             force_clear = True
-            
+
             current_mode = self.modes[self.current_mode_index]
-            self.logger.info(f"Switching to display mode: {current_mode}")
+            self.logger.info(f"Switching to display mode: {current_mode} (after {cycle_duration:.1f}s)")
         
         # Get current manager and display
         current_manager = self._get_current_manager()
