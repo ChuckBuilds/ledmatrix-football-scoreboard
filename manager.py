@@ -34,11 +34,12 @@ from typing import Dict, Any, Set, Optional, Tuple, List
 from PIL import ImageFont
 
 try:
-    from src.plugin_system.base_plugin import BasePlugin
+    from src.plugin_system.base_plugin import BasePlugin, VegasDisplayMode
     from src.background_data_service import get_background_service
     from src.base_odds_manager import BaseOddsManager
 except ImportError:
     BasePlugin = None
+    VegasDisplayMode = None
     get_background_service = None
     BaseOddsManager = None
 
@@ -119,6 +120,7 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
 
         # Global settings
         self.display_duration = float(config.get("display_duration", 30))
+        self.game_display_duration = float(config.get("game_display_duration", 15))
 
         # Live priority per league
         self.nfl_live_priority = self.config.get("nfl", {}).get("live_priority", False)
@@ -644,56 +646,91 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
         return False
     
     def _collect_games_for_scroll(
-        self, 
-        mode_type: str, 
+        self,
+        mode_type: Optional[str] = None,
         live_priority_active: bool = False
     ) -> Tuple[List[Dict], List[str]]:
         """
         Collect all games from enabled leagues for scroll mode.
-        
+
         Args:
-            mode_type: 'live', 'recent', or 'upcoming'
+            mode_type: Optional game type filter ('live', 'recent', 'upcoming').
+                      If None, collects all game types organized by league.
             live_priority_active: If True, only include live games
-            
+
         Returns:
             Tuple of (games list with league info, list of leagues included)
         """
         games = []
         leagues = []
-        
-        # Collect NFL games if enabled and using scroll mode
-        if self.nfl_enabled and self._get_display_mode('nfl', mode_type) == 'scroll':
-            nfl_manager = self._get_manager_for_league_mode('nfl', mode_type)
-            if nfl_manager:
-                nfl_games = self._get_games_from_manager(nfl_manager, mode_type)
-                if nfl_games:
-                    # Add league info to each game
-                    for game in nfl_games:
-                        game['league'] = 'nfl'
-                    games.extend(nfl_games)
-                    if 'nfl' not in leagues:
-                        leagues.append('nfl')
-                    self.logger.debug(f"Collected {len(nfl_games)} NFL {mode_type} games for scroll")
-        
-        # Collect NCAA FB games if enabled and using scroll mode
-        if self.ncaa_fb_enabled and self._get_display_mode('ncaa_fb', mode_type) == 'scroll':
-            ncaa_manager = self._get_manager_for_league_mode('ncaa_fb', mode_type)
-            if ncaa_manager:
-                ncaa_games = self._get_games_from_manager(ncaa_manager, mode_type)
-                if ncaa_games:
-                    # Add league info to each game
-                    for game in ncaa_games:
-                        game['league'] = 'ncaa_fb'
-                    games.extend(ncaa_games)
-                    if 'ncaa_fb' not in leagues:
-                        leagues.append('ncaa_fb')
-                    self.logger.debug(f"Collected {len(ncaa_games)} NCAA FB {mode_type} games for scroll")
-        
+
+        # Determine which mode types to collect
+        if mode_type is None:
+            # Collect all game types for Vegas mode
+            mode_types = ['live', 'recent', 'upcoming']
+        else:
+            # Collect single game type for internal plugin scroll mode
+            mode_types = [mode_type]
+
+        # Collect NFL games if enabled
+        if self.nfl_enabled:
+            league_games = []
+            for mt in mode_types:
+                # Check if scroll mode is enabled for this league/mode
+                if self._get_display_mode('nfl', mt) == 'scroll':
+                    nfl_manager = self._get_manager_for_league_mode('nfl', mt)
+                    if nfl_manager:
+                        nfl_games = self._get_games_from_manager(nfl_manager, mt)
+                        if nfl_games:
+                            # Add league info and ensure status field
+                            for game in nfl_games:
+                                game['league'] = 'nfl'
+                                # Ensure game has status dict for type determination
+                                if not isinstance(game.get('status'), dict):
+                                    game['status'] = {}
+                                if 'state' not in game['status']:
+                                    # Infer state from mode_type
+                                    state_map = {'live': 'in', 'recent': 'post', 'upcoming': 'pre'}
+                                    game['status']['state'] = state_map.get(mt, 'pre')
+                            league_games.extend(nfl_games)
+                            self.logger.debug(f"Collected {len(nfl_games)} NFL {mt} games for scroll")
+
+            if league_games:
+                games.extend(league_games)
+                leagues.append('nfl')
+
+        # Collect NCAA FB games if enabled
+        if self.ncaa_fb_enabled:
+            league_games = []
+            for mt in mode_types:
+                # Check if scroll mode is enabled for this league/mode
+                if self._get_display_mode('ncaa_fb', mt) == 'scroll':
+                    ncaa_manager = self._get_manager_for_league_mode('ncaa_fb', mt)
+                    if ncaa_manager:
+                        ncaa_games = self._get_games_from_manager(ncaa_manager, mt)
+                        if ncaa_games:
+                            # Add league info and ensure status field
+                            for game in ncaa_games:
+                                game['league'] = 'ncaa_fb'
+                                # Ensure game has status dict for type determination
+                                if not isinstance(game.get('status'), dict):
+                                    game['status'] = {}
+                                if 'state' not in game['status']:
+                                    # Infer state from mode_type
+                                    state_map = {'live': 'in', 'recent': 'post', 'upcoming': 'pre'}
+                                    game['status']['state'] = state_map.get(mt, 'pre')
+                            league_games.extend(ncaa_games)
+                            self.logger.debug(f"Collected {len(ncaa_games)} NCAA FB {mt} games for scroll")
+
+            if league_games:
+                games.extend(league_games)
+                leagues.append('ncaa_fb')
+
         # If live priority is active, filter to only live games
-        if live_priority_active and mode_type == 'live':
+        if live_priority_active:
             games = [g for g in games if g.get('is_live', False) and not g.get('is_final', False)]
             self.logger.debug(f"Live priority active: filtered to {len(games)} live games")
-        
+
         return games, leagues
     
     def _get_games_from_manager(self, manager, mode_type: str) -> List[Dict]:
@@ -1273,13 +1310,25 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
 
     def _display_internal_cycling(self, force_clear: bool) -> bool:
         """Handle display for internal mode cycling (when no display_mode provided).
-        
+
+        .. deprecated::
+            This method exists for legacy/testing support. The display controller
+            should always provide display_mode parameter for proper timing behavior.
+
         Args:
             force_clear: Whether to force clear display
-            
+
         Returns:
             True if content was displayed, False otherwise
         """
+        # Log deprecation warning (once per session)
+        if not getattr(self, '_internal_cycling_warned', False):
+            self.logger.warning(
+                "Using deprecated internal mode cycling. "
+                "For proper dynamic duration support, use display(display_mode=...) instead."
+            )
+            self._internal_cycling_warned = True
+
         current_time = time.time()
         
         # Check if we should stay on live mode
@@ -1302,13 +1351,21 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
                         break
         
         # Handle mode cycling only if not staying on live
-        if not should_stay_on_live and current_time - self.last_mode_switch >= self.display_duration:
+        # Get dynamic duration for current mode (falls back to display_duration)
+        current_mode_for_duration = self.modes[self.current_mode_index] if self.modes else None
+        cycle_duration = self.display_duration  # Default fallback
+        if current_mode_for_duration:
+            dynamic_duration = self.get_cycle_duration(current_mode_for_duration)
+            if dynamic_duration is not None and dynamic_duration > 0:
+                cycle_duration = dynamic_duration
+
+        if not should_stay_on_live and current_time - self.last_mode_switch >= cycle_duration:
             self.current_mode_index = (self.current_mode_index + 1) % len(self.modes)
             self.last_mode_switch = current_time
             force_clear = True
-            
+
             current_mode = self.modes[self.current_mode_index]
-            self.logger.info(f"Switching to display mode: {current_mode}")
+            self.logger.info(f"Switching to display mode: {current_mode} (after {cycle_duration:.1f}s)")
         
         # Get current manager and display
         current_manager = self._get_current_manager()
@@ -1521,11 +1578,11 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
             and hasattr(self, "nfl_live")
         ):
             raw_live_games = getattr(self.nfl_live, "live_games", [])
-            self.logger.info(f"[LIVE_PRIORITY_DEBUG] NFL raw live_games count: {len(raw_live_games)}")
+            self.logger.debug(f"[LIVE_PRIORITY_DEBUG] NFL raw live_games count: {len(raw_live_games)}")
 
             # Log each raw game for debugging
             for i, game in enumerate(raw_live_games):
-                self.logger.info(
+                self.logger.debug(
                     f"[LIVE_PRIORITY_DEBUG] NFL raw game {i+1}: "
                     f"{game.get('away_abbr')}@{game.get('home_abbr')} "
                     f"is_final={game.get('is_final')}, is_live={game.get('is_live')}, "
@@ -1537,7 +1594,7 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
                 # Filter out any games that are final or appear over
                 live_games = [g for g in raw_live_games if not g.get("is_final", False)]
                 games_after_final_filter = len(live_games)
-                self.logger.info(f"[LIVE_PRIORITY_DEBUG] NFL after is_final filter: {games_after_final_filter} games")
+                self.logger.debug(f"[LIVE_PRIORITY_DEBUG] NFL after is_final filter: {games_after_final_filter} games")
 
                 # Additional validation using helper method if available
                 if hasattr(self.nfl_live, "_is_game_really_over"):
@@ -1545,14 +1602,14 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
                     for game in live_games[:]:  # Iterate over copy
                         is_really_over = self.nfl_live._is_game_really_over(game)
                         if is_really_over:
-                            self.logger.info(
+                            self.logger.debug(
                                 f"[LIVE_PRIORITY_DEBUG] NFL _is_game_really_over=True for "
                                 f"{game.get('away_abbr')}@{game.get('home_abbr')} "
                                 f"(clock={game.get('clock')}, period={game.get('period')}, "
                                 f"period_text={game.get('period_text')})"
                             )
                             live_games.remove(game)
-                    self.logger.info(
+                    self.logger.debug(
                         f"[LIVE_PRIORITY_DEBUG] NFL after _is_game_really_over filter: "
                         f"{len(live_games)} games (removed {games_before_really_over - len(live_games)})"
                     )
@@ -1560,7 +1617,7 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
                 if live_games:
                     # If favorite teams are configured, only return True if there are live games for favorite teams
                     favorite_teams = getattr(self.nfl_live, "favorite_teams", [])
-                    self.logger.info(f"[LIVE_PRIORITY_DEBUG] NFL favorite_teams configured: {favorite_teams}")
+                    self.logger.debug(f"[LIVE_PRIORITY_DEBUG] NFL favorite_teams configured: {favorite_teams}")
 
                     if favorite_teams:
                         # Check if any live game involves a favorite team
@@ -1569,7 +1626,7 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
                             away = game.get("away_abbr")
                             home_match = home in favorite_teams
                             away_match = away in favorite_teams
-                            self.logger.info(
+                            self.logger.debug(
                                 f"[LIVE_PRIORITY_DEBUG] NFL favorite check: {away}@{home} - "
                                 f"home_in_favorites={home_match}, away_in_favorites={away_match}"
                             )
@@ -1579,17 +1636,17 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
                             or game.get("away_abbr") in favorite_teams
                             for game in live_games
                         )
-                        self.logger.info(f"[LIVE_PRIORITY_DEBUG] NFL favorite team match result: {nfl_live}")
+                        self.logger.debug(f"[LIVE_PRIORITY_DEBUG] NFL favorite team match result: {nfl_live}")
                     else:
                         # No favorite teams configured, return True if any live games exist
                         nfl_live = True
-                        self.logger.info("[LIVE_PRIORITY_DEBUG] NFL no favorites configured, nfl_live=True")
+                        self.logger.debug("[LIVE_PRIORITY_DEBUG] NFL no favorites configured, nfl_live=True")
 
                     self.logger.info(f"has_live_content: NFL live_games={len(live_games)}, filtered_live_games={len(live_games)}, nfl_live={nfl_live}")
                 else:
-                    self.logger.info("[LIVE_PRIORITY_DEBUG] NFL no live games after filtering")
+                    self.logger.debug("[LIVE_PRIORITY_DEBUG] NFL no live games after filtering")
             else:
-                self.logger.info("[LIVE_PRIORITY_DEBUG] NFL raw live_games is empty")
+                self.logger.debug("[LIVE_PRIORITY_DEBUG] NFL raw live_games is empty")
         else:
             self.logger.debug(
                 f"[LIVE_PRIORITY_DEBUG] NFL check skipped: nfl_enabled={self.nfl_enabled}, "
@@ -1604,11 +1661,11 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
             and hasattr(self, "ncaa_fb_live")
         ):
             raw_live_games = getattr(self.ncaa_fb_live, "live_games", [])
-            self.logger.info(f"[LIVE_PRIORITY_DEBUG] NCAA FB raw live_games count: {len(raw_live_games)}")
+            self.logger.debug(f"[LIVE_PRIORITY_DEBUG] NCAA FB raw live_games count: {len(raw_live_games)}")
 
             # Log each raw game for debugging
             for i, game in enumerate(raw_live_games):
-                self.logger.info(
+                self.logger.debug(
                     f"[LIVE_PRIORITY_DEBUG] NCAA FB raw game {i+1}: "
                     f"{game.get('away_abbr')}@{game.get('home_abbr')} "
                     f"is_final={game.get('is_final')}, is_live={game.get('is_live')}, "
@@ -1620,7 +1677,7 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
                 # Filter out any games that are final or appear over
                 live_games = [g for g in raw_live_games if not g.get("is_final", False)]
                 games_after_final_filter = len(live_games)
-                self.logger.info(f"[LIVE_PRIORITY_DEBUG] NCAA FB after is_final filter: {games_after_final_filter} games")
+                self.logger.debug(f"[LIVE_PRIORITY_DEBUG] NCAA FB after is_final filter: {games_after_final_filter} games")
 
                 # Additional validation using helper method if available
                 if hasattr(self.ncaa_fb_live, "_is_game_really_over"):
@@ -1628,14 +1685,14 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
                     for game in live_games[:]:  # Iterate over copy
                         is_really_over = self.ncaa_fb_live._is_game_really_over(game)
                         if is_really_over:
-                            self.logger.info(
+                            self.logger.debug(
                                 f"[LIVE_PRIORITY_DEBUG] NCAA FB _is_game_really_over=True for "
                                 f"{game.get('away_abbr')}@{game.get('home_abbr')} "
                                 f"(clock={game.get('clock')}, period={game.get('period')}, "
                                 f"period_text={game.get('period_text')})"
                             )
                             live_games.remove(game)
-                    self.logger.info(
+                    self.logger.debug(
                         f"[LIVE_PRIORITY_DEBUG] NCAA FB after _is_game_really_over filter: "
                         f"{len(live_games)} games (removed {games_before_really_over - len(live_games)})"
                     )
@@ -1643,7 +1700,7 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
                 if live_games:
                     # If favorite teams are configured, only return True if there are live games for favorite teams
                     favorite_teams = getattr(self.ncaa_fb_live, "favorite_teams", [])
-                    self.logger.info(f"[LIVE_PRIORITY_DEBUG] NCAA FB favorite_teams configured: {favorite_teams}")
+                    self.logger.debug(f"[LIVE_PRIORITY_DEBUG] NCAA FB favorite_teams configured: {favorite_teams}")
 
                     if favorite_teams:
                         # Check if any live game involves a favorite team
@@ -1652,7 +1709,7 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
                             away = game.get("away_abbr")
                             home_match = home in favorite_teams
                             away_match = away in favorite_teams
-                            self.logger.info(
+                            self.logger.debug(
                                 f"[LIVE_PRIORITY_DEBUG] NCAA FB favorite check: {away}@{home} - "
                                 f"home_in_favorites={home_match}, away_in_favorites={away_match}"
                             )
@@ -1662,17 +1719,17 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
                             or game.get("away_abbr") in favorite_teams
                             for game in live_games
                         )
-                        self.logger.info(f"[LIVE_PRIORITY_DEBUG] NCAA FB favorite team match result: {ncaa_live}")
+                        self.logger.debug(f"[LIVE_PRIORITY_DEBUG] NCAA FB favorite team match result: {ncaa_live}")
                     else:
                         # No favorite teams configured, return True if any live games exist
                         ncaa_live = True
-                        self.logger.info("[LIVE_PRIORITY_DEBUG] NCAA FB no favorites configured, ncaa_live=True")
+                        self.logger.debug("[LIVE_PRIORITY_DEBUG] NCAA FB no favorites configured, ncaa_live=True")
 
                     self.logger.info(f"has_live_content: NCAA FB live_games={len(live_games)}, filtered_live_games={len(live_games)}, ncaa_live={ncaa_live}")
                 else:
-                    self.logger.info("[LIVE_PRIORITY_DEBUG] NCAA FB no live games after filtering")
+                    self.logger.debug("[LIVE_PRIORITY_DEBUG] NCAA FB no live games after filtering")
             else:
-                self.logger.info("[LIVE_PRIORITY_DEBUG] NCAA FB raw live_games is empty")
+                self.logger.debug("[LIVE_PRIORITY_DEBUG] NCAA FB raw live_games is empty")
         else:
             self.logger.debug(
                 f"[LIVE_PRIORITY_DEBUG] NCAA FB check skipped: ncaa_fb_enabled={self.ncaa_fb_enabled}, "
@@ -2011,7 +2068,7 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
         
         This implements dynamic duration scaling with support for mode-level durations:
         - Mode-level duration: Fixed total time for mode (recent_mode_duration, upcoming_mode_duration, live_mode_duration)
-        - Dynamic calculation: Total duration = num_games × per_game_duration
+        - Dynamic calculation: Total duration = num_games x per_game_duration
         - For scroll mode: Duration is calculated by ScrollHelper based on content width
         
         Priority order:
@@ -2113,11 +2170,15 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
                 if manager:
                     self._ensure_manager_updated(manager)
             
-            # Count games from all applicable managers and get duration
+            # Count games from all applicable managers and calculate weighted duration
+            # Fix: Accumulate duration per-league instead of using last league's duration
+            total_duration = 0.0
+            duration_breakdown = []  # For logging
+
             for league_name, manager in managers_to_check:
                 if not manager:
                     continue
-                
+
                 # Get the appropriate game list based on mode type
                 if mode_type == 'live':
                     games = getattr(manager, 'live_games', [])
@@ -2127,45 +2188,86 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
                     games = getattr(manager, 'upcoming_games', [])
                 else:
                     games = []
-                
+
                 # Get duration for this league/mode combination
-                per_game_duration = self._get_game_duration(league_name, mode_type, manager)
-                
+                per_game_duration = self._get_game_duration(
+                    league_name, mode_type, manager
+                )
+
                 # Filter out invalid games
                 if games:
                     # For live games, filter out final games
                     if mode_type == 'live':
                         games = [g for g in games if not g.get('is_final', False)]
                         if hasattr(manager, '_is_game_really_over'):
-                            games = [g for g in games if not manager._is_game_really_over(g)]
-                    
+                            games = [
+                                g for g in games
+                                if not manager._is_game_really_over(g)
+                            ]
+
                     game_count = len(games)
                     total_games += game_count
-                    
-                    self.logger.debug(
-                        f"get_cycle_duration: {league_name} {mode_type} has {game_count} games, "
-                        f"per_game_duration={per_game_duration}s"
+
+                    # Calculate this league's contribution to total duration
+                    league_duration = game_count * per_game_duration
+                    total_duration += league_duration
+
+                    duration_breakdown.append(
+                        f"{league_name}: {game_count} x {per_game_duration}s = {league_duration}s"
                     )
-            
-            self.logger.info(f"get_cycle_duration: found {total_games} total games for {display_mode}")
-            
+
+                    self.logger.debug(
+                        f"get_cycle_duration: {league_name} {mode_type} has "
+                        f"{game_count} games, per_game_duration={per_game_duration}s"
+                    )
+
+            self.logger.info(
+                f"get_cycle_duration: found {total_games} total games for {display_mode}"
+            )
+
             if total_games == 0:
-                # If no games found yet (managers still fetching data), return a default duration
-                # This allows the display to start while data is loading
-                default_duration = 45.0  # 3 games × 15s per game (reasonable default)
-                self.logger.info(f"get_cycle_duration: {display_mode} has no games yet, returning default {default_duration}s")
+                # If no games found yet, return a default duration based on config
+                # Use configured game_display_duration with assumed 3 games per cycle
+                default_games_per_cycle = 3
+                default_duration = default_games_per_cycle * self.game_display_duration
+                self.logger.info(
+                    f"get_cycle_duration: {display_mode} has no games yet, "
+                    f"returning default {default_duration}s ({default_games_per_cycle} x {self.game_display_duration}s)"
+                )
                 return default_duration
-            
-            # Calculate total duration: num_games × per_game_duration
-            total_duration = total_games * per_game_duration
-            self.logger.info(
-                f"get_cycle_duration({display_mode}): {total_games} games × {per_game_duration}s = {total_duration}s"
-            )
-            
-            self.logger.info(
-                f"get_cycle_duration: {display_mode} = {total_games} games × {per_game_duration}s = {total_duration}s"
-            )
-            
+
+            # Apply min/max duration constraints if configured
+            min_duration = self._get_duration_floor_for_mode(mode_type)
+            max_duration = self._get_duration_cap_for_mode(mode_type)
+
+            original_duration = total_duration
+
+            if min_duration is not None and total_duration < min_duration:
+                total_duration = min_duration
+                self.logger.info(
+                    f"get_cycle_duration: clamped {original_duration}s up to "
+                    f"min_duration={min_duration}s"
+                )
+
+            if max_duration is not None and total_duration > max_duration:
+                total_duration = max_duration
+                self.logger.info(
+                    f"get_cycle_duration: clamped {original_duration}s down to "
+                    f"max_duration={max_duration}s"
+                )
+
+            # Log the breakdown for mixed leagues
+            if len(duration_breakdown) > 1:
+                self.logger.info(
+                    f"get_cycle_duration({display_mode}): mixed leagues - "
+                    f"{', '.join(duration_breakdown)} = {total_duration}s total"
+                )
+            else:
+                self.logger.info(
+                    f"get_cycle_duration: {display_mode} = {total_games} games, "
+                    f"total_duration={total_duration}s"
+                )
+
             return total_duration
             
         except Exception as e:
@@ -2356,6 +2458,141 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
         # No global fallback - return None
         return None
 
+    def get_dynamic_duration_floor(self) -> Optional[float]:
+        """
+        Get dynamic duration minimum (floor) for the current display context.
+        Checks granular settings: per-league/per-mode > per-league > None.
+
+        Returns:
+            Minimum duration in seconds, or None if not configured.
+        """
+        if not self.is_enabled:
+            return None
+
+        # If no current display context, return None
+        if not self._current_display_league or not self._current_display_mode_type:
+            return None
+
+        league = self._current_display_league
+        mode_type = self._current_display_mode_type
+
+        # Check per-league/per-mode setting first (most specific)
+        league_config = self.config.get(league, {})
+        league_dynamic = league_config.get("dynamic_duration", {})
+        league_modes = league_dynamic.get("modes", {})
+        mode_config = league_modes.get(mode_type, {})
+        if "min_duration_seconds" in mode_config:
+            try:
+                floor = float(mode_config.get("min_duration_seconds"))
+                if floor > 0:
+                    return floor
+            except (TypeError, ValueError):
+                pass
+
+        # Check per-league setting
+        if "min_duration_seconds" in league_dynamic:
+            try:
+                floor = float(league_dynamic.get("min_duration_seconds"))
+                if floor > 0:
+                    return floor
+            except (TypeError, ValueError):
+                pass
+
+        # No global fallback - return None
+        return None
+
+    def _get_duration_floor_for_mode(self, mode_type: str) -> Optional[float]:
+        """
+        Get the minimum duration floor for a mode type across all enabled leagues.
+
+        When both NFL and NCAA FB are enabled, returns the highest min_duration
+        configured across the enabled leagues (most restrictive floor).
+
+        Args:
+            mode_type: Mode type ('live', 'recent', or 'upcoming')
+
+        Returns:
+            Minimum duration in seconds, or None if not configured.
+        """
+        floors = []
+
+        for league in ['nfl', 'ncaa_fb']:
+            league_config = self.config.get(league, {})
+            if not league_config.get('enabled', False):
+                continue
+
+            league_dynamic = league_config.get("dynamic_duration", {})
+            league_modes = league_dynamic.get("modes", {})
+            mode_config = league_modes.get(mode_type, {})
+
+            # Check per-mode setting first
+            if "min_duration_seconds" in mode_config:
+                try:
+                    floor = float(mode_config.get("min_duration_seconds"))
+                    if floor > 0:
+                        floors.append(floor)
+                        continue
+                except (TypeError, ValueError):
+                    pass
+
+            # Check per-league setting
+            if "min_duration_seconds" in league_dynamic:
+                try:
+                    floor = float(league_dynamic.get("min_duration_seconds"))
+                    if floor > 0:
+                        floors.append(floor)
+                except (TypeError, ValueError):
+                    pass
+
+        # Return the highest floor (most restrictive)
+        return max(floors) if floors else None
+
+    def _get_duration_cap_for_mode(self, mode_type: str) -> Optional[float]:
+        """
+        Get the maximum duration cap for a mode type across all enabled leagues.
+
+        When both NFL and NCAA FB are enabled, returns the lowest max_duration
+        configured across the enabled leagues (most restrictive cap).
+
+        Args:
+            mode_type: Mode type ('live', 'recent', or 'upcoming')
+
+        Returns:
+            Maximum duration in seconds, or None if not configured.
+        """
+        caps = []
+
+        for league in ['nfl', 'ncaa_fb']:
+            league_config = self.config.get(league, {})
+            if not league_config.get('enabled', False):
+                continue
+
+            league_dynamic = league_config.get("dynamic_duration", {})
+            league_modes = league_dynamic.get("modes", {})
+            mode_config = league_modes.get(mode_type, {})
+
+            # Check per-mode setting first
+            if "max_duration_seconds" in mode_config:
+                try:
+                    cap = float(mode_config.get("max_duration_seconds"))
+                    if cap > 0:
+                        caps.append(cap)
+                        continue
+                except (TypeError, ValueError):
+                    pass
+
+            # Check per-league setting
+            if "max_duration_seconds" in league_dynamic:
+                try:
+                    cap = float(league_dynamic.get("max_duration_seconds"))
+                    if cap > 0:
+                        caps.append(cap)
+                except (TypeError, ValueError):
+                    pass
+
+        # Return the lowest cap (most restrictive)
+        return min(caps) if caps else None
+
     def _get_manager_for_mode(self, mode_name: str):
         """Resolve manager instance for a given display mode."""
         if mode_name.startswith("nfl_"):
@@ -2414,13 +2651,13 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
             return False
 
         raw_live_games = getattr(manager, 'live_games', [])
-        self.logger.info(
+        self.logger.debug(
             f"[LIVE_PRIORITY_DEBUG] _has_live_games_for_manager({manager_name}): "
             f"raw live_games count = {len(raw_live_games)}"
         )
 
         if not raw_live_games:
-            self.logger.info(
+            self.logger.debug(
                 f"[LIVE_PRIORITY_DEBUG] _has_live_games_for_manager({manager_name}): "
                 f"returning False - no raw live games"
             )
@@ -2429,7 +2666,7 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
         # Filter out games that are final or appear over
         live_games = [g for g in raw_live_games if not g.get('is_final', False)]
         games_after_final_filter = len(live_games)
-        self.logger.info(
+        self.logger.debug(
             f"[LIVE_PRIORITY_DEBUG] _has_live_games_for_manager({manager_name}): "
             f"after is_final filter = {games_after_final_filter} games"
         )
@@ -2437,13 +2674,13 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
         if hasattr(manager, '_is_game_really_over'):
             games_before = len(live_games)
             live_games = [g for g in live_games if not manager._is_game_really_over(g)]
-            self.logger.info(
+            self.logger.debug(
                 f"[LIVE_PRIORITY_DEBUG] _has_live_games_for_manager({manager_name}): "
                 f"after _is_game_really_over filter = {len(live_games)} games (removed {games_before - len(live_games)})"
             )
 
         if not live_games:
-            self.logger.info(
+            self.logger.debug(
                 f"[LIVE_PRIORITY_DEBUG] _has_live_games_for_manager({manager_name}): "
                 f"returning False - no live games after filtering"
             )
@@ -2451,7 +2688,7 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
 
         # If favorite teams are configured, only return True if there are live games for favorite teams
         favorite_teams = getattr(manager, 'favorite_teams', [])
-        self.logger.info(
+        self.logger.debug(
             f"[LIVE_PRIORITY_DEBUG] _has_live_games_for_manager({manager_name}): "
             f"favorite_teams = {favorite_teams}"
         )
@@ -2463,7 +2700,7 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
                 away = game.get('away_abbr')
                 home_match = home in favorite_teams
                 away_match = away in favorite_teams
-                self.logger.info(
+                self.logger.debug(
                     f"[LIVE_PRIORITY_DEBUG] _has_live_games_for_manager({manager_name}): "
                     f"checking {away}@{home} - home_in_favorites={home_match}, away_in_favorites={away_match}"
                 )
@@ -2473,14 +2710,14 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
                 or game.get('away_abbr') in favorite_teams
                 for game in live_games
             )
-            self.logger.info(
+            self.logger.debug(
                 f"[LIVE_PRIORITY_DEBUG] _has_live_games_for_manager({manager_name}): "
                 f"returning {has_favorite_live} - has_favorite_live check"
             )
             return has_favorite_live
 
         # No favorite teams configured, any live game counts
-        self.logger.info(
+        self.logger.debug(
             f"[LIVE_PRIORITY_DEBUG] _has_live_games_for_manager({manager_name}): "
             f"returning True - no favorites configured, {len(live_games)} live games exist"
         )
@@ -3091,6 +3328,122 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
                             game_ids.add(f"index-{i}")
                 break
         return game_ids
+
+    # -------------------------------------------------------------------------
+    # Vegas scroll mode support
+    # -------------------------------------------------------------------------
+    def get_vegas_content(self) -> Optional[Any]:
+        """
+        Get content for Vegas-style continuous scroll mode.
+
+        Returns None to let PluginAdapter auto-detect scroll_helper.cached_image.
+        Triggers scroll content generation if cache is empty to ensure Vegas
+        has content to display.
+
+        Returns:
+            None - PluginAdapter will extract scroll_helper.cached_image automatically
+        """
+        # Ensure scroll content is generated for Vegas mode
+        if hasattr(self, '_scroll_manager') and self._scroll_manager:
+            if not self._scroll_manager.has_cached_content():
+                self.logger.info("[Football Vegas] Triggering scroll content generation")
+                self._ensure_scroll_content_for_vegas()
+
+        # Return None - PluginAdapter will auto-detect scroll_helper.cached_image
+        return None
+
+    def get_vegas_content_type(self) -> str:
+        """
+        Indicate the type of content this plugin provides for Vegas scroll.
+
+        Returns:
+            'multi' - Plugin has multiple scrollable items (games)
+        """
+        return 'multi'
+
+    def get_vegas_display_mode(self) -> 'VegasDisplayMode':
+        """
+        Get the display mode for Vegas scroll integration.
+
+        Returns:
+            VegasDisplayMode.SCROLL - Content scrolls continuously
+        """
+        if VegasDisplayMode:
+            # Check for config override
+            config_mode = self.config.get("vegas_mode")
+            if config_mode:
+                try:
+                    return VegasDisplayMode(config_mode)
+                except ValueError:
+                    self.logger.warning(
+                        f"Invalid vegas_mode '{config_mode}' in config, using SCROLL"
+                    )
+            return VegasDisplayMode.SCROLL
+        # Fallback if VegasDisplayMode not available
+        return "scroll"
+
+    def _ensure_scroll_content_for_vegas(self) -> None:
+        """
+        Ensure scroll content is generated for Vegas mode.
+
+        This method is called by get_vegas_content() when the scroll cache is empty.
+        It collects all game types (live, recent, upcoming) organized by league.
+        """
+        if not hasattr(self, '_scroll_manager') or not self._scroll_manager:
+            self.logger.debug("[Football Vegas] No scroll manager available")
+            return
+
+        # Refresh internal managers/cache so Vegas has up-to-date content
+        try:
+            if hasattr(self, 'update') and callable(self.update):
+                self.update()
+                self.logger.debug("[Football Vegas] Refreshed managers via update()")
+            elif hasattr(self, 'refresh_managers') and callable(self.refresh_managers):
+                self.refresh_managers()
+                self.logger.debug("[Football Vegas] Refreshed managers via refresh_managers()")
+            elif hasattr(self, '_update') and callable(self._update):
+                self._update()
+                self.logger.debug("[Football Vegas] Refreshed managers via _update()")
+        except Exception as e:
+            self.logger.debug(f"[Football Vegas] Manager refresh failed (non-fatal): {e}")
+
+        # Collect all games (live, recent, upcoming) organized by league
+        games, leagues = self._collect_games_for_scroll(live_priority_active=False)
+
+        if not games:
+            self.logger.debug("[Football Vegas] No games available")
+            return
+
+        # Count games by type for logging
+        game_type_counts = {'live': 0, 'recent': 0, 'upcoming': 0}
+        for game in games:
+            state = game.get('status', {}).get('state', '')
+            if state == 'in':
+                game_type_counts['live'] += 1
+            elif state == 'post':
+                game_type_counts['recent'] += 1
+            elif state == 'pre':
+                game_type_counts['upcoming'] += 1
+
+        # Get rankings cache if available
+        rankings_cache = self._get_rankings_cache() if hasattr(self, '_get_rankings_cache') else None
+
+        # Prepare scroll content with mixed game types
+        # Note: Using 'mixed' as game_type indicator for scroll config
+        success = self._scroll_manager.prepare_and_display(
+            games, 'mixed', leagues, rankings_cache
+        )
+
+        if success:
+            type_summary = ', '.join(
+                f"{count} {gtype}" for gtype, count in game_type_counts.items() if count > 0
+            )
+            self.logger.info(
+                f"[Football Vegas] Successfully generated scroll content: "
+                f"{len(games)} games ({type_summary}) from {', '.join(leagues)}"
+            )
+        else:
+            self.logger.warning("[Football Vegas] Failed to generate scroll content")
 
     def cleanup(self) -> None:
         """Clean up resources."""

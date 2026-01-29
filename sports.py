@@ -1997,7 +1997,7 @@ class SportsLive(SportsCore):
         # Check if period_text indicates final
         period_text = game.get("period_text", "").lower()
         if "final" in period_text:
-            self.logger.info(
+            self.logger.debug(
                 f"[LIVE_PRIORITY_DEBUG] _is_game_really_over({game_str}): "
                 f"returning True - 'final' in period_text='{period_text}'"
             )
@@ -2022,7 +2022,7 @@ class SportsLive(SportsCore):
         if period >= 4:
             # In Q4 or OT, if clock is 0:00 or appears stuck (like :40), consider it over
             if clock_normalized == "000" or clock_normalized == "00" or clock == "0:00" or clock == ":00":
-                self.logger.info(
+                self.logger.debug(
                     f"[LIVE_PRIORITY_DEBUG] _is_game_really_over({game_str}): "
                     f"returning True - clock appears to be 0:00 (clock='{clock}', normalized='{clock_normalized}', period={period})"
                 )
@@ -2030,7 +2030,7 @@ class SportsLive(SportsCore):
             # Also check if clock appears stuck (e.g., ":40" with no minutes)
             if clock.startswith(":") and len(clock) <= 3:
                 # Clock like ":40" or ":00" - likely stuck
-                self.logger.info(
+                self.logger.debug(
                     f"[LIVE_PRIORITY_DEBUG] _is_game_really_over({game_str}): "
                     f"returning True - clock appears stuck (clock='{clock}' starts with ':' and len <= 3, period={period})"
                 )
@@ -2248,7 +2248,7 @@ class SportsLive(SportsCore):
                                     f"away_abbr='{away_abbr}' in_favorites={away_match}"
                                 )
 
-                            self.logger.info(
+                            self.logger.debug(
                                 f"[LIVE_PRIORITY_DEBUG] {self.sport_key.upper()} filter decision for {game_str}: "
                                 f"should_include={should_include}, reason: {include_reason}"
                             )
