@@ -604,15 +604,28 @@ class ScrollDisplayManager:
         """Get the dynamic duration for the current scroll."""
         if game_type is None:
             game_type = self._current_game_type
-        
+
         if game_type is None:
             return 60
-        
+
         scroll_display = self._scroll_displays.get(game_type)
         if scroll_display is None:
             return 60
-        
+
         return scroll_display.get_dynamic_duration()
+
+    def has_cached_content(self) -> bool:
+        """
+        Check if any scroll display has cached content.
+
+        Returns:
+            True if at least one scroll display has a cached image
+        """
+        for scroll_display in self._scroll_displays.values():
+            if hasattr(scroll_display, 'scroll_helper') and scroll_display.scroll_helper:
+                if scroll_display.scroll_helper.cached_image is not None:
+                    return True
+        return False
     
     def clear_all(self) -> None:
         """Clear all scroll displays."""
