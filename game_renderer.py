@@ -97,7 +97,7 @@ class GameRenderer:
             fonts["time"] = self._load_custom_font(period_config, default_size=8)
             fonts["team"] = self._load_custom_font(team_config, default_size=8)
             fonts["status"] = self._load_custom_font(status_config, default_size=6)
-            fonts["detail"] = self._load_custom_font(detail_config, default_size=6)
+            fonts["detail"] = self._load_custom_font(detail_config, default_size=6, default_font='4x6.ttf')
             fonts["rank"] = self._load_custom_font(rank_config, default_size=10)
             self.logger.debug("Successfully loaded fonts from config")
         except Exception as e:
@@ -117,7 +117,7 @@ class GameRenderer:
         
         return fonts
     
-    def _load_custom_font(self, element_config: Dict[str, Any], default_size: int = 8) -> Union[ImageFont.FreeTypeFont, Any]:
+    def _load_custom_font(self, element_config: Dict[str, Any], default_size: int = 8, default_font: str = 'PressStart2P-Regular.ttf') -> Union[ImageFont.FreeTypeFont, Any]:
         """
         Load a custom font from an element configuration dictionary.
         
@@ -126,7 +126,7 @@ class GameRenderer:
         Returns:
             ImageFont.FreeTypeFont for TTF/OTF fonts, freetype.Face for BDF fonts, or fallback font
         """
-        font_name = element_config.get('font', 'PressStart2P-Regular.ttf')
+        font_name = element_config.get('font', default_font)
         font_size = int(element_config.get('font_size', default_size))
         font_path = os.path.join('assets', 'fonts', font_name)
         
@@ -160,7 +160,7 @@ class GameRenderer:
             self.logger.error(f"Error loading font {font_name}: {e}, trying fallback")
         
         # Fallback to default font
-        default_font_path = os.path.join('assets', 'fonts', 'PressStart2P-Regular.ttf')
+        default_font_path = os.path.join('assets', 'fonts', default_font)
         try:
             if os.path.exists(default_font_path):
                 return ImageFont.truetype(default_font_path, font_size)
