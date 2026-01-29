@@ -238,7 +238,11 @@ class ScrollDisplay:
         Returns:
             Game type: 'live', 'recent', or 'upcoming'
         """
-        state = game.get('status', {}).get('state', '')
+        # Guard against status being None or non-dict
+        status = game.get('status')
+        if not isinstance(status, dict):
+            status = {}
+        state = status.get('state', '')
         if state == 'in':
             return 'live'
         elif state == 'post':

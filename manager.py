@@ -685,8 +685,8 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
                             # Add league info and ensure status field
                             for game in nfl_games:
                                 game['league'] = 'nfl'
-                                # Ensure game has status for type determination
-                                if 'status' not in game:
+                                # Ensure game has status dict for type determination
+                                if not isinstance(game.get('status'), dict):
                                     game['status'] = {}
                                 if 'state' not in game['status']:
                                     # Infer state from mode_type
@@ -712,8 +712,8 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
                             # Add league info and ensure status field
                             for game in ncaa_games:
                                 game['league'] = 'ncaa_fb'
-                                # Ensure game has status for type determination
-                                if 'status' not in game:
+                                # Ensure game has status dict for type determination
+                                if not isinstance(game.get('status'), dict):
                                     game['status'] = {}
                                 if 'state' not in game['status']:
                                     # Infer state from mode_type
@@ -2226,11 +2226,13 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
             )
 
             if total_games == 0:
-                # If no games found yet, return a default duration
-                default_duration = 45.0  # 3 games x 15s per game
+                # If no games found yet, return a default duration based on config
+                # Use configured game_display_duration with assumed 3 games per cycle
+                default_games_per_cycle = 3
+                default_duration = default_games_per_cycle * self.game_display_duration
                 self.logger.info(
                     f"get_cycle_duration: {display_mode} has no games yet, "
-                    f"returning default {default_duration}s"
+                    f"returning default {default_duration}s ({default_games_per_cycle} x {self.game_display_duration}s)"
                 )
                 return default_duration
 
@@ -3390,6 +3392,20 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
         if not hasattr(self, '_scroll_manager') or not self._scroll_manager:
             self.logger.debug("[Football Vegas] No scroll manager available")
             return
+
+        # Refresh internal managers/cache so Vegas has up-to-date content
+        try:
+            if hasattr(self, 'update') and callable(self.update):
+                self.update()
+                self.logger.debug("[Football Vegas] Refreshed managers via update()")
+            elif hasattr(self, 'refresh_managers') and callable(self.refresh_managers):
+                self.refresh_managers()
+                self.logger.debug("[Football Vegas] Refreshed managers via refresh_managers()")
+            elif hasattr(self, '_update') and callable(self._update):
+                self._update()
+                self.logger.debug("[Football Vegas] Refreshed managers via _update()")
+        except Exception as e:
+            self.logger.debug(f"[Football Vegas] Manager refresh failed (non-fatal): {e}")
 
         # Collect all games (live, recent, upcoming) organized by league
         games, leagues = self._collect_games_for_scroll(live_priority_active=False)
