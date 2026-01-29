@@ -34,11 +34,12 @@ from typing import Dict, Any, Set, Optional, Tuple, List
 from PIL import ImageFont
 
 try:
-    from src.plugin_system.base_plugin import BasePlugin
+    from src.plugin_system.base_plugin import BasePlugin, VegasDisplayMode
     from src.background_data_service import get_background_service
     from src.base_odds_manager import BaseOddsManager
 except ImportError:
     BasePlugin = None
+    VegasDisplayMode = None
     get_background_service = None
     BaseOddsManager = None
 
@@ -3290,6 +3291,117 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
                             game_ids.add(f"index-{i}")
                 break
         return game_ids
+
+    # -------------------------------------------------------------------------
+    # Vegas scroll mode support
+    # -------------------------------------------------------------------------
+    def get_vegas_content(self) -> Optional[Any]:
+        """
+        Get content for Vegas-style continuous scroll mode.
+
+        Returns None to let PluginAdapter auto-detect scroll_helper.cached_image.
+        Triggers scroll content generation if cache is empty to ensure Vegas
+        has content to display.
+
+        Returns:
+            None - PluginAdapter will extract scroll_helper.cached_image automatically
+        """
+        # Ensure scroll content is generated for Vegas mode
+        if hasattr(self, '_scroll_manager') and self._scroll_manager:
+            # Check all scroll displays and trigger generation if any cache is empty
+            for game_type, scroll_display in self._scroll_manager._scroll_displays.items():
+                if hasattr(scroll_display, 'scroll_helper') and scroll_display.scroll_helper:
+                    if scroll_display.scroll_helper.cached_image is None:
+                        self.logger.info(
+                            f"[Football Vegas] Triggering scroll content generation for {game_type}"
+                        )
+                        # Trigger content generation by calling the prepare method
+                        self._ensure_scroll_content_for_vegas(game_type)
+                        break
+
+        # Return None - PluginAdapter will auto-detect scroll_helper.cached_image
+        return None
+
+    def get_vegas_content_type(self) -> str:
+        """
+        Indicate the type of content this plugin provides for Vegas scroll.
+
+        Returns:
+            'multi' - Plugin has multiple scrollable items (games)
+        """
+        return 'multi'
+
+    def get_vegas_display_mode(self) -> 'VegasDisplayMode':
+        """
+        Get the display mode for Vegas scroll integration.
+
+        Returns:
+            VegasDisplayMode.SCROLL - Content scrolls continuously
+        """
+        if VegasDisplayMode:
+            # Check for config override
+            config_mode = self.config.get("vegas_mode")
+            if config_mode:
+                try:
+                    return VegasDisplayMode(config_mode)
+                except ValueError:
+                    self.logger.warning(
+                        f"Invalid vegas_mode '{config_mode}' in config, using SCROLL"
+                    )
+            return VegasDisplayMode.SCROLL
+        # Fallback if VegasDisplayMode not available
+        return "scroll"
+
+    def _ensure_scroll_content_for_vegas(self, game_type: str = None) -> None:
+        """
+        Ensure scroll content is generated for Vegas mode.
+
+        This method is called by get_vegas_content() when the scroll cache is empty.
+        It collects games and triggers scroll content preparation.
+
+        Args:
+            game_type: Optional game type to generate ('live', 'recent', 'upcoming').
+                      If None, uses the most appropriate mode.
+        """
+        if not hasattr(self, '_scroll_manager') or not self._scroll_manager:
+            self.logger.debug("[Football Vegas] No scroll manager available")
+            return
+
+        # Determine which game type to use
+        if game_type is None:
+            # Check for live games first, then recent, then upcoming
+            if self._should_use_scroll_mode('live'):
+                game_type = 'live'
+            elif self._should_use_scroll_mode('recent'):
+                game_type = 'recent'
+            elif self._should_use_scroll_mode('upcoming'):
+                game_type = 'upcoming'
+            else:
+                self.logger.debug("[Football Vegas] No scroll mode enabled")
+                return
+
+        # Collect games for this mode type
+        games, leagues = self._collect_games_for_scroll(game_type, live_priority_active=False)
+
+        if not games:
+            self.logger.debug(f"[Football Vegas] No games available for {game_type}")
+            return
+
+        # Get rankings cache if available
+        rankings_cache = self._get_rankings_cache() if hasattr(self, '_get_rankings_cache') else None
+
+        # Prepare scroll content
+        success = self._scroll_manager.prepare_and_display(
+            games, game_type, leagues, rankings_cache
+        )
+
+        if success:
+            self.logger.info(
+                f"[Football Vegas] Successfully generated scroll content for {game_type}: "
+                f"{len(games)} games from {', '.join(leagues)}"
+            )
+        else:
+            self.logger.warning(f"[Football Vegas] Failed to generate scroll content for {game_type}")
 
     def cleanup(self) -> None:
         """Clean up resources."""
