@@ -154,13 +154,9 @@ class TestGetCycleDuration:
         valid_modes = ["nfl_recent", "nfl_upcoming", "nfl_live"]
         for mode in valid_modes:
             # These should return either a calculated duration or None (if no games)
-            # but should not raise an exception
-            try:
-                result = plugin.get_cycle_duration(mode)
-                # Result can be None if no games, or a positive number
-                assert result is None or result > 0
-            except Exception as e:
-                pytest.fail(f"get_cycle_duration raised exception for {mode}: {e}")
+            result = plugin.get_cycle_duration(mode)
+            # Result can be None if no games, or a positive number
+            assert result is None or result > 0
 
 
 class TestLivePriorityWithDynamicDuration:

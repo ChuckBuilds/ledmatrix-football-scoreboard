@@ -34,11 +34,12 @@ from typing import Dict, Any, Set, Optional, Tuple, List
 from PIL import ImageFont
 
 try:
-    from src.plugin_system.base_plugin import BasePlugin
+    from src.plugin_system.base_plugin import BasePlugin, VegasDisplayMode
     from src.background_data_service import get_background_service
     from src.base_odds_manager import BaseOddsManager
 except ImportError:
     BasePlugin = None
+    VegasDisplayMode = None
     get_background_service = None
     BaseOddsManager = None
 
@@ -645,56 +646,91 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
         return False
     
     def _collect_games_for_scroll(
-        self, 
-        mode_type: str, 
+        self,
+        mode_type: Optional[str] = None,
         live_priority_active: bool = False
     ) -> Tuple[List[Dict], List[str]]:
         """
         Collect all games from enabled leagues for scroll mode.
-        
+
         Args:
-            mode_type: 'live', 'recent', or 'upcoming'
+            mode_type: Optional game type filter ('live', 'recent', 'upcoming').
+                      If None, collects all game types organized by league.
             live_priority_active: If True, only include live games
-            
+
         Returns:
             Tuple of (games list with league info, list of leagues included)
         """
         games = []
         leagues = []
-        
-        # Collect NFL games if enabled and using scroll mode
-        if self.nfl_enabled and self._get_display_mode('nfl', mode_type) == 'scroll':
-            nfl_manager = self._get_manager_for_league_mode('nfl', mode_type)
-            if nfl_manager:
-                nfl_games = self._get_games_from_manager(nfl_manager, mode_type)
-                if nfl_games:
-                    # Add league info to each game
-                    for game in nfl_games:
-                        game['league'] = 'nfl'
-                    games.extend(nfl_games)
-                    if 'nfl' not in leagues:
-                        leagues.append('nfl')
-                    self.logger.debug(f"Collected {len(nfl_games)} NFL {mode_type} games for scroll")
-        
-        # Collect NCAA FB games if enabled and using scroll mode
-        if self.ncaa_fb_enabled and self._get_display_mode('ncaa_fb', mode_type) == 'scroll':
-            ncaa_manager = self._get_manager_for_league_mode('ncaa_fb', mode_type)
-            if ncaa_manager:
-                ncaa_games = self._get_games_from_manager(ncaa_manager, mode_type)
-                if ncaa_games:
-                    # Add league info to each game
-                    for game in ncaa_games:
-                        game['league'] = 'ncaa_fb'
-                    games.extend(ncaa_games)
-                    if 'ncaa_fb' not in leagues:
-                        leagues.append('ncaa_fb')
-                    self.logger.debug(f"Collected {len(ncaa_games)} NCAA FB {mode_type} games for scroll")
-        
+
+        # Determine which mode types to collect
+        if mode_type is None:
+            # Collect all game types for Vegas mode
+            mode_types = ['live', 'recent', 'upcoming']
+        else:
+            # Collect single game type for internal plugin scroll mode
+            mode_types = [mode_type]
+
+        # Collect NFL games if enabled
+        if self.nfl_enabled:
+            league_games = []
+            for mt in mode_types:
+                # Check if scroll mode is enabled for this league/mode
+                if self._get_display_mode('nfl', mt) == 'scroll':
+                    nfl_manager = self._get_manager_for_league_mode('nfl', mt)
+                    if nfl_manager:
+                        nfl_games = self._get_games_from_manager(nfl_manager, mt)
+                        if nfl_games:
+                            # Add league info and ensure status field
+                            for game in nfl_games:
+                                game['league'] = 'nfl'
+                                # Ensure game has status dict for type determination
+                                if not isinstance(game.get('status'), dict):
+                                    game['status'] = {}
+                                if 'state' not in game['status']:
+                                    # Infer state from mode_type
+                                    state_map = {'live': 'in', 'recent': 'post', 'upcoming': 'pre'}
+                                    game['status']['state'] = state_map.get(mt, 'pre')
+                            league_games.extend(nfl_games)
+                            self.logger.debug(f"Collected {len(nfl_games)} NFL {mt} games for scroll")
+
+            if league_games:
+                games.extend(league_games)
+                leagues.append('nfl')
+
+        # Collect NCAA FB games if enabled
+        if self.ncaa_fb_enabled:
+            league_games = []
+            for mt in mode_types:
+                # Check if scroll mode is enabled for this league/mode
+                if self._get_display_mode('ncaa_fb', mt) == 'scroll':
+                    ncaa_manager = self._get_manager_for_league_mode('ncaa_fb', mt)
+                    if ncaa_manager:
+                        ncaa_games = self._get_games_from_manager(ncaa_manager, mt)
+                        if ncaa_games:
+                            # Add league info and ensure status field
+                            for game in ncaa_games:
+                                game['league'] = 'ncaa_fb'
+                                # Ensure game has status dict for type determination
+                                if not isinstance(game.get('status'), dict):
+                                    game['status'] = {}
+                                if 'state' not in game['status']:
+                                    # Infer state from mode_type
+                                    state_map = {'live': 'in', 'recent': 'post', 'upcoming': 'pre'}
+                                    game['status']['state'] = state_map.get(mt, 'pre')
+                            league_games.extend(ncaa_games)
+                            self.logger.debug(f"Collected {len(ncaa_games)} NCAA FB {mt} games for scroll")
+
+            if league_games:
+                games.extend(league_games)
+                leagues.append('ncaa_fb')
+
         # If live priority is active, filter to only live games
-        if live_priority_active and mode_type == 'live':
+        if live_priority_active:
             games = [g for g in games if g.get('is_live', False) and not g.get('is_final', False)]
             self.logger.debug(f"Live priority active: filtered to {len(games)} live games")
-        
+
         return games, leagues
     
     def _get_games_from_manager(self, manager, mode_type: str) -> List[Dict]:
@@ -2190,11 +2226,13 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
             )
 
             if total_games == 0:
-                # If no games found yet, return a default duration
-                default_duration = 45.0  # 3 games x 15s per game
+                # If no games found yet, return a default duration based on config
+                # Use configured game_display_duration with assumed 3 games per cycle
+                default_games_per_cycle = 3
+                default_duration = default_games_per_cycle * self.game_display_duration
                 self.logger.info(
                     f"get_cycle_duration: {display_mode} has no games yet, "
-                    f"returning default {default_duration}s"
+                    f"returning default {default_duration}s ({default_games_per_cycle} x {self.game_display_duration}s)"
                 )
                 return default_duration
 
@@ -3290,6 +3328,122 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
                             game_ids.add(f"index-{i}")
                 break
         return game_ids
+
+    # -------------------------------------------------------------------------
+    # Vegas scroll mode support
+    # -------------------------------------------------------------------------
+    def get_vegas_content(self) -> Optional[Any]:
+        """
+        Get content for Vegas-style continuous scroll mode.
+
+        Returns None to let PluginAdapter auto-detect scroll_helper.cached_image.
+        Triggers scroll content generation if cache is empty to ensure Vegas
+        has content to display.
+
+        Returns:
+            None - PluginAdapter will extract scroll_helper.cached_image automatically
+        """
+        # Ensure scroll content is generated for Vegas mode
+        if hasattr(self, '_scroll_manager') and self._scroll_manager:
+            if not self._scroll_manager.has_cached_content():
+                self.logger.info("[Football Vegas] Triggering scroll content generation")
+                self._ensure_scroll_content_for_vegas()
+
+        # Return None - PluginAdapter will auto-detect scroll_helper.cached_image
+        return None
+
+    def get_vegas_content_type(self) -> str:
+        """
+        Indicate the type of content this plugin provides for Vegas scroll.
+
+        Returns:
+            'multi' - Plugin has multiple scrollable items (games)
+        """
+        return 'multi'
+
+    def get_vegas_display_mode(self) -> 'VegasDisplayMode':
+        """
+        Get the display mode for Vegas scroll integration.
+
+        Returns:
+            VegasDisplayMode.SCROLL - Content scrolls continuously
+        """
+        if VegasDisplayMode:
+            # Check for config override
+            config_mode = self.config.get("vegas_mode")
+            if config_mode:
+                try:
+                    return VegasDisplayMode(config_mode)
+                except ValueError:
+                    self.logger.warning(
+                        f"Invalid vegas_mode '{config_mode}' in config, using SCROLL"
+                    )
+            return VegasDisplayMode.SCROLL
+        # Fallback if VegasDisplayMode not available
+        return "scroll"
+
+    def _ensure_scroll_content_for_vegas(self) -> None:
+        """
+        Ensure scroll content is generated for Vegas mode.
+
+        This method is called by get_vegas_content() when the scroll cache is empty.
+        It collects all game types (live, recent, upcoming) organized by league.
+        """
+        if not hasattr(self, '_scroll_manager') or not self._scroll_manager:
+            self.logger.debug("[Football Vegas] No scroll manager available")
+            return
+
+        # Refresh internal managers/cache so Vegas has up-to-date content
+        try:
+            if hasattr(self, 'update') and callable(self.update):
+                self.update()
+                self.logger.debug("[Football Vegas] Refreshed managers via update()")
+            elif hasattr(self, 'refresh_managers') and callable(self.refresh_managers):
+                self.refresh_managers()
+                self.logger.debug("[Football Vegas] Refreshed managers via refresh_managers()")
+            elif hasattr(self, '_update') and callable(self._update):
+                self._update()
+                self.logger.debug("[Football Vegas] Refreshed managers via _update()")
+        except Exception as e:
+            self.logger.debug(f"[Football Vegas] Manager refresh failed (non-fatal): {e}")
+
+        # Collect all games (live, recent, upcoming) organized by league
+        games, leagues = self._collect_games_for_scroll(live_priority_active=False)
+
+        if not games:
+            self.logger.debug("[Football Vegas] No games available")
+            return
+
+        # Count games by type for logging
+        game_type_counts = {'live': 0, 'recent': 0, 'upcoming': 0}
+        for game in games:
+            state = game.get('status', {}).get('state', '')
+            if state == 'in':
+                game_type_counts['live'] += 1
+            elif state == 'post':
+                game_type_counts['recent'] += 1
+            elif state == 'pre':
+                game_type_counts['upcoming'] += 1
+
+        # Get rankings cache if available
+        rankings_cache = self._get_rankings_cache() if hasattr(self, '_get_rankings_cache') else None
+
+        # Prepare scroll content with mixed game types
+        # Note: Using 'mixed' as game_type indicator for scroll config
+        success = self._scroll_manager.prepare_and_display(
+            games, 'mixed', leagues, rankings_cache
+        )
+
+        if success:
+            type_summary = ', '.join(
+                f"{count} {gtype}" for gtype, count in game_type_counts.items() if count > 0
+            )
+            self.logger.info(
+                f"[Football Vegas] Successfully generated scroll content: "
+                f"{len(games)} games ({type_summary}) from {', '.join(leagues)}"
+            )
+        else:
+            self.logger.warning("[Football Vegas] Failed to generate scroll content")
 
     def cleanup(self) -> None:
         """Clean up resources."""
