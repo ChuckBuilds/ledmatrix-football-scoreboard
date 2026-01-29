@@ -228,6 +228,27 @@ class ScrollDisplay:
         else:
             self.logger.warning(f"NCAA FB separator icon not found at {self.NCAA_FB_SEPARATOR_ICON}")
     
+    def _determine_game_type(self, game: Dict) -> str:
+        """
+        Determine the game type from the game's status.
+
+        Args:
+            game: Game dictionary
+
+        Returns:
+            Game type: 'live', 'recent', or 'upcoming'
+        """
+        state = game.get('status', {}).get('state', '')
+        if state == 'in':
+            return 'live'
+        elif state == 'post':
+            return 'recent'
+        elif state == 'pre':
+            return 'upcoming'
+        else:
+            # Default to upcoming if state is unknown
+            return 'upcoming'
+
     def prepare_scroll_content(
         self,
         games: List[Dict],
@@ -237,34 +258,34 @@ class ScrollDisplay:
     ) -> bool:
         """
         Prepare scrolling content from a list of games.
-        
+
         Args:
             games: List of game dictionaries with league info
-            game_type: Type of games ('live', 'recent', 'upcoming')
+            game_type: Type hint ('live', 'recent', 'upcoming', or 'mixed' for mixed types)
             leagues: List of leagues in order (e.g., ['nfl', 'ncaa_fb'])
             rankings_cache: Optional team rankings cache
-            
+
         Returns:
             True if content was prepared successfully, False otherwise
         """
         if not self.scroll_helper:
             self.logger.error("ScrollHelper not available")
             return False
-        
+
         if not games:
             self.logger.debug("No games to prepare for scrolling")
             self.scroll_helper.clear_cache()
             return False
-        
+
         self._current_games = games
         self._current_game_type = game_type
         self._current_leagues = leagues
-        
+
         # Get scroll settings
         scroll_settings = self._get_scroll_settings()
         gap_between_games = scroll_settings.get("gap_between_games", 24)
         show_separators = scroll_settings.get("show_league_separators", True)
-        
+
         # Create game renderer
         renderer = GameRenderer(
             self.display_width,
@@ -275,16 +296,16 @@ class ScrollDisplay:
         )
         if rankings_cache:
             renderer.set_rankings_cache(rankings_cache)
-        
+
         # Pre-render all game cards
         content_items: List[Image.Image] = []
         current_league = None
         game_count = 0
         league_counts: Dict[str, int] = {}
-        
+
         for game in games:
             game_league = game.get("league", "nfl")  # Default to NFL if not specified
-            
+
             # Add league separator if switching leagues OR if this is the first league
             if show_separators:
                 if current_league is None:
@@ -309,12 +330,13 @@ class ScrollDisplay:
                         sep_img.paste(separator, (4, y_offset), separator)
                         content_items.append(sep_img)
                         self.logger.debug(f"Added {game_league} separator icon")
-            
+
             current_league = game_league
-            
-            # Render game card
+
+            # Render game card - determine type from game state
             try:
-                game_img = renderer.render_game_card(game, game_type)
+                individual_game_type = self._determine_game_type(game)
+                game_img = renderer.render_game_card(game, individual_game_type)
                 
                 # Add horizontal padding to prevent logos from being cut off at edges
                 # Logos are positioned at -10 and display_width+10, so we need padding
