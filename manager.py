@@ -1150,11 +1150,11 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
         
         # No manager had content - log why
         if not managers_to_try:
-            nfl_has_manager = self._get_manager_for_league_mode('nfl', mode_type) is not None
-            ncaa_fb_has_manager = self._get_manager_for_league_mode('ncaa_fb', mode_type) is not None
             self.logger.warning(
                 f"_display_external_mode() called with granular mode: {display_mode}. "
-                f"This should be handled by display() directly."
+                f"This should be handled by display() directly. "
+                f"(nfl_has_manager={self._get_manager_for_league_mode('nfl', mode_type) is not None}, "
+                f"ncaa_fb_has_manager={self._get_manager_for_league_mode('ncaa_fb', mode_type) is not None})"
             )
             # Try to handle it anyway by parsing and calling _display_league_mode
             parts = display_mode.split("_", 1)
