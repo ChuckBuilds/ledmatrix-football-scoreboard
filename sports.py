@@ -734,7 +734,7 @@ class SportsCore(ABC):
                 away_abbr = away_team["team"]["name"][:3]
 
             # Check if this is a favorite team game BEFORE doing expensive logging
-            is_favorite_game = (
+            is_favorite_game = self.favorite_teams and (
                 home_abbr in self.favorite_teams or away_abbr in self.favorite_teams
             )
 
@@ -1067,7 +1067,7 @@ class SportsUpcoming(SportsCore):
                             continue
                     processed_games.append(game)
                     # Count favorite team games for logging
-                    if (
+                    if self.favorite_teams and (
                         game["home_abbr"] in self.favorite_teams
                         or game["away_abbr"] in self.favorite_teams
                     ):
@@ -1659,7 +1659,7 @@ class SportsRecent(SportsCore):
                         )
                 else:
                     # Log why game was filtered out (only for favorite teams to reduce noise)
-                    if game.get("home_abbr") in self.favorite_teams or game.get("away_abbr") in self.favorite_teams:
+                    if self.favorite_teams and (game.get("home_abbr") in self.favorite_teams or game.get("away_abbr") in self.favorite_teams):
                         self.logger.debug(
                             f"Game {game.get('away_abbr')}@{game.get('home_abbr')} "
                             f"not included: is_final={game.get('is_final')}, "
