@@ -924,6 +924,73 @@ class SportsUpcoming(SportsCore):
         self.last_game_switch = 0
         self.game_display_duration = self.mode_config.get("upcoming_game_duration", 15)
 
+    def _select_games_for_display(
+        self, processed_games: List[Dict], favorite_teams: List[str]
+    ) -> List[Dict]:
+        """
+        Single-pass game selection with proper deduplication and counting.
+
+        When a game involves two favorite teams, it counts toward BOTH teams' limits.
+        This prevents unexpected game counts from the multi-pass algorithm.
+        """
+        # Sort by start time for consistent priority
+        sorted_games = sorted(
+            processed_games,
+            key=lambda g: g.get("start_time_utc")
+            or datetime.max.replace(tzinfo=timezone.utc),
+        )
+
+        if not favorite_teams:
+            # No favorites: return all games (caller will apply limits)
+            return sorted_games
+
+        selected_games = []
+        selected_ids = set()
+        team_counts = {team: 0 for team in favorite_teams}
+
+        for game in sorted_games:
+            game_id = game.get("id")
+            if game_id in selected_ids:
+                continue
+
+            home = game.get("home_abbr")
+            away = game.get("away_abbr")
+
+            home_fav = home in favorite_teams
+            away_fav = away in favorite_teams
+
+            if not home_fav and not away_fav:
+                continue
+
+            # Check if at least one favorite team still needs games
+            home_needs = home_fav and team_counts[home] < self.upcoming_games_to_show
+            away_needs = away_fav and team_counts[away] < self.upcoming_games_to_show
+
+            if home_needs or away_needs:
+                selected_games.append(game)
+                selected_ids.add(game_id)
+                # Count game for ALL favorite teams involved
+                # This is key: one game counts toward limits of BOTH teams if both are favorites
+                if home_fav:
+                    team_counts[home] += 1
+                if away_fav:
+                    team_counts[away] += 1
+
+                self.logger.debug(
+                    f"Selected game {away}@{home}: team_counts={team_counts}"
+                )
+
+            # Check if all favorites are satisfied
+            if all(c >= self.upcoming_games_to_show for c in team_counts.values()):
+                self.logger.debug("All favorite teams satisfied, stopping selection")
+                break
+
+        self.logger.info(
+            f"Selected {len(selected_games)} games for {len(favorite_teams)} "
+            f"favorite teams: {team_counts}"
+        )
+        return selected_games
+
     def update(self):
         """Update upcoming games data."""
         if not self.is_enabled:
@@ -1000,84 +1067,19 @@ class SportsUpcoming(SportsCore):
                     f"Found {favorite_games_found} favorite team upcoming games"
                 )
 
-            # Filter for favorite teams only if the config is set AND favorite teams exist
+            # Use single-pass algorithm for game selection
+            # This properly handles games between two favorite teams (counts for both)
             if self.show_favorite_teams_only and self.favorite_teams:
-                # Select N games per favorite team (where N = upcoming_games_to_show)
-                # Example: upcoming_games_to_show=2 with 3 favorite teams = 6 games total
-                team_games = []
-                for team in self.favorite_teams:
-                    # Find games where this team is playing
-                    team_specific_games = [
-                        game
-                        for game in processed_games
-                        if game["home_abbr"] == team or game["away_abbr"] == team
-                    ]
-                    if team_specific_games:
-                        # Sort by game time and take the earliest N games
-                        team_specific_games.sort(
-                            key=lambda g: g.get("start_time_utc")
-                            or datetime.max.replace(tzinfo=timezone.utc)
-                        )
-                        # Take up to upcoming_games_to_show games for this team
-                        team_games.extend(team_specific_games[: self.upcoming_games_to_show])
-
-                # Sort the final list by game time (earliest first)
-                team_games.sort(
-                    key=lambda g: g.get("start_time_utc")
-                    or datetime.max.replace(tzinfo=timezone.utc)
+                team_games = self._select_games_for_display(
+                    processed_games, self.favorite_teams
                 )
-                # Remove duplicates (in case a game involves multiple favorite teams)
-                seen_ids = set()
-                unique_team_games = []
-                for game in team_games:
-                    if game["id"] not in seen_ids:
-                        seen_ids.add(game["id"])
-                        unique_team_games.append(game)
-                team_games = unique_team_games
             else:
-                # No favorite teams: apply per-team limit to ALL teams
-                # Example: upcoming_games_to_show=1 with 32 teams = up to 32 games total (1 per team)
-                # Extract all unique teams from processed games
-                all_teams = set()
-                for game in processed_games:
-                    home_abbr = game.get("home_abbr")
-                    away_abbr = game.get("away_abbr")
-                    if home_abbr:
-                        all_teams.add(home_abbr)
-                    if away_abbr:
-                        all_teams.add(away_abbr)
-                
-                # Apply per-team limit to all teams
-                team_games = []
-                for team in all_teams:
-                    # Find games where this team is playing
-                    team_specific_games = [
-                        game
-                        for game in processed_games
-                        if game.get("home_abbr") == team or game.get("away_abbr") == team
-                    ]
-                    if team_specific_games:
-                        # Sort by game time and take the earliest N games
-                        team_specific_games.sort(
-                            key=lambda g: g.get("start_time_utc")
-                            or datetime.max.replace(tzinfo=timezone.utc)
-                        )
-                        # Take up to upcoming_games_to_show games for this team
-                        team_games.extend(team_specific_games[: self.upcoming_games_to_show])
-                
-                # Sort the final list by game time (earliest first)
-                team_games.sort(
+                # No favorite teams configured: show all games sorted by time
+                team_games = sorted(
+                    processed_games,
                     key=lambda g: g.get("start_time_utc")
-                    or datetime.max.replace(tzinfo=timezone.utc)
+                    or datetime.max.replace(tzinfo=timezone.utc),
                 )
-                # Remove duplicates (in case a game involves multiple teams)
-                seen_ids = set()
-                unique_team_games = []
-                for game in team_games:
-                    if game.get("id") not in seen_ids:
-                        seen_ids.add(game.get("id"))
-                        unique_team_games.append(game)
-                team_games = unique_team_games
 
             # Log changes or periodically
             should_log = (
@@ -1438,6 +1440,20 @@ class SportsRecent(SportsCore):
         )  # Check for recent games every hour
         self.last_game_switch = 0
         self.game_display_duration = self.mode_config.get("recent_game_duration", 15)
+        self._zero_clock_timestamps: Dict[str, float] = {}  # Track games at 0:00
+
+    def _get_zero_clock_duration(self, game_id: str) -> float:
+        """Track how long a game has been at 0:00 clock."""
+        current_time = time.time()
+        if game_id not in self._zero_clock_timestamps:
+            self._zero_clock_timestamps[game_id] = current_time
+            return 0.0
+        return current_time - self._zero_clock_timestamps[game_id]
+
+    def _clear_zero_clock_tracking(self, game_id: str) -> None:
+        """Clear tracking when game clock moves away from 0:00 or game ends."""
+        if game_id in self._zero_clock_timestamps:
+            del self._zero_clock_timestamps[game_id]
 
     def update(self):
         """Update recent games data."""
@@ -1485,27 +1501,48 @@ class SportsRecent(SportsCore):
                 # Check if game appears finished even if not marked as "post" yet
                 # This handles cases where API hasn't updated status yet
                 appears_finished = False
+                game_id = game.get("id")
                 if not game.get("is_final", False):
                     # Check if game appears to be over based on clock/period
                     clock = game.get("clock", "")
                     period = game.get("period", 0)
                     period_text = game.get("status_text", "").lower()
-                    
-                    # Game appears finished if:
-                    # 1. Clock is 0:00 in Q4 or later
-                    # 2. Period text contains "final"
-                    # 3. Period is 4+ and clock is empty or 0:00
+
                     if period >= 4:
                         clock_normalized = clock.replace(":", "").strip()
-                        if (clock_normalized in ["000", "00", ""] or 
-                            clock == "0:00" or clock == ":00" or
-                            "final" in period_text):
+
+                        # Explicit "final" in status text is definitive
+                        if "final" in period_text:
                             appears_finished = True
+                            self._clear_zero_clock_tracking(game_id)
                             self.logger.debug(
                                 f"Game {game.get('away_abbr')}@{game.get('home_abbr')} "
-                                f"appears finished (period={period}, clock={clock}, status={period_text}) "
-                                f"but not marked as final - including anyway"
+                                f"appears finished (period_text contains 'final')"
                             )
+                        elif clock_normalized in ["000", "00", ""] or clock == "0:00" or clock == ":00":
+                            # Clock at 0:00 but no explicit final - use grace period
+                            # This prevents premature transitions during potential OT or reviews
+                            zero_clock_duration = self._get_zero_clock_duration(game_id)
+
+                            # Only mark finished after 2 minute grace period (allows OT decisions)
+                            if zero_clock_duration >= 120:
+                                appears_finished = True
+                                self.logger.debug(
+                                    f"Game {game.get('away_abbr')}@{game.get('home_abbr')} "
+                                    f"appears finished after {zero_clock_duration:.0f}s at 0:00 "
+                                    f"(period={period}, clock={clock})"
+                                )
+                            else:
+                                self.logger.debug(
+                                    f"Game {game.get('away_abbr')}@{game.get('home_abbr')} "
+                                    f"at 0:00 but only for {zero_clock_duration:.0f}s - waiting for confirmation"
+                                )
+                        else:
+                            # Clock is not at 0:00, clear any tracking
+                            self._clear_zero_clock_tracking(game_id)
+                else:
+                    # Game is marked final, clear tracking
+                    self._clear_zero_clock_tracking(game_id)
                 
                 # Filter criteria: must be final OR appear finished, AND within recent date range
                 is_eligible = game.get("is_final", False) or appears_finished
@@ -2027,12 +2064,12 @@ class SportsLive(SportsCore):
                     f"returning True - clock appears to be 0:00 (clock='{clock}', normalized='{clock_normalized}', period={period})"
                 )
                 return True
-            # Also check if clock appears stuck (e.g., ":40" with no minutes)
-            if clock.startswith(":") and len(clock) <= 3:
-                # Clock like ":40" or ":00" - likely stuck
+            # Only treat as stuck if clock is exactly ":00" (zero seconds)
+            # Clocks like ":40", ":50" are legitimate (under 1 minute remaining)
+            if clock == ":00":
                 self.logger.debug(
                     f"[LIVE_PRIORITY_DEBUG] _is_game_really_over({game_str}): "
-                    f"returning True - clock appears stuck (clock='{clock}' starts with ':' and len <= 3, period={period})"
+                    f"returning True - clock is ':00' indicating game end (period={period})"
                 )
                 return True
 
