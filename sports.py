@@ -1486,6 +1486,69 @@ class SportsRecent(SportsCore):
         if game_id in self._zero_clock_timestamps:
             del self._zero_clock_timestamps[game_id]
 
+    def _select_recent_games_for_display(
+        self, processed_games: List[Dict], favorite_teams: List[str]
+    ) -> List[Dict]:
+        """
+        Single-pass game selection for recent games with proper deduplication.
+
+        When a game involves two favorite teams, it counts toward BOTH teams' limits.
+        Games are sorted by most recent first.
+        """
+        # Sort by start time, most recent first
+        sorted_games = sorted(
+            processed_games,
+            key=lambda g: g.get("start_time_utc")
+            or datetime.min.replace(tzinfo=timezone.utc),
+            reverse=True,
+        )
+
+        if not favorite_teams:
+            # No favorites: return all games (caller will apply limits)
+            return sorted_games
+
+        selected_games = []
+        selected_ids = set()
+        team_counts = {team: 0 for team in favorite_teams}
+
+        for game in sorted_games:
+            game_id = game.get("id")
+            if game_id in selected_ids:
+                continue
+
+            home = game.get("home_abbr")
+            away = game.get("away_abbr")
+
+            home_fav = home in favorite_teams
+            away_fav = away in favorite_teams
+
+            if not home_fav and not away_fav:
+                continue
+
+            # Check if at least one favorite team still needs games
+            home_needs = home_fav and team_counts[home] < self.recent_games_to_show
+            away_needs = away_fav and team_counts[away] < self.recent_games_to_show
+
+            if home_needs or away_needs:
+                selected_games.append(game)
+                selected_ids.add(game_id)
+                # Count game for ALL favorite teams involved
+                if home_fav:
+                    team_counts[home] += 1
+                if away_fav:
+                    team_counts[away] += 1
+
+                self.logger.debug(
+                    f"Selected recent game {away}@{home}: team_counts={team_counts}"
+                )
+
+            # Check if all favorites are satisfied
+            if all(c >= self.recent_games_to_show for c in team_counts.values()):
+                self.logger.debug("All favorite teams satisfied, stopping selection")
+                break
+
+        return selected_games
+
     def update(self):
         """Update recent games data."""
         if not self.is_enabled:
