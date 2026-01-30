@@ -1,5 +1,6 @@
 import logging
 import os
+import threading
 import time
 from abc import ABC, abstractmethod
 from datetime import datetime, timedelta, timezone
@@ -106,6 +107,8 @@ class SportsCore(ABC):
         }
         self.last_update = 0
         self.current_game = None
+        # Thread safety lock for shared game state
+        self._games_lock = threading.RLock()
         self.fonts = self._load_fonts()
 
         # Initialize dynamic team resolver and resolve favorite teams
@@ -679,9 +682,17 @@ class SportsCore(ABC):
         if not game_event:
             return None, None, None, None, None
         try:
-            competition = game_event["competitions"][0]
-            status = competition["status"]
-            competitors = competition["competitors"]
+            # Safe access to competitions array
+            competitions = game_event.get("competitions", [])
+            if not competitions:
+                self.logger.warning(f"No competitions data for game {game_event.get('id', 'unknown')}")
+                return None, None, None, None, None
+            competition = competitions[0]
+            status = competition.get("status")
+            if not status:
+                self.logger.warning(f"No status data for game {game_event.get('id', 'unknown')}")
+                return None, None, None, None, None
+            competitors = competition.get("competitors", [])
             game_date_str = game_event["date"]
             situation = competition.get("situation")
             start_time_utc = None
@@ -698,7 +709,7 @@ class SportsCore(ABC):
                     # Convert to pytz.UTC for consistency
                     start_time_utc = dt.astimezone(pytz.UTC)
             except ValueError:
-                logging.warning(f"Could not parse game date: {game_date_str}")
+                self.logger.warning(f"Could not parse game date: {game_date_str}")
 
             home_team = next(
                 (c for c in competitors if c.get("homeAway") == "home"), None
@@ -723,7 +734,7 @@ class SportsCore(ABC):
                 away_abbr = away_team["team"]["name"][:3]
 
             # Check if this is a favorite team game BEFORE doing expensive logging
-            is_favorite_game = (
+            is_favorite_game = self.favorite_teams and (
                 home_abbr in self.favorite_teams or away_abbr in self.favorite_teams
             )
 
@@ -806,7 +817,7 @@ class SportsCore(ABC):
             return details, home_team, away_team, status, situation
         except Exception as e:
             # Log the problematic event structure if possible
-            logging.error(
+            self.logger.error(
                 f"Error extracting game details: {e} from event: {game_event.get('id')}",
                 exc_info=True,
             )
@@ -899,6 +910,21 @@ class SportsCore(ABC):
     def _custom_scorebug_layout(self, game: dict, draw_overlay: ImageDraw.ImageDraw):
         pass
 
+    def cleanup(self):
+        """Clean up resources when plugin is unloaded."""
+        # Close HTTP session
+        if hasattr(self, 'session') and self.session:
+            try:
+                self.session.close()
+            except Exception as e:
+                self.logger.warning(f"Error closing session: {e}")
+
+        # Clear caches
+        if hasattr(self, '_logo_cache'):
+            self._logo_cache.clear()
+
+        self.logger.info(f"{self.__class__.__name__} cleanup completed")
+
 
 class SportsUpcoming(SportsCore):
     def __init__(
@@ -923,6 +949,73 @@ class SportsUpcoming(SportsCore):
         self.warning_cooldown = 300
         self.last_game_switch = 0
         self.game_display_duration = self.mode_config.get("upcoming_game_duration", 15)
+
+    def _select_games_for_display(
+        self, processed_games: List[Dict], favorite_teams: List[str]
+    ) -> List[Dict]:
+        """
+        Single-pass game selection with proper deduplication and counting.
+
+        When a game involves two favorite teams, it counts toward BOTH teams' limits.
+        This prevents unexpected game counts from the multi-pass algorithm.
+        """
+        # Sort by start time for consistent priority
+        sorted_games = sorted(
+            processed_games,
+            key=lambda g: g.get("start_time_utc")
+            or datetime.max.replace(tzinfo=timezone.utc),
+        )
+
+        if not favorite_teams:
+            # No favorites: return all games (caller will apply limits)
+            return sorted_games
+
+        selected_games = []
+        selected_ids = set()
+        team_counts = {team: 0 for team in favorite_teams}
+
+        for game in sorted_games:
+            game_id = game.get("id")
+            if game_id in selected_ids:
+                continue
+
+            home = game.get("home_abbr")
+            away = game.get("away_abbr")
+
+            home_fav = home in favorite_teams
+            away_fav = away in favorite_teams
+
+            if not home_fav and not away_fav:
+                continue
+
+            # Check if at least one favorite team still needs games
+            home_needs = home_fav and team_counts[home] < self.upcoming_games_to_show
+            away_needs = away_fav and team_counts[away] < self.upcoming_games_to_show
+
+            if home_needs or away_needs:
+                selected_games.append(game)
+                selected_ids.add(game_id)
+                # Count game for ALL favorite teams involved
+                # This is key: one game counts toward limits of BOTH teams if both are favorites
+                if home_fav:
+                    team_counts[home] += 1
+                if away_fav:
+                    team_counts[away] += 1
+
+                self.logger.debug(
+                    f"Selected game {away}@{home}: team_counts={team_counts}"
+                )
+
+            # Check if all favorites are satisfied
+            if all(c >= self.upcoming_games_to_show for c in team_counts.values()):
+                self.logger.debug("All favorite teams satisfied, stopping selection")
+                break
+
+        self.logger.info(
+            f"Selected {len(selected_games)} games for {len(favorite_teams)} "
+            f"favorite teams: {team_counts}"
+        )
+        return selected_games
 
     def update(self):
         """Update upcoming games data."""
@@ -974,7 +1067,7 @@ class SportsUpcoming(SportsCore):
                             continue
                     processed_games.append(game)
                     # Count favorite team games for logging
-                    if (
+                    if self.favorite_teams and (
                         game["home_abbr"] in self.favorite_teams
                         or game["away_abbr"] in self.favorite_teams
                     ):
@@ -1000,84 +1093,22 @@ class SportsUpcoming(SportsCore):
                     f"Found {favorite_games_found} favorite team upcoming games"
                 )
 
-            # Filter for favorite teams only if the config is set AND favorite teams exist
+            # Use single-pass algorithm for game selection
+            # This properly handles games between two favorite teams (counts for both)
             if self.show_favorite_teams_only and self.favorite_teams:
-                # Select N games per favorite team (where N = upcoming_games_to_show)
-                # Example: upcoming_games_to_show=2 with 3 favorite teams = 6 games total
-                team_games = []
-                for team in self.favorite_teams:
-                    # Find games where this team is playing
-                    team_specific_games = [
-                        game
-                        for game in processed_games
-                        if game["home_abbr"] == team or game["away_abbr"] == team
-                    ]
-                    if team_specific_games:
-                        # Sort by game time and take the earliest N games
-                        team_specific_games.sort(
-                            key=lambda g: g.get("start_time_utc")
-                            or datetime.max.replace(tzinfo=timezone.utc)
-                        )
-                        # Take up to upcoming_games_to_show games for this team
-                        team_games.extend(team_specific_games[: self.upcoming_games_to_show])
-
-                # Sort the final list by game time (earliest first)
-                team_games.sort(
-                    key=lambda g: g.get("start_time_utc")
-                    or datetime.max.replace(tzinfo=timezone.utc)
+                team_games = self._select_games_for_display(
+                    processed_games, self.favorite_teams
                 )
-                # Remove duplicates (in case a game involves multiple favorite teams)
-                seen_ids = set()
-                unique_team_games = []
-                for game in team_games:
-                    if game["id"] not in seen_ids:
-                        seen_ids.add(game["id"])
-                        unique_team_games.append(game)
-                team_games = unique_team_games
             else:
-                # No favorite teams: apply per-team limit to ALL teams
-                # Example: upcoming_games_to_show=1 with 32 teams = up to 32 games total (1 per team)
-                # Extract all unique teams from processed games
-                all_teams = set()
-                for game in processed_games:
-                    home_abbr = game.get("home_abbr")
-                    away_abbr = game.get("away_abbr")
-                    if home_abbr:
-                        all_teams.add(home_abbr)
-                    if away_abbr:
-                        all_teams.add(away_abbr)
-                
-                # Apply per-team limit to all teams
-                team_games = []
-                for team in all_teams:
-                    # Find games where this team is playing
-                    team_specific_games = [
-                        game
-                        for game in processed_games
-                        if game.get("home_abbr") == team or game.get("away_abbr") == team
-                    ]
-                    if team_specific_games:
-                        # Sort by game time and take the earliest N games
-                        team_specific_games.sort(
-                            key=lambda g: g.get("start_time_utc")
-                            or datetime.max.replace(tzinfo=timezone.utc)
-                        )
-                        # Take up to upcoming_games_to_show games for this team
-                        team_games.extend(team_specific_games[: self.upcoming_games_to_show])
-                
-                # Sort the final list by game time (earliest first)
-                team_games.sort(
+                # No favorite teams: show N total games sorted by time (schedule view)
+                team_games = sorted(
+                    processed_games,
                     key=lambda g: g.get("start_time_utc")
-                    or datetime.max.replace(tzinfo=timezone.utc)
+                    or datetime.max.replace(tzinfo=timezone.utc),
+                )[:self.upcoming_games_to_show]
+                self.logger.info(
+                    f"No favorites configured: showing {len(team_games)} total upcoming games"
                 )
-                # Remove duplicates (in case a game involves multiple teams)
-                seen_ids = set()
-                unique_team_games = []
-                for game in team_games:
-                    if game.get("id") not in seen_ids:
-                        seen_ids.add(game.get("id"))
-                        unique_team_games.append(game)
-                team_games = unique_team_games
 
             # Log changes or periodically
             should_log = (
@@ -1090,46 +1121,47 @@ class SportsUpcoming(SportsCore):
                 or (not self.games_list and team_games)
             )
 
-            # Check if the list of games to display has changed
-            new_game_ids = {g["id"] for g in team_games}
-            current_game_ids = {g["id"] for g in self.games_list}
+            # Check if the list of games to display has changed (thread-safe)
+            with self._games_lock:
+                new_game_ids = {g["id"] for g in team_games}
+                current_game_ids = {g["id"] for g in self.games_list}
 
-            if new_game_ids != current_game_ids:
-                self.logger.info(
-                    f"Found {len(team_games)} upcoming games within window for display."
-                )  # Changed log prefix
-                self.games_list = team_games
-                if (
-                    not self.current_game
-                    or not self.games_list
-                    or self.current_game["id"] not in new_game_ids
-                ):
-                    self.current_game_index = 0
-                    self.current_game = self.games_list[0] if self.games_list else None
-                    self.last_game_switch = current_time
-                else:
-                    try:
-                        self.current_game_index = next(
-                            i
-                            for i, g in enumerate(self.games_list)
-                            if g["id"] == self.current_game["id"]
-                        )
-                        self.current_game = self.games_list[self.current_game_index]
-                    except StopIteration:
+                if new_game_ids != current_game_ids:
+                    self.logger.info(
+                        f"Found {len(team_games)} upcoming games within window for display."
+                    )  # Changed log prefix
+                    self.games_list = team_games
+                    if (
+                        not self.current_game
+                        or not self.games_list
+                        or self.current_game["id"] not in new_game_ids
+                    ):
                         self.current_game_index = 0
-                        self.current_game = self.games_list[0]
+                        self.current_game = self.games_list[0] if self.games_list else None
                         self.last_game_switch = current_time
+                    else:
+                        try:
+                            self.current_game_index = next(
+                                i
+                                for i, g in enumerate(self.games_list)
+                                if g["id"] == self.current_game["id"]
+                            )
+                            self.current_game = self.games_list[self.current_game_index]
+                        except StopIteration:
+                            self.current_game_index = 0
+                            self.current_game = self.games_list[0]
+                            self.last_game_switch = current_time
 
-            elif self.games_list:
-                self.current_game = self.games_list[
-                    self.current_game_index
-                ]  # Update data
+                elif self.games_list:
+                    self.current_game = self.games_list[
+                        self.current_game_index
+                    ]  # Update data
 
-            if not self.games_list:
-                self.logger.info(
-                    "No relevant upcoming games found to display."
-                )  # Changed log prefix
-                self.current_game = None
+                if not self.games_list:
+                    self.logger.info(
+                        "No relevant upcoming games found to display."
+                    )  # Changed log prefix
+                    self.current_game = None
 
             if should_log and not self.games_list:
                 # Log favorite teams only if no games are found and logging is needed
@@ -1376,34 +1408,35 @@ class SportsUpcoming(SportsCore):
         try:
             current_time = time.time()
 
-            # Check if it's time to switch games
-            if (
-                len(self.games_list) > 1
-                and current_time - self.last_game_switch >= self.game_display_duration
-            ):
-                self.current_game_index = (self.current_game_index + 1) % len(
-                    self.games_list
-                )
-                self.current_game = self.games_list[self.current_game_index]
-                self.last_game_switch = current_time
-                force_clear = True  # Force redraw on switch
+            # Check if it's time to switch games (protected by lock for thread safety)
+            with self._games_lock:
+                if (
+                    len(self.games_list) > 1
+                    and current_time - self.last_game_switch >= self.game_display_duration
+                ):
+                    self.current_game_index = (self.current_game_index + 1) % len(
+                        self.games_list
+                    )
+                    self.current_game = self.games_list[self.current_game_index]
+                    self.last_game_switch = current_time
+                    force_clear = True  # Force redraw on switch
 
-                # Log team switching with sport prefix
-                if self.current_game:
-                    away_abbr = self.current_game.get("away_abbr", "UNK")
-                    home_abbr = self.current_game.get("home_abbr", "UNK")
-                    sport_prefix = (
-                        self.sport_key.upper()
-                        if hasattr(self, "sport_key")
-                        else "SPORT"
-                    )
-                    self.logger.info(
-                        f"[{sport_prefix} Upcoming] Showing {away_abbr} vs {home_abbr}"
-                    )
-                else:
-                    self.logger.debug(
-                        f"Switched to game index {self.current_game_index}"
-                    )
+                    # Log team switching with sport prefix
+                    if self.current_game:
+                        away_abbr = self.current_game.get("away_abbr", "UNK")
+                        home_abbr = self.current_game.get("home_abbr", "UNK")
+                        sport_prefix = (
+                            self.sport_key.upper()
+                            if hasattr(self, "sport_key")
+                            else "SPORT"
+                        )
+                        self.logger.info(
+                            f"[{sport_prefix} Upcoming] Showing {away_abbr} vs {home_abbr}"
+                        )
+                    else:
+                        self.logger.debug(
+                            f"Switched to game index {self.current_game_index}"
+                        )
 
             if self.current_game:
                 self._draw_scorebug_layout(self.current_game, force_clear)
@@ -1438,6 +1471,83 @@ class SportsRecent(SportsCore):
         )  # Check for recent games every hour
         self.last_game_switch = 0
         self.game_display_duration = self.mode_config.get("recent_game_duration", 15)
+        self._zero_clock_timestamps: Dict[str, float] = {}  # Track games at 0:00
+
+    def _get_zero_clock_duration(self, game_id: str) -> float:
+        """Track how long a game has been at 0:00 clock."""
+        current_time = time.time()
+        if game_id not in self._zero_clock_timestamps:
+            self._zero_clock_timestamps[game_id] = current_time
+            return 0.0
+        return current_time - self._zero_clock_timestamps[game_id]
+
+    def _clear_zero_clock_tracking(self, game_id: str) -> None:
+        """Clear tracking when game clock moves away from 0:00 or game ends."""
+        if game_id in self._zero_clock_timestamps:
+            del self._zero_clock_timestamps[game_id]
+
+    def _select_recent_games_for_display(
+        self, processed_games: List[Dict], favorite_teams: List[str]
+    ) -> List[Dict]:
+        """
+        Single-pass game selection for recent games with proper deduplication.
+
+        When a game involves two favorite teams, it counts toward BOTH teams' limits.
+        Games are sorted by most recent first.
+        """
+        # Sort by start time, most recent first
+        sorted_games = sorted(
+            processed_games,
+            key=lambda g: g.get("start_time_utc")
+            or datetime.min.replace(tzinfo=timezone.utc),
+            reverse=True,
+        )
+
+        if not favorite_teams:
+            # No favorites: return all games (caller will apply limits)
+            return sorted_games
+
+        selected_games = []
+        selected_ids = set()
+        team_counts = {team: 0 for team in favorite_teams}
+
+        for game in sorted_games:
+            game_id = game.get("id")
+            if game_id in selected_ids:
+                continue
+
+            home = game.get("home_abbr")
+            away = game.get("away_abbr")
+
+            home_fav = home in favorite_teams
+            away_fav = away in favorite_teams
+
+            if not home_fav and not away_fav:
+                continue
+
+            # Check if at least one favorite team still needs games
+            home_needs = home_fav and team_counts[home] < self.recent_games_to_show
+            away_needs = away_fav and team_counts[away] < self.recent_games_to_show
+
+            if home_needs or away_needs:
+                selected_games.append(game)
+                selected_ids.add(game_id)
+                # Count game for ALL favorite teams involved
+                if home_fav:
+                    team_counts[home] += 1
+                if away_fav:
+                    team_counts[away] += 1
+
+                self.logger.debug(
+                    f"Selected recent game {away}@{home}: team_counts={team_counts}"
+                )
+
+            # Check if all favorites are satisfied
+            if all(c >= self.recent_games_to_show for c in team_counts.values()):
+                self.logger.debug("All favorite teams satisfied, stopping selection")
+                break
+
+        return selected_games
 
     def update(self):
         """Update recent games data."""
@@ -1485,27 +1595,48 @@ class SportsRecent(SportsCore):
                 # Check if game appears finished even if not marked as "post" yet
                 # This handles cases where API hasn't updated status yet
                 appears_finished = False
+                game_id = game.get("id")
                 if not game.get("is_final", False):
                     # Check if game appears to be over based on clock/period
                     clock = game.get("clock", "")
                     period = game.get("period", 0)
                     period_text = game.get("status_text", "").lower()
-                    
-                    # Game appears finished if:
-                    # 1. Clock is 0:00 in Q4 or later
-                    # 2. Period text contains "final"
-                    # 3. Period is 4+ and clock is empty or 0:00
+
                     if period >= 4:
                         clock_normalized = clock.replace(":", "").strip()
-                        if (clock_normalized in ["000", "00", ""] or 
-                            clock == "0:00" or clock == ":00" or
-                            "final" in period_text):
+
+                        # Explicit "final" in status text is definitive
+                        if "final" in period_text:
                             appears_finished = True
+                            self._clear_zero_clock_tracking(game_id)
                             self.logger.debug(
                                 f"Game {game.get('away_abbr')}@{game.get('home_abbr')} "
-                                f"appears finished (period={period}, clock={clock}, status={period_text}) "
-                                f"but not marked as final - including anyway"
+                                f"appears finished (period_text contains 'final')"
                             )
+                        elif clock_normalized in ["000", "00", ""] or clock == "0:00" or clock == ":00":
+                            # Clock at 0:00 but no explicit final - use grace period
+                            # This prevents premature transitions during potential OT or reviews
+                            zero_clock_duration = self._get_zero_clock_duration(game_id)
+
+                            # Only mark finished after 2 minute grace period (allows OT decisions)
+                            if zero_clock_duration >= 120:
+                                appears_finished = True
+                                self.logger.debug(
+                                    f"Game {game.get('away_abbr')}@{game.get('home_abbr')} "
+                                    f"appears finished after {zero_clock_duration:.0f}s at 0:00 "
+                                    f"(period={period}, clock={clock})"
+                                )
+                            else:
+                                self.logger.debug(
+                                    f"Game {game.get('away_abbr')}@{game.get('home_abbr')} "
+                                    f"at 0:00 but only for {zero_clock_duration:.0f}s - waiting for confirmation"
+                                )
+                        else:
+                            # Clock is not at 0:00, clear any tracking
+                            self._clear_zero_clock_tracking(game_id)
+                else:
+                    # Game is marked final, clear tracking
+                    self._clear_zero_clock_tracking(game_id)
                 
                 # Filter criteria: must be final OR appear finished, AND within recent date range
                 is_eligible = game.get("is_final", False) or appears_finished
@@ -1528,161 +1659,80 @@ class SportsRecent(SportsCore):
                         )
                 else:
                     # Log why game was filtered out (only for favorite teams to reduce noise)
-                    if game.get("home_abbr") in self.favorite_teams or game.get("away_abbr") in self.favorite_teams:
+                    if self.favorite_teams and (game.get("home_abbr") in self.favorite_teams or game.get("away_abbr") in self.favorite_teams):
                         self.logger.debug(
                             f"Game {game.get('away_abbr')}@{game.get('home_abbr')} "
                             f"not included: is_final={game.get('is_final')}, "
                             f"period={game.get('period')}, clock={game.get('clock')}, "
                             f"status={game.get('status_text')}"
                         )
-            # Filter for favorite teams
-            if self.favorite_teams:
-                # Get all games involving favorite teams
-                favorite_team_games = [
-                    game
-                    for game in processed_games
-                    if game["home_abbr"] in self.favorite_teams
-                    or game["away_abbr"] in self.favorite_teams
-                ]
-                self.logger.info(
-                    f"Found {len(favorite_team_games)} favorite team games out of {len(processed_games)} total final games within last 21 days"
+            # Use single-pass algorithm for game selection
+            # This properly handles games between two favorite teams (counts for both)
+            if self.show_favorite_teams_only and self.favorite_teams:
+                team_games = self._select_recent_games_for_display(
+                    processed_games, self.favorite_teams
                 )
-
-                # Select N games per favorite team (where N = recent_games_to_show)
-                # Example: recent_games_to_show=1 with 2 favorite teams = 2 games total
-                team_games = []
-                for team in self.favorite_teams:
-                    # Find games where this team is playing
-                    team_specific_games = [
-                        game
-                        for game in favorite_team_games
-                        if game["home_abbr"] == team or game["away_abbr"] == team
-                    ]
-
-                    if team_specific_games:
-                        # Sort by game time and take the most recent N games
-                        team_specific_games.sort(
-                            key=lambda g: g.get("start_time_utc")
-                            or datetime.min.replace(tzinfo=timezone.utc),
-                            reverse=True,
-                        )
-                        # Take up to recent_games_to_show games for this team
-                        team_games.extend(team_specific_games[: self.recent_games_to_show])
-
-                # Sort the final list by game time (most recent first)
-                team_games.sort(
-                    key=lambda g: g.get("start_time_utc")
-                    or datetime.min.replace(tzinfo=timezone.utc),
-                    reverse=True,
-                )
-                # Remove duplicates (in case a game involves multiple favorite teams)
-                seen_ids = set()
-                unique_team_games = []
-                for game in team_games:
-                    if game["id"] not in seen_ids:
-                        seen_ids.add(game["id"])
-                        unique_team_games.append(game)
-                team_games = unique_team_games
-
                 # Debug: Show which games are selected for display
                 for i, game in enumerate(team_games):
                     self.logger.info(
                         f"Game {i+1} for display: {game['away_abbr']} @ {game['home_abbr']} - {game.get('start_time_utc')} - Score: {game['away_score']}-{game['home_score']}"
                     )
             else:
-                # No favorite teams: apply per-team limit to ALL teams
-                # Example: recent_games_to_show=1 with 32 teams = up to 32 games total (1 per team)
-                # Extract all unique teams from processed games
-                all_teams = set()
-                for game in processed_games:
-                    home_abbr = game.get("home_abbr")
-                    away_abbr = game.get("away_abbr")
-                    if home_abbr:
-                        all_teams.add(home_abbr)
-                    if away_abbr:
-                        all_teams.add(away_abbr)
-                
-                self.logger.info(
-                    f"Found {len(processed_games)} total final games within last 21 days (no favorite teams configured, applying per-team limits to {len(all_teams)} teams)"
-                )
-                
-                # Apply per-team limit to all teams
-                team_games = []
-                for team in all_teams:
-                    # Find games where this team is playing
-                    team_specific_games = [
-                        game
-                        for game in processed_games
-                        if game.get("home_abbr") == team or game.get("away_abbr") == team
-                    ]
-                    if team_specific_games:
-                        # Sort by game time and take the most recent N games
-                        team_specific_games.sort(
-                            key=lambda g: g.get("start_time_utc")
-                            or datetime.min.replace(tzinfo=timezone.utc),
-                            reverse=True,
-                        )
-                        # Take up to recent_games_to_show games for this team
-                        team_games.extend(team_specific_games[: self.recent_games_to_show])
-                
-                # Sort the final list by game time (most recent first)
-                team_games.sort(
+                # No favorites or show_favorite_teams_only disabled: show N total games sorted by time
+                team_games = sorted(
+                    processed_games,
                     key=lambda g: g.get("start_time_utc")
                     or datetime.min.replace(tzinfo=timezone.utc),
                     reverse=True,
+                )[:self.recent_games_to_show]
+                self.logger.info(
+                    f"No favorites configured: showing {len(team_games)} total recent games"
                 )
-                # Remove duplicates (in case a game involves multiple teams)
-                seen_ids = set()
-                unique_team_games = []
-                for game in team_games:
-                    if game.get("id") not in seen_ids:
-                        seen_ids.add(game.get("id"))
-                        unique_team_games.append(game)
-                team_games = unique_team_games
 
-            # Check if the list of games to display has changed
-            new_game_ids = {g["id"] for g in team_games}
-            current_game_ids = {g["id"] for g in self.games_list}
+            # Check if the list of games to display has changed (thread-safe)
+            with self._games_lock:
+                new_game_ids = {g["id"] for g in team_games}
+                current_game_ids = {g["id"] for g in self.games_list}
 
-            if new_game_ids != current_game_ids:
-                self.logger.info(
-                    f"Found {len(team_games)} final games within window for display."
-                )  # Changed log prefix
-                self.games_list = team_games
-                # Reset index if list changed or current game removed
-                if (
-                    not self.current_game
-                    or not self.games_list
-                    or self.current_game["id"] not in new_game_ids
-                ):
-                    self.current_game_index = 0
-                    self.current_game = self.games_list[0] if self.games_list else None
-                    self.last_game_switch = current_time  # Reset switch timer
-                else:
-                    # Try to maintain position if possible
-                    try:
-                        self.current_game_index = next(
-                            i
-                            for i, g in enumerate(self.games_list)
-                            if g["id"] == self.current_game["id"]
-                        )
-                        self.current_game = self.games_list[
-                            self.current_game_index
-                        ]  # Update data just in case
-                    except StopIteration:
+                if new_game_ids != current_game_ids:
+                    self.logger.info(
+                        f"Found {len(team_games)} final games within window for display."
+                    )  # Changed log prefix
+                    self.games_list = team_games
+                    # Reset index if list changed or current game removed
+                    if (
+                        not self.current_game
+                        or not self.games_list
+                        or self.current_game["id"] not in new_game_ids
+                    ):
                         self.current_game_index = 0
-                        self.current_game = self.games_list[0]
-                        self.last_game_switch = current_time
+                        self.current_game = self.games_list[0] if self.games_list else None
+                        self.last_game_switch = current_time  # Reset switch timer
+                    else:
+                        # Try to maintain position if possible
+                        try:
+                            self.current_game_index = next(
+                                i
+                                for i, g in enumerate(self.games_list)
+                                if g["id"] == self.current_game["id"]
+                            )
+                            self.current_game = self.games_list[
+                                self.current_game_index
+                            ]  # Update data just in case
+                        except StopIteration:
+                            self.current_game_index = 0
+                            self.current_game = self.games_list[0]
+                            self.last_game_switch = current_time
 
-            elif self.games_list:
-                # List content is same, just update data for current game
-                self.current_game = self.games_list[self.current_game_index]
+                elif self.games_list:
+                    # List content is same, just update data for current game
+                    self.current_game = self.games_list[self.current_game_index]
 
-            if not self.games_list:
-                self.logger.info(
-                    "No relevant recent games found to display."
-                )  # Changed log prefix
-                self.current_game = None  # Ensure display clears if no games
+                if not self.games_list:
+                    self.logger.info(
+                        "No relevant recent games found to display."
+                    )  # Changed log prefix
+                    self.current_game = None  # Ensure display clears if no games
 
         except Exception as e:
             self.logger.error(
@@ -1913,34 +1963,35 @@ class SportsRecent(SportsCore):
         try:
             current_time = time.time()
 
-            # Check if it's time to switch games
-            if (
-                len(self.games_list) > 1
-                and current_time - self.last_game_switch >= self.game_display_duration
-            ):
-                self.current_game_index = (self.current_game_index + 1) % len(
-                    self.games_list
-                )
-                self.current_game = self.games_list[self.current_game_index]
-                self.last_game_switch = current_time
-                force_clear = True  # Force redraw on switch
+            # Check if it's time to switch games (protected by lock for thread safety)
+            with self._games_lock:
+                if (
+                    len(self.games_list) > 1
+                    and current_time - self.last_game_switch >= self.game_display_duration
+                ):
+                    self.current_game_index = (self.current_game_index + 1) % len(
+                        self.games_list
+                    )
+                    self.current_game = self.games_list[self.current_game_index]
+                    self.last_game_switch = current_time
+                    force_clear = True  # Force redraw on switch
 
-                # Log team switching with sport prefix
-                if self.current_game:
-                    away_abbr = self.current_game.get("away_abbr", "UNK")
-                    home_abbr = self.current_game.get("home_abbr", "UNK")
-                    sport_prefix = (
-                        self.sport_key.upper()
-                        if hasattr(self, "sport_key")
-                        else "SPORT"
-                    )
-                    self.logger.info(
-                        f"[{sport_prefix} Recent] Showing {away_abbr} vs {home_abbr}"
-                    )
-                else:
-                    self.logger.debug(
-                        f"Switched to game index {self.current_game_index}"
-                    )
+                    # Log team switching with sport prefix
+                    if self.current_game:
+                        away_abbr = self.current_game.get("away_abbr", "UNK")
+                        home_abbr = self.current_game.get("home_abbr", "UNK")
+                        sport_prefix = (
+                            self.sport_key.upper()
+                            if hasattr(self, "sport_key")
+                            else "SPORT"
+                        )
+                        self.logger.info(
+                            f"[{sport_prefix} Recent] Showing {away_abbr} vs {home_abbr}"
+                        )
+                    else:
+                        self.logger.debug(
+                            f"Switched to game index {self.current_game_index}"
+                        )
 
             if self.current_game:
                 self._draw_scorebug_layout(self.current_game, force_clear)
@@ -2021,18 +2072,12 @@ class SportsLive(SportsCore):
 
         if period >= 4:
             # In Q4 or OT, if clock is 0:00 or appears stuck (like :40), consider it over
+            # Check for clock at 0:00 - various formats: "0:00", ":00", normalized "000"/"00"
+            # Note: Clocks like ":40", ":50" are legitimate (under 1 minute remaining)
             if clock_normalized == "000" or clock_normalized == "00" or clock == "0:00" or clock == ":00":
                 self.logger.debug(
                     f"[LIVE_PRIORITY_DEBUG] _is_game_really_over({game_str}): "
                     f"returning True - clock appears to be 0:00 (clock='{clock}', normalized='{clock_normalized}', period={period})"
-                )
-                return True
-            # Also check if clock appears stuck (e.g., ":40" with no minutes)
-            if clock.startswith(":") and len(clock) <= 3:
-                # Clock like ":40" or ":00" - likely stuck
-                self.logger.debug(
-                    f"[LIVE_PRIORITY_DEBUG] _is_game_really_over({game_str}): "
-                    f"returning True - clock appears stuck (clock='{clock}' starts with ':' and len <= 3, period={period})"
                 )
                 return True
 
@@ -2323,75 +2368,76 @@ class SportsLive(SportsCore):
                         )
                     self.last_log_time = current_time_for_log
 
-                # Update game list and current game
-                if new_live_games:
-                    # Check if the games themselves changed, not just scores/time
-                    new_game_ids = {g["id"] for g in new_live_games}
-                    current_game_ids = {g["id"] for g in self.live_games}
+                # Update game list and current game (thread-safe)
+                with self._games_lock:
+                    if new_live_games:
+                        # Check if the games themselves changed, not just scores/time
+                        new_game_ids = {g["id"] for g in new_live_games}
+                        current_game_ids = {g["id"] for g in self.live_games}
 
-                    if new_game_ids != current_game_ids:
-                        self.live_games = sorted(
-                            new_live_games,
-                            key=lambda g: g.get("start_time_utc")
-                            or datetime.now(timezone.utc),
-                        )  # Sort by start time
-                        # Reset index if current game is gone or list is new
-                        if (
-                            not self.current_game
-                            or self.current_game["id"] not in new_game_ids
-                        ):
-                            self.current_game_index = 0
-                            self.current_game = (
-                                self.live_games[0] if self.live_games else None
-                            )
-                            self.last_game_switch = current_time
-                        else:
-                            # Find current game's new index if it still exists
-                            try:
-                                self.current_game_index = next(
-                                    i
-                                    for i, g in enumerate(self.live_games)
-                                    if g["id"] == self.current_game["id"]
-                                )
-                                self.current_game = self.live_games[
-                                    self.current_game_index
-                                ]  # Update current_game with fresh data
-                                # Fix: Set last_game_switch if it's still 0 (initialized) to prevent immediate switching
-                                if self.last_game_switch == 0:
-                                    self.last_game_switch = current_time
-                            except (
-                                StopIteration
-                            ):  # Should not happen if check above passed, but safety first
+                        if new_game_ids != current_game_ids:
+                            self.live_games = sorted(
+                                new_live_games,
+                                key=lambda g: g.get("start_time_utc")
+                                or datetime.now(timezone.utc),
+                            )  # Sort by start time
+                            # Reset index if current game is gone or list is new
+                            if (
+                                not self.current_game
+                                or self.current_game["id"] not in new_game_ids
+                            ):
                                 self.current_game_index = 0
-                                self.current_game = self.live_games[0]
+                                self.current_game = (
+                                    self.live_games[0] if self.live_games else None
+                                )
+                                self.last_game_switch = current_time
+                            else:
+                                # Find current game's new index if it still exists
+                                try:
+                                    self.current_game_index = next(
+                                        i
+                                        for i, g in enumerate(self.live_games)
+                                        if g["id"] == self.current_game["id"]
+                                    )
+                                    self.current_game = self.live_games[
+                                        self.current_game_index
+                                    ]  # Update current_game with fresh data
+                                    # Fix: Set last_game_switch if it's still 0 (initialized) to prevent immediate switching
+                                    if self.last_game_switch == 0:
+                                        self.last_game_switch = current_time
+                                except (
+                                    StopIteration
+                                ):  # Should not happen if check above passed, but safety first
+                                    self.current_game_index = 0
+                                    self.current_game = self.live_games[0]
+                                    self.last_game_switch = current_time
+
+                        else:
+                            # Just update the data for the existing games
+                            temp_game_dict = {g["id"]: g for g in new_live_games}
+                            self.live_games = [
+                                temp_game_dict.get(g["id"], g) for g in self.live_games
+                            ]  # Update in place
+                            if self.current_game:
+                                self.current_game = temp_game_dict.get(
+                                    self.current_game["id"], self.current_game
+                                )
+                            # Fix: Set last_game_switch if it's still 0 (initialized) to prevent immediate switching
+                            # This handles the case where games were loaded previously but last_game_switch was never set
+                            if self.last_game_switch == 0:
                                 self.last_game_switch = current_time
 
+                        # Display update handled by main loop based on interval
+
                     else:
-                        # Just update the data for the existing games
-                        temp_game_dict = {g["id"]: g for g in new_live_games}
-                        self.live_games = [
-                            temp_game_dict.get(g["id"], g) for g in self.live_games
-                        ]  # Update in place
-                        if self.current_game:
-                            self.current_game = temp_game_dict.get(
-                                self.current_game["id"], self.current_game
-                            )
-                        # Fix: Set last_game_switch if it's still 0 (initialized) to prevent immediate switching
-                        # This handles the case where games were loaded previously but last_game_switch was never set
-                        if self.last_game_switch == 0:
-                            self.last_game_switch = current_time
-
-                    # Display update handled by main loop based on interval
-
-                else:
-                    # No live games found
-                    if self.live_games:  # Were there games before?
-                        self.logger.info(
-                            "Live games previously showing have ended or are no longer live."
-                        )  # Changed log prefix
-                    self.live_games = []
-                    self.current_game = None
-                    self.current_game_index = 0
+                        # No live games found
+                        if self.live_games:  # Were there games before?
+                            self.logger.info(
+                                "Live games previously showing have ended or are no longer live."
+                            )  # Changed log prefix
+                        self.live_games = []
+                        self.current_game = None
+                        self.current_game_index = 0
 
             else:
                 # Error fetching data or no events
@@ -2405,21 +2451,22 @@ class SportsLive(SportsCore):
                     )  # Changed log prefix
                     self.current_game = None  # Clear current game if fetch fails and no games were active
 
-            # Handle game switching (outside test mode check)
+            # Handle game switching (outside test mode check, thread-safe)
             # Fix: Don't check for switching if last_game_switch is still 0 (games haven't been loaded yet)
             # This prevents immediate switching when the system has been running for a while before games load
-            if (
-                not self.test_mode
-                and len(self.live_games) > 1
-                and self.last_game_switch > 0
-                and (current_time - self.last_game_switch) >= self.game_display_duration
-            ):
-                self.current_game_index = (self.current_game_index + 1) % len(
-                    self.live_games
-                )
-                self.current_game = self.live_games[self.current_game_index]
-                self.last_game_switch = current_time
-                self.logger.info(
-                    f"Switched live view to: {self.current_game['away_abbr']}@{self.current_game['home_abbr']}"
-                )  # Changed log prefix
+            with self._games_lock:
+                if (
+                    not self.test_mode
+                    and len(self.live_games) > 1
+                    and self.last_game_switch > 0
+                    and (current_time - self.last_game_switch) >= self.game_display_duration
+                ):
+                    self.current_game_index = (self.current_game_index + 1) % len(
+                        self.live_games
+                    )
+                    self.current_game = self.live_games[self.current_game_index]
+                    self.last_game_switch = current_time
+                    self.logger.info(
+                        f"Switched live view to: {self.current_game['away_abbr']}@{self.current_game['home_abbr']}"
+                    )  # Changed log prefix
                 # Force display update via flag or direct call if needed, but usually let main loop handle

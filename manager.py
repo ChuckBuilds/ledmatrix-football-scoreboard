@@ -1079,16 +1079,13 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
     def _display_external_mode(self, display_mode: str, force_clear: bool) -> bool:
         """
         Handle display for external display_mode calls (from display controller).
-        
-        NOTE: This method is legacy support. With granular modes, display() now
-        handles modes directly. This method should not be called for granular modes.
-        
-        Handles granular modes (nfl_live, ncaa_fb_recent, etc.).
-        
+
+        Routes granular modes (nfl_live, ncaa_fb_recent, etc.) to _display_league_mode.
+
         Args:
             display_mode: External mode name (e.g., 'nfl_live', 'nfl_recent', 'ncaa_fb_upcoming')
             force_clear: Whether to force clear display
-            
+
         Returns:
             True if content was displayed, False otherwise
         """
@@ -1125,28 +1122,19 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
             return self._display_scroll_mode(display_mode, mode_type, force_clear)
         
         # Otherwise, use switch mode (existing behavior)
-        
+
         # Resolve managers to try for this mode type
         managers_to_try = self._resolve_managers_for_mode(mode_type)
-        
-        # Apply sticky manager logic
-        sticky_manager = self._sticky_manager_per_mode.get(display_mode)
-        managers_to_try = self._apply_sticky_manager_logic(display_mode, managers_to_try)
-        
+
         # Try each manager until one returns True (has content)
         for current_manager in managers_to_try:
             success, _ = self._try_manager_display(
-                current_manager, force_clear, display_mode, mode_type, sticky_manager
+                current_manager, force_clear, display_mode, mode_type, None
             )
-            
+
             if success:
                 self.logger.info(f"Plugin display() returning True for {display_mode}")
                 return True
-            
-            # If sticky manager completed, it's been removed from sticky dict
-            # Continue to try next manager (if any) or exit loop
-            # Note: When sticky manager is active, managers_to_try contains only that manager,
-            # so loop will exit naturally if it returns False
         
         # No manager had content - log why
         if not managers_to_try:

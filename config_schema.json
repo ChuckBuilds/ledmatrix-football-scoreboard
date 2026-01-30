@@ -109,14 +109,14 @@
               "default": 5,
               "minimum": 1,
               "maximum": 20,
-              "description": "With favorite teams: Number of recent games PER team (e.g., 1 with 2 teams = 2 games). Without favorite teams: Total number of most recent games to show (e.g., 5 = show 5 most recent games total)."
+              "description": "With favorites: N games per favorite team. Without favorites: N total games sorted by time."
             },
             "upcoming_games_to_show": {
               "type": "integer",
               "default": 1,
               "minimum": 1,
               "maximum": 20,
-              "description": "With favorite teams: Number of upcoming games PER team (e.g., 2 with 3 teams = up to 6 games). Without favorite teams: Total number of next upcoming games to show (e.g., 1 = show only the next 1 game total)."
+              "description": "With favorites: N games per favorite team. Without favorites: N total games sorted by time."
             }
           }
         },
@@ -338,14 +338,14 @@
               "default": 1,
               "minimum": 1,
               "maximum": 20,
-              "description": "With favorite teams: Number of recent games PER team (e.g., 1 with 2 teams = 2 games). Without favorite teams: Total number of most recent games to show (e.g., 5 = show 5 most recent games total)."
+              "description": "With favorites: N games per favorite team. Without favorites: N total games sorted by time."
             },
             "upcoming_games_to_show": {
               "type": "integer",
               "default": 1,
               "minimum": 1,
               "maximum": 20,
-              "description": "With favorite teams: Number of upcoming games PER team (e.g., 2 with 3 teams = up to 6 games). Without favorite teams: Total number of next upcoming games to show (e.g., 1 = show only the next 1 game total)."
+              "description": "With favorites: N games per favorite team. Without favorites: N total games sorted by time."
             }
           }
         },
