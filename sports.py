@@ -1074,27 +1074,15 @@ class SportsUpcoming(SportsCore):
                     processed_games, self.favorite_teams
                 )
             else:
-                # No favorite teams: apply per-team limit to ALL teams in the league
-                # Extract all unique teams from processed games
-                all_teams = set()
-                for game in processed_games:
-                    home_abbr = game.get("home_abbr")
-                    away_abbr = game.get("away_abbr")
-                    if home_abbr:
-                        all_teams.add(home_abbr)
-                    if away_abbr:
-                        all_teams.add(away_abbr)
-
-                if all_teams:
-                    team_games = self._select_games_for_display(
-                        processed_games, list(all_teams)
-                    )
-                    self.logger.info(
-                        f"Applied per-team limit ({self.upcoming_games_to_show}) to {len(all_teams)} teams, "
-                        f"selected {len(team_games)} games"
-                    )
-                else:
-                    team_games = []
+                # No favorite teams: show N total games sorted by time (schedule view)
+                team_games = sorted(
+                    processed_games,
+                    key=lambda g: g.get("start_time_utc")
+                    or datetime.max.replace(tzinfo=timezone.utc),
+                )[:self.upcoming_games_to_show]
+                self.logger.info(
+                    f"No favorites configured: showing {len(team_games)} total upcoming games"
+                )
 
             # Log changes or periodically
             should_log = (
@@ -1599,26 +1587,16 @@ class SportsRecent(SportsCore):
                         f"Game {i+1} for display: {game['away_abbr']} @ {game['home_abbr']} - {game.get('start_time_utc')} - Score: {game['away_score']}-{game['home_score']}"
                     )
             else:
-                # No favorite teams: apply per-team limit to ALL teams in the league
-                all_teams = set()
-                for game in processed_games:
-                    home_abbr = game.get("home_abbr")
-                    away_abbr = game.get("away_abbr")
-                    if home_abbr:
-                        all_teams.add(home_abbr)
-                    if away_abbr:
-                        all_teams.add(away_abbr)
-
-                if all_teams:
-                    team_games = self._select_recent_games_for_display(
-                        processed_games, list(all_teams)
-                    )
-                    self.logger.info(
-                        f"Applied per-team limit ({self.recent_games_to_show}) to {len(all_teams)} teams, "
-                        f"selected {len(team_games)} games"
-                    )
-                else:
-                    team_games = []
+                # No favorite teams: show N total games sorted by time (most recent first)
+                team_games = sorted(
+                    processed_games,
+                    key=lambda g: g.get("start_time_utc")
+                    or datetime.min.replace(tzinfo=timezone.utc),
+                    reverse=True,
+                )[:self.recent_games_to_show]
+                self.logger.info(
+                    f"No favorites configured: showing {len(team_games)} total recent games"
+                )
 
             # Check if the list of games to display has changed
             new_game_ids = {g["id"] for g in team_games}
