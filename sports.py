@@ -2072,18 +2072,12 @@ class SportsLive(SportsCore):
 
         if period >= 4:
             # In Q4 or OT, if clock is 0:00 or appears stuck (like :40), consider it over
+            # Check for clock at 0:00 - various formats: "0:00", ":00", normalized "000"/"00"
+            # Note: Clocks like ":40", ":50" are legitimate (under 1 minute remaining)
             if clock_normalized == "000" or clock_normalized == "00" or clock == "0:00" or clock == ":00":
                 self.logger.debug(
                     f"[LIVE_PRIORITY_DEBUG] _is_game_really_over({game_str}): "
                     f"returning True - clock appears to be 0:00 (clock='{clock}', normalized='{clock_normalized}', period={period})"
-                )
-                return True
-            # Only treat as stuck if clock is exactly ":00" (zero seconds)
-            # Clocks like ":40", ":50" are legitimate (under 1 minute remaining)
-            if clock == ":00":
-                self.logger.debug(
-                    f"[LIVE_PRIORITY_DEBUG] _is_game_really_over({game_str}): "
-                    f"returning True - clock is ':00' indicating game end (period={period})"
                 )
                 return True
 

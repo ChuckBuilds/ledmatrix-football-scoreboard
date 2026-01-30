@@ -1079,16 +1079,13 @@ class FootballScoreboardPlugin(BasePlugin if BasePlugin else object):
     def _display_external_mode(self, display_mode: str, force_clear: bool) -> bool:
         """
         Handle display for external display_mode calls (from display controller).
-        
-        NOTE: This method is legacy support. With granular modes, display() now
-        handles modes directly. This method should not be called for granular modes.
-        
-        Handles granular modes (nfl_live, ncaa_fb_recent, etc.).
-        
+
+        Routes granular modes (nfl_live, ncaa_fb_recent, etc.) to _display_league_mode.
+
         Args:
             display_mode: External mode name (e.g., 'nfl_live', 'nfl_recent', 'ncaa_fb_upcoming')
             force_clear: Whether to force clear display
-            
+
         Returns:
             True if content was displayed, False otherwise
         """
