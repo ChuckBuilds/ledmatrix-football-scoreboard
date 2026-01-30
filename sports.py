@@ -1668,7 +1668,7 @@ class SportsRecent(SportsCore):
                         )
             # Use single-pass algorithm for game selection
             # This properly handles games between two favorite teams (counts for both)
-            if self.favorite_teams:
+            if self.show_favorite_teams_only and self.favorite_teams:
                 team_games = self._select_recent_games_for_display(
                     processed_games, self.favorite_teams
                 )
@@ -1678,7 +1678,7 @@ class SportsRecent(SportsCore):
                         f"Game {i+1} for display: {game['away_abbr']} @ {game['home_abbr']} - {game.get('start_time_utc')} - Score: {game['away_score']}-{game['home_score']}"
                     )
             else:
-                # No favorite teams: show N total games sorted by time (most recent first)
+                # No favorites or show_favorite_teams_only disabled: show N total games sorted by time
                 team_games = sorted(
                     processed_games,
                     key=lambda g: g.get("start_time_utc")
