@@ -1,5 +1,6 @@
 import logging
 import os
+import threading
 import time
 from abc import ABC, abstractmethod
 from datetime import datetime, timedelta, timezone
@@ -106,6 +107,8 @@ class SportsCore(ABC):
         }
         self.last_update = 0
         self.current_game = None
+        # Thread safety lock for shared game state
+        self._games_lock = threading.RLock()
         self.fonts = self._load_fonts()
 
         # Initialize dynamic team resolver and resolve favorite teams
@@ -679,9 +682,17 @@ class SportsCore(ABC):
         if not game_event:
             return None, None, None, None, None
         try:
-            competition = game_event["competitions"][0]
-            status = competition["status"]
-            competitors = competition["competitors"]
+            # Safe access to competitions array
+            competitions = game_event.get("competitions", [])
+            if not competitions:
+                self.logger.warning(f"No competitions data for game {game_event.get('id', 'unknown')}")
+                return None, None, None, None, None
+            competition = competitions[0]
+            status = competition.get("status")
+            if not status:
+                self.logger.warning(f"No status data for game {game_event.get('id', 'unknown')}")
+                return None, None, None, None, None
+            competitors = competition.get("competitors", [])
             game_date_str = game_event["date"]
             situation = competition.get("situation")
             start_time_utc = None
@@ -698,7 +709,7 @@ class SportsCore(ABC):
                     # Convert to pytz.UTC for consistency
                     start_time_utc = dt.astimezone(pytz.UTC)
             except ValueError:
-                logging.warning(f"Could not parse game date: {game_date_str}")
+                self.logger.warning(f"Could not parse game date: {game_date_str}")
 
             home_team = next(
                 (c for c in competitors if c.get("homeAway") == "home"), None
@@ -806,7 +817,7 @@ class SportsCore(ABC):
             return details, home_team, away_team, status, situation
         except Exception as e:
             # Log the problematic event structure if possible
-            logging.error(
+            self.logger.error(
                 f"Error extracting game details: {e} from event: {game_event.get('id')}",
                 exc_info=True,
             )
@@ -898,6 +909,21 @@ class SportsCore(ABC):
 
     def _custom_scorebug_layout(self, game: dict, draw_overlay: ImageDraw.ImageDraw):
         pass
+
+    def cleanup(self):
+        """Clean up resources when plugin is unloaded."""
+        # Close HTTP session
+        if hasattr(self, 'session') and self.session:
+            try:
+                self.session.close()
+            except Exception as e:
+                self.logger.warning(f"Error closing session: {e}")
+
+        # Clear caches
+        if hasattr(self, '_logo_cache'):
+            self._logo_cache.clear()
+
+        self.logger.info(f"{self.__class__.__name__} cleanup completed")
 
 
 class SportsUpcoming(SportsCore):
@@ -1095,46 +1121,47 @@ class SportsUpcoming(SportsCore):
                 or (not self.games_list and team_games)
             )
 
-            # Check if the list of games to display has changed
-            new_game_ids = {g["id"] for g in team_games}
-            current_game_ids = {g["id"] for g in self.games_list}
+            # Check if the list of games to display has changed (thread-safe)
+            with self._games_lock:
+                new_game_ids = {g["id"] for g in team_games}
+                current_game_ids = {g["id"] for g in self.games_list}
 
-            if new_game_ids != current_game_ids:
-                self.logger.info(
-                    f"Found {len(team_games)} upcoming games within window for display."
-                )  # Changed log prefix
-                self.games_list = team_games
-                if (
-                    not self.current_game
-                    or not self.games_list
-                    or self.current_game["id"] not in new_game_ids
-                ):
-                    self.current_game_index = 0
-                    self.current_game = self.games_list[0] if self.games_list else None
-                    self.last_game_switch = current_time
-                else:
-                    try:
-                        self.current_game_index = next(
-                            i
-                            for i, g in enumerate(self.games_list)
-                            if g["id"] == self.current_game["id"]
-                        )
-                        self.current_game = self.games_list[self.current_game_index]
-                    except StopIteration:
+                if new_game_ids != current_game_ids:
+                    self.logger.info(
+                        f"Found {len(team_games)} upcoming games within window for display."
+                    )  # Changed log prefix
+                    self.games_list = team_games
+                    if (
+                        not self.current_game
+                        or not self.games_list
+                        or self.current_game["id"] not in new_game_ids
+                    ):
                         self.current_game_index = 0
-                        self.current_game = self.games_list[0]
+                        self.current_game = self.games_list[0] if self.games_list else None
                         self.last_game_switch = current_time
+                    else:
+                        try:
+                            self.current_game_index = next(
+                                i
+                                for i, g in enumerate(self.games_list)
+                                if g["id"] == self.current_game["id"]
+                            )
+                            self.current_game = self.games_list[self.current_game_index]
+                        except StopIteration:
+                            self.current_game_index = 0
+                            self.current_game = self.games_list[0]
+                            self.last_game_switch = current_time
 
-            elif self.games_list:
-                self.current_game = self.games_list[
-                    self.current_game_index
-                ]  # Update data
+                elif self.games_list:
+                    self.current_game = self.games_list[
+                        self.current_game_index
+                    ]  # Update data
 
-            if not self.games_list:
-                self.logger.info(
-                    "No relevant upcoming games found to display."
-                )  # Changed log prefix
-                self.current_game = None
+                if not self.games_list:
+                    self.logger.info(
+                        "No relevant upcoming games found to display."
+                    )  # Changed log prefix
+                    self.current_game = None
 
             if should_log and not self.games_list:
                 # Log favorite teams only if no games are found and logging is needed
@@ -1381,34 +1408,35 @@ class SportsUpcoming(SportsCore):
         try:
             current_time = time.time()
 
-            # Check if it's time to switch games
-            if (
-                len(self.games_list) > 1
-                and current_time - self.last_game_switch >= self.game_display_duration
-            ):
-                self.current_game_index = (self.current_game_index + 1) % len(
-                    self.games_list
-                )
-                self.current_game = self.games_list[self.current_game_index]
-                self.last_game_switch = current_time
-                force_clear = True  # Force redraw on switch
+            # Check if it's time to switch games (protected by lock for thread safety)
+            with self._games_lock:
+                if (
+                    len(self.games_list) > 1
+                    and current_time - self.last_game_switch >= self.game_display_duration
+                ):
+                    self.current_game_index = (self.current_game_index + 1) % len(
+                        self.games_list
+                    )
+                    self.current_game = self.games_list[self.current_game_index]
+                    self.last_game_switch = current_time
+                    force_clear = True  # Force redraw on switch
 
-                # Log team switching with sport prefix
-                if self.current_game:
-                    away_abbr = self.current_game.get("away_abbr", "UNK")
-                    home_abbr = self.current_game.get("home_abbr", "UNK")
-                    sport_prefix = (
-                        self.sport_key.upper()
-                        if hasattr(self, "sport_key")
-                        else "SPORT"
-                    )
-                    self.logger.info(
-                        f"[{sport_prefix} Upcoming] Showing {away_abbr} vs {home_abbr}"
-                    )
-                else:
-                    self.logger.debug(
-                        f"Switched to game index {self.current_game_index}"
-                    )
+                    # Log team switching with sport prefix
+                    if self.current_game:
+                        away_abbr = self.current_game.get("away_abbr", "UNK")
+                        home_abbr = self.current_game.get("home_abbr", "UNK")
+                        sport_prefix = (
+                            self.sport_key.upper()
+                            if hasattr(self, "sport_key")
+                            else "SPORT"
+                        )
+                        self.logger.info(
+                            f"[{sport_prefix} Upcoming] Showing {away_abbr} vs {home_abbr}"
+                        )
+                    else:
+                        self.logger.debug(
+                            f"Switched to game index {self.current_game_index}"
+                        )
 
             if self.current_game:
                 self._draw_scorebug_layout(self.current_game, force_clear)
@@ -1598,49 +1626,50 @@ class SportsRecent(SportsCore):
                     f"No favorites configured: showing {len(team_games)} total recent games"
                 )
 
-            # Check if the list of games to display has changed
-            new_game_ids = {g["id"] for g in team_games}
-            current_game_ids = {g["id"] for g in self.games_list}
+            # Check if the list of games to display has changed (thread-safe)
+            with self._games_lock:
+                new_game_ids = {g["id"] for g in team_games}
+                current_game_ids = {g["id"] for g in self.games_list}
 
-            if new_game_ids != current_game_ids:
-                self.logger.info(
-                    f"Found {len(team_games)} final games within window for display."
-                )  # Changed log prefix
-                self.games_list = team_games
-                # Reset index if list changed or current game removed
-                if (
-                    not self.current_game
-                    or not self.games_list
-                    or self.current_game["id"] not in new_game_ids
-                ):
-                    self.current_game_index = 0
-                    self.current_game = self.games_list[0] if self.games_list else None
-                    self.last_game_switch = current_time  # Reset switch timer
-                else:
-                    # Try to maintain position if possible
-                    try:
-                        self.current_game_index = next(
-                            i
-                            for i, g in enumerate(self.games_list)
-                            if g["id"] == self.current_game["id"]
-                        )
-                        self.current_game = self.games_list[
-                            self.current_game_index
-                        ]  # Update data just in case
-                    except StopIteration:
+                if new_game_ids != current_game_ids:
+                    self.logger.info(
+                        f"Found {len(team_games)} final games within window for display."
+                    )  # Changed log prefix
+                    self.games_list = team_games
+                    # Reset index if list changed or current game removed
+                    if (
+                        not self.current_game
+                        or not self.games_list
+                        or self.current_game["id"] not in new_game_ids
+                    ):
                         self.current_game_index = 0
-                        self.current_game = self.games_list[0]
-                        self.last_game_switch = current_time
+                        self.current_game = self.games_list[0] if self.games_list else None
+                        self.last_game_switch = current_time  # Reset switch timer
+                    else:
+                        # Try to maintain position if possible
+                        try:
+                            self.current_game_index = next(
+                                i
+                                for i, g in enumerate(self.games_list)
+                                if g["id"] == self.current_game["id"]
+                            )
+                            self.current_game = self.games_list[
+                                self.current_game_index
+                            ]  # Update data just in case
+                        except StopIteration:
+                            self.current_game_index = 0
+                            self.current_game = self.games_list[0]
+                            self.last_game_switch = current_time
 
-            elif self.games_list:
-                # List content is same, just update data for current game
-                self.current_game = self.games_list[self.current_game_index]
+                elif self.games_list:
+                    # List content is same, just update data for current game
+                    self.current_game = self.games_list[self.current_game_index]
 
-            if not self.games_list:
-                self.logger.info(
-                    "No relevant recent games found to display."
-                )  # Changed log prefix
-                self.current_game = None  # Ensure display clears if no games
+                if not self.games_list:
+                    self.logger.info(
+                        "No relevant recent games found to display."
+                    )  # Changed log prefix
+                    self.current_game = None  # Ensure display clears if no games
 
         except Exception as e:
             self.logger.error(
@@ -1871,34 +1900,35 @@ class SportsRecent(SportsCore):
         try:
             current_time = time.time()
 
-            # Check if it's time to switch games
-            if (
-                len(self.games_list) > 1
-                and current_time - self.last_game_switch >= self.game_display_duration
-            ):
-                self.current_game_index = (self.current_game_index + 1) % len(
-                    self.games_list
-                )
-                self.current_game = self.games_list[self.current_game_index]
-                self.last_game_switch = current_time
-                force_clear = True  # Force redraw on switch
+            # Check if it's time to switch games (protected by lock for thread safety)
+            with self._games_lock:
+                if (
+                    len(self.games_list) > 1
+                    and current_time - self.last_game_switch >= self.game_display_duration
+                ):
+                    self.current_game_index = (self.current_game_index + 1) % len(
+                        self.games_list
+                    )
+                    self.current_game = self.games_list[self.current_game_index]
+                    self.last_game_switch = current_time
+                    force_clear = True  # Force redraw on switch
 
-                # Log team switching with sport prefix
-                if self.current_game:
-                    away_abbr = self.current_game.get("away_abbr", "UNK")
-                    home_abbr = self.current_game.get("home_abbr", "UNK")
-                    sport_prefix = (
-                        self.sport_key.upper()
-                        if hasattr(self, "sport_key")
-                        else "SPORT"
-                    )
-                    self.logger.info(
-                        f"[{sport_prefix} Recent] Showing {away_abbr} vs {home_abbr}"
-                    )
-                else:
-                    self.logger.debug(
-                        f"Switched to game index {self.current_game_index}"
-                    )
+                    # Log team switching with sport prefix
+                    if self.current_game:
+                        away_abbr = self.current_game.get("away_abbr", "UNK")
+                        home_abbr = self.current_game.get("home_abbr", "UNK")
+                        sport_prefix = (
+                            self.sport_key.upper()
+                            if hasattr(self, "sport_key")
+                            else "SPORT"
+                        )
+                        self.logger.info(
+                            f"[{sport_prefix} Recent] Showing {away_abbr} vs {home_abbr}"
+                        )
+                    else:
+                        self.logger.debug(
+                            f"Switched to game index {self.current_game_index}"
+                        )
 
             if self.current_game:
                 self._draw_scorebug_layout(self.current_game, force_clear)
@@ -2281,75 +2311,76 @@ class SportsLive(SportsCore):
                         )
                     self.last_log_time = current_time_for_log
 
-                # Update game list and current game
-                if new_live_games:
-                    # Check if the games themselves changed, not just scores/time
-                    new_game_ids = {g["id"] for g in new_live_games}
-                    current_game_ids = {g["id"] for g in self.live_games}
+                # Update game list and current game (thread-safe)
+                with self._games_lock:
+                    if new_live_games:
+                        # Check if the games themselves changed, not just scores/time
+                        new_game_ids = {g["id"] for g in new_live_games}
+                        current_game_ids = {g["id"] for g in self.live_games}
 
-                    if new_game_ids != current_game_ids:
-                        self.live_games = sorted(
-                            new_live_games,
-                            key=lambda g: g.get("start_time_utc")
-                            or datetime.now(timezone.utc),
-                        )  # Sort by start time
-                        # Reset index if current game is gone or list is new
-                        if (
-                            not self.current_game
-                            or self.current_game["id"] not in new_game_ids
-                        ):
-                            self.current_game_index = 0
-                            self.current_game = (
-                                self.live_games[0] if self.live_games else None
-                            )
-                            self.last_game_switch = current_time
-                        else:
-                            # Find current game's new index if it still exists
-                            try:
-                                self.current_game_index = next(
-                                    i
-                                    for i, g in enumerate(self.live_games)
-                                    if g["id"] == self.current_game["id"]
-                                )
-                                self.current_game = self.live_games[
-                                    self.current_game_index
-                                ]  # Update current_game with fresh data
-                                # Fix: Set last_game_switch if it's still 0 (initialized) to prevent immediate switching
-                                if self.last_game_switch == 0:
-                                    self.last_game_switch = current_time
-                            except (
-                                StopIteration
-                            ):  # Should not happen if check above passed, but safety first
+                        if new_game_ids != current_game_ids:
+                            self.live_games = sorted(
+                                new_live_games,
+                                key=lambda g: g.get("start_time_utc")
+                                or datetime.now(timezone.utc),
+                            )  # Sort by start time
+                            # Reset index if current game is gone or list is new
+                            if (
+                                not self.current_game
+                                or self.current_game["id"] not in new_game_ids
+                            ):
                                 self.current_game_index = 0
-                                self.current_game = self.live_games[0]
+                                self.current_game = (
+                                    self.live_games[0] if self.live_games else None
+                                )
+                                self.last_game_switch = current_time
+                            else:
+                                # Find current game's new index if it still exists
+                                try:
+                                    self.current_game_index = next(
+                                        i
+                                        for i, g in enumerate(self.live_games)
+                                        if g["id"] == self.current_game["id"]
+                                    )
+                                    self.current_game = self.live_games[
+                                        self.current_game_index
+                                    ]  # Update current_game with fresh data
+                                    # Fix: Set last_game_switch if it's still 0 (initialized) to prevent immediate switching
+                                    if self.last_game_switch == 0:
+                                        self.last_game_switch = current_time
+                                except (
+                                    StopIteration
+                                ):  # Should not happen if check above passed, but safety first
+                                    self.current_game_index = 0
+                                    self.current_game = self.live_games[0]
+                                    self.last_game_switch = current_time
+
+                        else:
+                            # Just update the data for the existing games
+                            temp_game_dict = {g["id"]: g for g in new_live_games}
+                            self.live_games = [
+                                temp_game_dict.get(g["id"], g) for g in self.live_games
+                            ]  # Update in place
+                            if self.current_game:
+                                self.current_game = temp_game_dict.get(
+                                    self.current_game["id"], self.current_game
+                                )
+                            # Fix: Set last_game_switch if it's still 0 (initialized) to prevent immediate switching
+                            # This handles the case where games were loaded previously but last_game_switch was never set
+                            if self.last_game_switch == 0:
                                 self.last_game_switch = current_time
 
+                        # Display update handled by main loop based on interval
+
                     else:
-                        # Just update the data for the existing games
-                        temp_game_dict = {g["id"]: g for g in new_live_games}
-                        self.live_games = [
-                            temp_game_dict.get(g["id"], g) for g in self.live_games
-                        ]  # Update in place
-                        if self.current_game:
-                            self.current_game = temp_game_dict.get(
-                                self.current_game["id"], self.current_game
-                            )
-                        # Fix: Set last_game_switch if it's still 0 (initialized) to prevent immediate switching
-                        # This handles the case where games were loaded previously but last_game_switch was never set
-                        if self.last_game_switch == 0:
-                            self.last_game_switch = current_time
-
-                    # Display update handled by main loop based on interval
-
-                else:
-                    # No live games found
-                    if self.live_games:  # Were there games before?
-                        self.logger.info(
-                            "Live games previously showing have ended or are no longer live."
-                        )  # Changed log prefix
-                    self.live_games = []
-                    self.current_game = None
-                    self.current_game_index = 0
+                        # No live games found
+                        if self.live_games:  # Were there games before?
+                            self.logger.info(
+                                "Live games previously showing have ended or are no longer live."
+                            )  # Changed log prefix
+                        self.live_games = []
+                        self.current_game = None
+                        self.current_game_index = 0
 
             else:
                 # Error fetching data or no events
@@ -2363,21 +2394,22 @@ class SportsLive(SportsCore):
                     )  # Changed log prefix
                     self.current_game = None  # Clear current game if fetch fails and no games were active
 
-            # Handle game switching (outside test mode check)
+            # Handle game switching (outside test mode check, thread-safe)
             # Fix: Don't check for switching if last_game_switch is still 0 (games haven't been loaded yet)
             # This prevents immediate switching when the system has been running for a while before games load
-            if (
-                not self.test_mode
-                and len(self.live_games) > 1
-                and self.last_game_switch > 0
-                and (current_time - self.last_game_switch) >= self.game_display_duration
-            ):
-                self.current_game_index = (self.current_game_index + 1) % len(
-                    self.live_games
-                )
-                self.current_game = self.live_games[self.current_game_index]
-                self.last_game_switch = current_time
-                self.logger.info(
-                    f"Switched live view to: {self.current_game['away_abbr']}@{self.current_game['home_abbr']}"
-                )  # Changed log prefix
+            with self._games_lock:
+                if (
+                    not self.test_mode
+                    and len(self.live_games) > 1
+                    and self.last_game_switch > 0
+                    and (current_time - self.last_game_switch) >= self.game_display_duration
+                ):
+                    self.current_game_index = (self.current_game_index + 1) % len(
+                        self.live_games
+                    )
+                    self.current_game = self.live_games[self.current_game_index]
+                    self.last_game_switch = current_time
+                    self.logger.info(
+                        f"Switched live view to: {self.current_game['away_abbr']}@{self.current_game['home_abbr']}"
+                    )  # Changed log prefix
                 # Force display update via flag or direct call if needed, but usually let main loop handle
